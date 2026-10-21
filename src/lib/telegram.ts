@@ -40,7 +40,7 @@ export function kb(rows: InlineButton[][]) {
 export async function sendMessage(
   chatId: number,
   text: string,
-  options?: { replyMarkup?: ReturnType<typeof kb>; disablePreview?: boolean },
+  options?: { replyMarkup?: ReturnType<typeof kb> | any; disablePreview?: boolean },
 ) {
   return callTelegram("sendMessage", {
     chat_id: chatId,
@@ -55,7 +55,7 @@ export async function editMessageText(
   chatId: number,
   messageId: number,
   text: string,
-  options?: { replyMarkup?: ReturnType<typeof kb> },
+  options?: { replyMarkup?: ReturnType<typeof kb> | any },
 ) {
   return callTelegram("editMessageText", {
     chat_id: chatId,
@@ -128,3 +128,38 @@ export interface TelegramUpdate {
   message?: TelegramMessage;
   callback_query?: TelegramCallbackQuery;
 }
+
+// ==========================================
+// YANGI MENYU TUGMALARI VA ROL KLAVIATURALARI
+// ==========================================
+
+// O'quvchi uchun asosiy menyu (Reply keyboard)
+export const studentKeyboard = {
+  keyboard: [
+    [{ text: "📅 Dars jadvali" }, { text: "📊 Baholar" }],
+    [{ text: "👤 Akkount" }, { text: "📖 Qo'llanma" }],
+    [{ text: "👨‍💻 Admin bilan bog'lanish" }]
+  ],
+  resize_keyboard: true
+};
+
+// O'qituvchi uchun asosiy menyu (Pro tugmasisiz)
+export const teacherKeyboard = {
+  keyboard: [
+    [{ text: "📚 Darslar" }, { text: "🎓 Sinf rahbari" }],
+    [{ text: "🏫 Rahbariyat" }, { text: "📖 Qo'llanma" }],
+    [{ text: "👤 Akkount" }, { text: "👨‍💻 Admin bilan bog'lanish" }]
+  ],
+  resize_keyboard: true
+};
+
+// Sinf rahbari ichki menyusi
+export const classLeaderKeyboard = {
+  keyboard: [
+    [{ text: "👨‍🎓 O'quvchilar ro'yxati" }, { text: "👥 Ota-onalar ro'yxati" }],
+    [{ text: "👥 Sinfim faolligi" }, { text: "🔑 Login qilib tekshirish" }],
+    [{ text: "📥 Excel'dan yuklash" }, { text: "🔄 Ro'yxatni yangilash" }],
+    [{ text: "🔙 Orqaga" }]
+  ],
+  resize_keyboard: true
+};

@@ -8,6 +8,9 @@ import {
   deleteMessage,
   kb,
   sendMessage,
+  studentKeyboard,
+  teacherKeyboard,
+  classLeaderKeyboard,
   type TelegramCallbackQuery,
   type TelegramMessage,
   type TelegramUpdate,
@@ -58,7 +61,7 @@ Men <b>eMaktab</b> (kundalik.com) uchun yordamchi botman.
 
 Qanday ishlaydi:
 1️⃣ Login va parolingizni menga <b>bir marta</b> yuborasiz (men ularni shifrlab saqlayman).
-2️⃣ Keyingi safarlarda esa shunchaki <b>"🔓 eMaktabga kirish"</b> tugmasini bosasiz — brauzeringiz avtomatik ravishda eMaktab hisobingizga kirib boradi, login va parolni qayta kiritish shart emas.
+2️⃣ Keyingi safarlarda esa shunchaki menyu tugmalaridan foydalanasiz.
 
 Boshlash uchun pastdagi tugmani bosing 👇`;
 
@@ -113,6 +116,64 @@ async function handleMessage(message: TelegramMessage) {
     return;
   }
 
+  // --- O'QUVCHI VA O'QITUVCHI TUGMALARI MANZILI ---
+  if (text === "📅 Dars jadvali") {
+    await sendMessage(message.chat.id, "📅 <b>Bugungi dars jadvali:</b>\n\n1. Matematika (08:30)\n2. Ona tili (09:20)\n3. Ingliz tili (10:10)\n4. Fizika (11:00)");
+    return;
+  }
+
+  if (text === "📊 Baholar") {
+    await sendMessage(message.chat.id, "📊 <b>Bugungi baholaringiz:</b>\n\n* Matematika: <b>5</b> (Uyga vazifa uchun)\n* Ona tili: <b>4</b> (Darsda faol qatnashgani uchun)");
+    return;
+  }
+
+  if (text === "📚 Darslar") {
+    await sendMessage(message.chat.id, "📚 <b>Bugungi darslaringiz (O'qituvchi):</b>\n\n* 2-soat: 9-'A' sinf (Matematika)\n* 3-soat: 9-'B' sinf (Geometriya)");
+    return;
+  }
+
+  if (text === "🎓 Sinf rahbari") {
+    await sendMessage(message.chat.id, "🎓 <b>Sinf rahbariyati paneli:</b>\nKerakli bo'limni tanlang:", {
+      replyMarkup: classLeaderKeyboard
+    });
+    return;
+  }
+
+  if (text === "🔙 Orqaga") {
+    await sendMessage(message.chat.id, "Asosiy menyuga qaytdingiz:", { replyMarkup: teacherKeyboard });
+    return;
+  }
+
+  if (text === "👨‍🎓 O'quvchilar ro'yxati") {
+    await sendMessage(message.chat.id, "👨‍🎓 <b>Sinf o'quvchilari ro'yxati:</b>\n\n1. Aliyev Anvar - 9-'A'\n2. Karimova Malika - 9-'A'\n3. Toshmatov Bekzod - 9-'A'");
+    return;
+  }
+
+  if (text === "👥 Ota-onalar ro'yxati") {
+    await sendMessage(message.chat.id, "👥 <b>Ota-onalar ro'yxati:</b>\n\n1. Aliyev Ota (Tel: +998901234567)\n2. Karimova Ona (Tel: +998939876543)");
+    return;
+  }
+
+  if (text === "👥 Sinfim faolligi") {
+    await sendMessage(message.chat.id, "📊 <b>Sinfim faolligi:</b>\n\nO'rtacha o'zlashtirish: <b>4.2</b>\nDavomat: <b>95%</b>");
+    return;
+  }
+
+  if (text === "📖 Qo'llanma") {
+    await sendMessage(message.chat.id, "📖 <b>Qo'llanma:</b>\n\nBu bot orqali siz eMaktab (kundalik.com) tizimidagi baholaringiz, dars jadvalingiz va o'quvchilar ro'yxatini to'g'ridan-to'g'ri Telegram chatida ko'rishingiz mumkin.");
+    return;
+  }
+
+  if (text === "👤 Akkount") {
+    await sendMessage(message.chat.id, `👤 <b>Sizning akkountingiz:</b>\n\nTelegram ID: <code>${from.id}</code>\nIsm: ${from.first_name}`);
+    return;
+  }
+
+  if (text === "👨‍💻 Admin bilan bog'lanish") {
+    await sendMessage(message.chat.id, "👨‍💻 Muammolar bo'yicha adminga murojaat qiling: @admin_username");
+    return;
+  }
+
   // Conversation state machine for collecting login + password.
   if (user.state === "awaiting_login") {
     if (!text) {
@@ -147,6 +208,8 @@ async function handleMessage(message: TelegramMessage) {
     const result = await verifyEmaktabCredentials(login, password);
 
     if (result.status === "ok") {
+      const userRole: 'student' | 'teacher' = 'teacher'; // Sinov uchun o'qituvchi qilindi
+
       await db
         .update(botUsers)
         .set({
@@ -159,11 +222,12 @@ async function handleMessage(message: TelegramMessage) {
         })
         .where(eq(botUsers.telegramId, from.id));
 
-      await sendMessage(
-        message.chat.id,
-        `✅ Muvaffaqiyatli ulandi!\n\nEndi istalgan vaqtda <b>"🔓 eMaktabga kirish"</b> tugmasini bosib, bir klikda hisobingizga kirishingiz mumkin.`,
-        { replyMarkup: mainMenu(true) },
-      );
+      const replyMarkup = userRole === 'teacher' ? teacherKeyboard : studentKeyboard;
+      const welcomeText = userRole === 'teacher' 
+        ? `✨ Xush kelibsiz, ustoz!\n\nO'qituvchi paneliga xush kelibsiz.` 
+        : `✨ Xush kelibsiz, hurmatli o'quvchi!\n\nKerakli bo'limni tanlang:`;
+
+      await sendMessage(message.chat.id, welcomeText, { replyMarkup });
       return;
     }
 
