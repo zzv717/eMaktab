@@ -133,7 +133,7 @@ export interface TelegramUpdate {
 // Menyu klaviaturalari (inline tugmalar)
 // ==========================================
 
-/** Asosiy menyu — foydalanuvchi so'ragan 4 ta asosiy bo'lim. */
+/** O'quvchi/ota-ona asosiy menyusi. */
 export function mainMenuKeyboard(connected: boolean) {
   return kb(
     connected
@@ -151,7 +151,29 @@ export function mainMenuKeyboard(connected: boolean) {
   );
 }
 
-/** Dars jadvali / uy vazifalari bo'limi. */
+/** O'qituvchi asosiy menyusi. */
+export function teacherMenuKeyboard(connected: boolean, isClassTeacher: boolean) {
+  if (!connected) {
+    return kb([[{ text: "🔐 eMaktabni ulash (login)", callback_data: "menu:connect" }]]);
+  }
+  const rows: Array<Array<{ text: string; callback_data: string }>> = [
+    [
+      { text: "📅 Bugungi darslar", callback_data: "t:today" },
+      { text: "📆 Ertangi darslar", callback_data: "t:tomorrow" },
+    ],
+  ];
+  if (isClassTeacher) {
+    rows.push([{ text: "🏫 Sinf kabineti", callback_data: "cab:open" }]);
+  }
+  rows.push([
+    { text: "📰 Yangiliklar", callback_data: "menu:news" },
+    { text: "👤 Profil", callback_data: "profile" },
+  ]);
+  rows.push([{ text: "⚙️ Sozlamalar", callback_data: "menu:settings" }]);
+  return kb(rows);
+}
+
+/** Dars jadvali / uy vazifalari bo'limi (o'quvchi). */
 export function scheduleKeyboard() {
   return kb([
     [
@@ -163,6 +185,21 @@ export function scheduleKeyboard() {
       { text: "📝 Uy vazifalari", callback_data: "sched:hw" },
     ],
     [{ text: "🔄 Yangilash", callback_data: "sched:today" }],
+    [{ text: "🏠 Asosiy menyu", callback_data: "menu:home" }],
+  ]);
+}
+
+/** O'qituvchi darslari. */
+export function teacherDayKeyboard() {
+  return kb([
+    [
+      { text: "📅 Bugun", callback_data: "t:today" },
+      { text: "📆 Ertaga", callback_data: "t:tomorrow" },
+    ],
+    [
+      { text: "🔄 Yangilash", callback_data: "t:today" },
+      { text: "📰 Yangiliklar", callback_data: "menu:news" },
+    ],
     [{ text: "🏠 Asosiy menyu", callback_data: "menu:home" }],
   ]);
 }
@@ -181,25 +218,51 @@ export function gradesKeyboard() {
 /** Yangiliklar bo'limi. */
 export function newsKeyboard() {
   return kb([
+    [{ text: "🔄 Yangilash", callback_data: "news:refresh" }],
+    [{ text: "🏠 Asosiy menyu", callback_data: "menu:home" }],
+  ]);
+}
+
+/** Sinf kabineti (sinf rahbari uchun). */
+export function classCabinetKeyboard() {
+  return kb([
     [
-      { text: "🔄 Yangilash", callback_data: "news:refresh" },
-      { text: "🌐 eMaktab'da ochish", url: "https://emaktab.uz/userfeed" },
+      { text: "👨‍🎓 O'quvchilar ro'yxati", callback_data: "cab:students" },
+      { text: "👥 Ota-onalar ro'yxati", callback_data: "cab:parents" },
     ],
+    [
+      { text: "✅ O'quvchilarni faollashtirish", callback_data: "cab:act_students" },
+      { text: "✅ Ota-onalarni faollashtirish", callback_data: "cab:act_parents" },
+    ],
+    [{ text: "🔄 Ro'yxatni yangilash", callback_data: "cab:refresh" }],
+    [{ text: "🏠 Asosiy menyu", callback_data: "menu:home" }],
+  ]);
+}
+
+/** Bir nechta sinf bo'lsa — sinf tanlash. */
+export function classSelectKeyboard(classes: Array<{ classId: string; className: string }>) {
+  const rows = classes.map((c) => [
+    { text: `🏫 ${c.className}`, callback_data: `cabsel:${c.classId}` },
+  ]);
+  rows.push([{ text: "🏠 Asosiy menyu", callback_data: "menu:home" }]);
+  return kb(rows);
+}
+
+/** Profil bo'limi. */
+export function profileKeyboard() {
+  return kb([
+    [{ text: "🔄 Yangilash", callback_data: "profile" }],
     [{ text: "🏠 Asosiy menyu", callback_data: "menu:home" }],
   ]);
 }
 
 /** Sozlamalar bo'limi. */
-export function settingsKeyboard(hasLoginButton: boolean) {
-  const rows: Array<Array<{ text: string; callback_data?: string; url?: string }>> = [
+export function settingsKeyboard() {
+  return kb([
     [{ text: "🔄 Login/parolni yangilash", callback_data: "settings:relogin" }],
     [{ text: "🚪 Chiqish (Logout)", callback_data: "settings:logout" }],
-  ];
-  if (hasLoginButton) {
-    rows.unshift([{ text: "🔓 eMaktab saytini ochish", callback_data: "open_emaktab" }]);
-  }
-  rows.push([{ text: "🏠 Asosiy menyu", callback_data: "menu:home" }]);
-  return kb(rows);
+    [{ text: "🏠 Asosiy menyu", callback_data: "menu:home" }],
+  ]);
 }
 
 /** Chiqishni tasdiqlash. */

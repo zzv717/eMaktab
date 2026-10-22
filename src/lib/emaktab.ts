@@ -52,12 +52,16 @@ export interface EmaktabSession {
   active: PersonContext;
   /** Barcha kontekstlar (ota-ona akkauntida bir nechta farzand bo'lishi mumkin). */
   persons: PersonContext[];
+  /** O'qituvchi bo'lsa — sinf rahbari bo'lgan sinflar IDlari. */
+  classTeacherGroupIds: string[];
 }
 
 export interface Lesson {
   number: number;
   subject: string;
   teacher: string | null;
+  /** Dars o'tiladigan sinf (o'qituvchi jadvali uchun). */
+  groupName: string | null;
   theme: string | null;
   startTime: string | null; // "08:00"
   endTime: string | null; // "08:45"
@@ -436,21 +440,115 @@ export function extractStartState(html: string): StartState | null {
   return null;
 }
 
-async function fetchStartState(cookies: Record<string, string>): Promise<StartState | null> {
+async function fetchStartPage(
+  cookies: Record<string, string>,
+): Promise<{ state: StartState | null; talkUser: TalkUser | null }> {
   try {
     const res = await apiGet(cookies, "/api/userfeed");
-    if (res.status !== 200) return null;
+    if (res.status !== 200) return { state: null, talkUser: null };
 
     if (res.contentType.includes("json")) {
       const data = parseJson(res.text) as StartState | null;
-      if (data && typeof data === "object") return data;
+      return { state: data && typeof data === "object" ? data : null, talkUser: null };
     }
-    return extractStartState(res.text);
+    return { state: extractStartState(res.text), talkUser: extractTalkUser(res.text) };
   } catch (error) {
     if (error instanceof EmaktabAuthError) throw error;
-    console.error("fetchStartState failed", error);
-    return null;
+    console.error("fetchStartPage failed", error);
+    return { state: null, talkUser: null };
   }
+}
+
+async function fetchStartState(cookies: Record<string, string>): Promise<StartState | null> {
+  const { state } = await fetchStartPage(cookies);
+  return state;
+}
+
+// ---------------------------------------------------------------------------
+// Chat foydalanuvchisi state (`window.__TALK__INITIAL__STATE__`) — rollarni aniqlash uchun
+// ---------------------------------------------------------------------------
+
+export interface TalkUser {
+  userId: string;
+  roles: string[];
+  /** O'qituvchi dars beradigan sinflar: { [groupId]: {...} } */
+  teacherGroupIds: string[];
+  /** Sinf rahbari bo'lgan sinflar IDlari. */
+  classTeacherGroupIds: string[];
+  schoolIds: string[];
+}
+
+function toIdList(value: unknown): string[] {
+  if (!value) return [];
+  if (Array.isArray(value)) {
+    return value
+      .map((v) => (typeof v === "object" && v !== null ? str((v as Record<string, unknown>).id ?? (v as Record<string, unknown>).groupId) : str(v)))
+      .filter(Boolean);
+  }
+  if (typeof value === "object") {
+    return Object.keys(value as Record<string, unknown>);
+  }
+  return [];
+}
+
+export function extractTalkUser(html: string): TalkUser | null {
+  const marker = "window.__TALK__INITIAL__STATE__";
+  const idx = html.indexOf(marker);
+  if (idx === -1) return null;
+
+  // Sahifada `X = X || {json}` ko'rinishidagi e'lon ham bo'ladi — JSON'ni topamiz.
+  let jsonStart = -1;
+  const assignIdx = html.indexOf("=", idx);
+  if (assignIdx !== -1) {
+    // Birinchi '{' — obyekt boshlanishi (undan oldin `X = X ||` turgan bo'lishi mumkin)
+    const firstBrace = html.indexOf("{", assignIdx);
+    const markerAgain = html.indexOf(marker, assignIdx);
+    if (firstBrace !== -1 && (markerAgain === -1 || firstBrace < markerAgain + marker.length + 20)) {
+      jsonStart = firstBrace;
+    }
+  }
+  if (jsonStart === -1) return null;
+
+  try {
+    let depth = 0;
+    let inString = false;
+    let escape = false;
+    for (let i = jsonStart; i < html.length; i++) {
+      const ch = html[i];
+      if (escape) {
+        escape = false;
+        continue;
+      }
+      if (ch === "\\") {
+        escape = true;
+        continue;
+      }
+      if (ch === '"') {
+        inString = !inString;
+        continue;
+      }
+      if (inString) continue;
+      if (ch === "{") depth++;
+      else if (ch === "}") {
+        depth--;
+        if (depth === 0) {
+          const data = JSON.parse(html.slice(jsonStart, i + 1)) as { user?: Record<string, unknown> };
+          const u = data.user;
+          if (!u || typeof u !== "object") return null;
+          return {
+            userId: str(u.id ?? u.userId),
+            roles: Array.isArray(u.roles) ? u.roles.map((r) => str(r)) : [],
+            teacherGroupIds: toIdList(u.teacherGroups),
+            classTeacherGroupIds: toIdList(u.classTeacherGroups),
+            schoolIds: Array.isArray(u.schoolIds) ? u.schoolIds.map((s) => str(s)) : [],
+          };
+        }
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -500,9 +598,19 @@ async function buildSession(cookies: Record<string, string>, login: string): Pro
   let persons: PersonContext[] = [];
   let fullName = login;
   let role: EmaktabSession["role"] = "student";
+  let classTeacherGroupIds: string[] = [];
 
-  const state = await fetchStartState(cookies);
+  const { state, talkUser } = await fetchStartPage(cookies);
   persons = personsFromStartState(state);
+
+  // Rolni chat state'idagi roles/teacherGroups/classTeacherGroups dan aniqlaymiz.
+  if (talkUser) {
+    const roles = talkUser.roles.map((r) => r.toLowerCase());
+    if (roles.includes("teacher") || talkUser.teacherGroupIds.length > 0) {
+      role = "teacher";
+    }
+    classTeacherGroupIds = talkUser.classTeacherGroupIds;
+  }
 
   // Qo'shimcha: users/me + context + children (fallback uchun).
   try {
@@ -576,13 +684,25 @@ async function buildSession(cookies: Record<string, string>, login: string): Pro
     return true;
   });
 
+  // O'qituvchi uchun personId bo'lmasligi mumkin — kontekstni minimallashtiramiz.
+  if (persons.length === 0 && role === "teacher") {
+    persons.push({
+      personId: talkUser?.userId || cookies["t0"] || "",
+      schoolId: talkUser?.schoolIds[0] || "",
+      groupId: "",
+      fullName,
+      schoolName: "",
+      groupName: "",
+    });
+  }
+
   if (persons.length === 0) {
     throw new EmaktabApiError(
       "eMaktab profilingizda o'quvchi konteksti topilmadi. Iltimos, emaktab.uz saytida profilingizni tekshiring.",
     );
   }
 
-  const userIdCookie = cookies["t0"] ?? "";
+  const userIdCookie = cookies["t0"] ?? talkUser?.userId ?? "";
   return {
     cookies,
     userId: userIdCookie,
@@ -590,8 +710,10 @@ async function buildSession(cookies: Record<string, string>, login: string): Pro
     fullName: fullName || login,
     active: persons[0],
     persons,
+    classTeacherGroupIds,
   };
 }
+
 
 // ---------------------------------------------------------------------------
 // Kunlik kundalik (marks/diary) — baholar + darslar + uy vazifalari
@@ -609,6 +731,9 @@ type DiaryLesson = {
   teacher?: { firstName?: string; lastName?: string } | string | null;
   teacherName?: string | null;
   teachers?: Array<{ firstName?: string; lastName?: string; name?: string }>;
+  group?: { name?: string; id?: string } | string | null;
+  groupName?: string | null;
+  eduGroup?: { name?: string } | null;
   homework?: { text?: string | null; isCompleted?: boolean } | null;
   workMarks?: Array<{ marks?: Array<{ value?: string | number }> }>;
   importantWorks?: unknown[];
@@ -682,10 +807,17 @@ function lessonFromDiary(raw: DiaryLesson): Lesson {
 
   const time = lessonTime(raw.hours, raw.startTime, raw.endTime);
 
+  let groupName: string | null = null;
+  if (typeof raw.group === "string" && raw.group) groupName = raw.group;
+  else if (raw.group && typeof raw.group === "object") groupName = raw.group.name || null;
+  else if (raw.groupName) groupName = String(raw.groupName);
+  else if (raw.eduGroup && typeof raw.eduGroup === "object") groupName = raw.eduGroup.name || null;
+
   return {
     number: Number(raw.number) || 0,
     subject,
     teacher,
+    groupName,
     theme: raw.theme || null,
     startTime: time.start,
     endTime: time.end,
@@ -983,4 +1115,257 @@ export async function fetchNews(session: EmaktabSession, limit = 8): Promise<New
     }
   }
   return [];
+}
+
+// ---------------------------------------------------------------------------
+// O'qituvchi: sinflar, sinf kabineti (schools.emaktab.uz)
+// ---------------------------------------------------------------------------
+
+export interface ClassLink {
+  classId: string;
+  className: string;
+}
+
+export interface ClassMember {
+  memberId: string; // eMaktab user id (user?user=NNN)
+  fullName: string;
+}
+
+export interface ClassCredentials {
+  login: string;
+  password: string;
+}
+
+export interface ClassInfo {
+  classId: string;
+  className: string;
+  students: ClassMember[];
+  parents: ClassMember[];
+  staff: ClassMember[];
+  /** eMaktab sahifasida ochiq ko'rinadigan login/parol juftliklari (bo'sh bo'lishi mumkin). */
+  credentials: ClassCredentials[];
+  /** Sahifada topilgan "faollashtirish" havolalari (bo'sh bo'lishi mumkin). */
+  activationLinks: string[];
+}
+
+const SCHOOLS_BASE = "https://schools.emaktab.uz";
+
+/** schools.emaktab.uz sahifalarini (HTML) olish. */
+async function pageGet(cookies: Record<string, string>, url: string): Promise<string> {
+  const res = await fetch(url, {
+    method: "GET",
+    redirect: "manual",
+    headers: {
+      "User-Agent": USER_AGENT,
+      Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "Accept-Language": "uz-UZ,uz;q=0.9,en;q=0.8,ru;q=0.7",
+      Cookie: cookieHeader(cookies),
+    },
+    cache: "no-store",
+  });
+  if (res.status === 401 || res.status === 403 || (res.status >= 300 && res.status < 400)) {
+    throw new EmaktabAuthError();
+  }
+  return res.text();
+}
+
+function stripTags(html: string): string {
+  return html
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+interface HtmlAnchor {
+  href: string;
+  title: string;
+  text: string;
+}
+
+function extractAnchors(html: string): HtmlAnchor[] {
+  const out: HtmlAnchor[] = [];
+  const re = /<a\b([^>]*)>([\s\S]*?)<\/a>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(html)) !== null) {
+    const attrs = m[1];
+    const inner = m[2];
+    const hrefM = attrs.match(/href\s*=\s*"([^"]*)"/i) ?? attrs.match(/href\s*=\s*'([^']*)'/i);
+    const titleM = attrs.match(/title\s*=\s*"([^"]*)"/i) ?? attrs.match(/title\s*=\s*'([^']*)'/i);
+    out.push({
+      href: (hrefM?.[1] ?? "").replace(/&amp;/g, "&"),
+      title: (titleM?.[1] ?? "").trim(),
+      text: stripTags(inner),
+    });
+  }
+  return out;
+}
+
+/**
+ * "Mening sinflarim" sahifasidan o'qituvchi sinflarini oladi.
+ * Sahifa HTML: `/v2/class?class=ID` havolalari, matni sinf nomi (masalan "9-A").
+ */
+export async function fetchTeacherClasses(session: EmaktabSession): Promise<ClassLink[]> {
+  const html = await pageGet(session.cookies, `${SCHOOLS_BASE}/v2/myclasses`);
+  const out: ClassLink[] = [];
+  const seen = new Set<string>();
+  for (const a of extractAnchors(html)) {
+    const m = a.href.match(/\/v2\/class\?class=([0-9]+)/);
+    if (!m) continue;
+    const classId = m[1];
+    const className = a.text || a.title;
+    if (!className || seen.has(classId)) continue;
+    seen.add(classId);
+    out.push({ classId, className });
+  }
+  return out;
+}
+
+function extractMembersByUlClass(html: string, ulClass: string): ClassMember[] {
+  const out: ClassMember[] = [];
+  const seen = new Set<string>();
+  const ulRe = new RegExp(`<ul[^>]*class="[^"]*${ulClass}[^"]*"[^>]*>([\\s\\S]*?)<\\/ul>`, "i");
+  const ulM = html.match(ulRe);
+  if (!ulM) return out;
+  for (const a of extractAnchors(ulM[1])) {
+    const m = a.href.match(/user\?user=([0-9]+)/);
+    if (!m) continue;
+    const fullName = a.title || a.text;
+    if (!fullName || seen.has(m[1])) continue;
+    seen.add(m[1]);
+    out.push({ memberId: m[1], fullName });
+  }
+  return out;
+}
+
+function extractAllUserLinks(html: string): ClassMember[] {
+  const out: ClassMember[] = [];
+  const seen = new Set<string>();
+  for (const a of extractAnchors(html)) {
+    const m = a.href.match(/user\?user=([0-9]+)/);
+    if (!m) continue;
+    const fullName = a.title || a.text;
+    if (!fullName || seen.has(m[1])) continue;
+    seen.add(m[1]);
+    out.push({ memberId: m[1], fullName });
+  }
+  return out;
+}
+
+function extractCredentials(html: string): ClassCredentials[] {
+  // Sahifa JSON state'ida yoki forma maydonlarida login/parol ochiq tursa — yig'amiz.
+  const out: ClassCredentials[] = [];
+  const pairs: Array<[string, string]> = [];
+  const loginRe = /"(?:login|userName|userLogin|username)"\s*:\s*"([^"]+)"/gi;
+  const passRe = /"(?:password|userPassword|pass)"\s*:\s*"([^"]+)"/gi;
+  const logins: string[] = [];
+  const passes: string[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = loginRe.exec(html)) !== null) logins.push(m[1]);
+  while ((m = passRe.exec(html)) !== null) passes.push(m[1]);
+  for (let i = 0; i < Math.min(logins.length, passes.length); i++) {
+    pairs.push([logins[i], passes[i]]);
+  }
+  // Forma maydonlari: <input name="login" value="...">, <input name="password" value="...">
+  const inputRe = /<input\b[^>]*name\s*=\s*"(login|password)"[^>]*>/gi;
+  const formValues: Record<string, string> = {};
+  while ((m = inputRe.exec(html)) !== null) {
+    const tag = m[0];
+    const name = m[1].toLowerCase();
+    const vM = tag.match(/value\s*=\s*"([^"]*)"/i);
+    if (vM && vM[1]) formValues[name] = vM[1];
+  }
+  if (formValues.login && formValues.password) {
+    pairs.push([formValues.login, formValues.password]);
+  }
+  const seen = new Set<string>();
+  for (const [login, password] of pairs) {
+    if (!login || !password || seen.has(login)) continue;
+    seen.add(login);
+    out.push({ login, password });
+  }
+  return out;
+}
+
+function extractActivationLinks(html: string): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const a of extractAnchors(html)) {
+    if (/activate|faollash|activat/i.test(a.href) && !seen.has(a.href)) {
+      seen.add(a.href);
+      out.push(a.href);
+    }
+  }
+  return out;
+}
+
+/**
+ * Sinf kabineti: o'quvchilar, ota-onalar va xodimlar ro'yxatlari (HAQIQIY ma'lumot).
+ */
+export async function fetchClassMembers(
+  session: EmaktabSession,
+  classId: string,
+  className: string,
+): Promise<ClassInfo> {
+  const base = `${SCHOOLS_BASE}/v2/class?class=${encodeURIComponent(classId)}`;
+  const mainHtml = await pageGet(session.cookies, base);
+
+  // Asosiy sahifa: peopleSmall = o'quvchilar, peopleS = xodimlar (o'qituvchilar).
+  let students = extractMembersByUlClass(mainHtml, "peopleSmall");
+  const staff = extractMembersByUlClass(mainHtml, "peopleS");
+  let parents: ClassMember[] = [];
+  let credentials = extractCredentials(mainHtml);
+  let activationLinks = extractActivationLinks(mainHtml);
+
+  // Ota-onalar alohida view'da bo'lishi mumkin.
+  for (const group of ["parents", "students"] as const) {
+    try {
+      const html = await pageGet(session.cookies, `${base}&view=members&group=${group}`);
+      const members = extractAllUserLinks(html);
+      if (group === "parents") {
+        const staffIds = new Set(staff.map((s) => s.memberId));
+        parents = members.filter((m) => !staffIds.has(m.memberId));
+      } else if (students.length === 0 && members.length > 0) {
+        students = members;
+      }
+      credentials = credentials.concat(extractCredentials(html));
+      activationLinks = activationLinks.concat(extractActivationLinks(html));
+    } catch (error) {
+      if (error instanceof EmaktabAuthError) throw error;
+      // sahifa bo'lmasa — davom etamiz
+    }
+  }
+
+  // Agar ota-onalar hali topilmasa — asosiy sahifadagi barcha userlardan
+  // o'quvchi va xodimlarni ayirib ko'ramiz.
+  if (parents.length === 0) {
+    const all = extractAllUserLinks(mainHtml);
+    const known = new Set([...students, ...staff].map((m) => m.memberId));
+    const rest = all.filter((m) => !known.has(m.memberId));
+    if (rest.length > 0) parents = rest;
+  }
+
+  // Dublikatlarni tozalash.
+  const dedupe = (list: ClassMember[]) => {
+    const seen = new Set<string>();
+    return list.filter((m) => (seen.has(m.memberId) ? false : (seen.add(m.memberId), true)));
+  };
+
+  const credSeen = new Set<string>();
+  credentials = credentials.filter((c) => (credSeen.has(c.login) ? false : (credSeen.add(c.login), true)));
+
+  return {
+    classId,
+    className,
+    students: dedupe(students),
+    parents: dedupe(parents),
+    staff: dedupe(staff),
+    credentials,
+    activationLinks: [...new Set(activationLinks)],
+  };
 }

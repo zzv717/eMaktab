@@ -7,6 +7,7 @@ import {
   dayStartTs,
   dayWeekday,
   extractStartState,
+  extractTalkUser,
   gradesFromDiaryDays,
   newsFromUnknown,
   personsFromStartState,
@@ -130,6 +131,27 @@ console.log("7) Haftalik format");
 // ---------------------------------------------------------------------------
 const weekFormatted = formatWeek(schedule, "Test");
 check("week format", weekFormatted.includes("Haftalik"), weekFormatted.slice(0, 100));
+
+// ---------------------------------------------------------------------------
+console.log("8) Rollarni aniqlash (__TALK__INITIAL__STATE__) va sinf sahifasi");
+// ---------------------------------------------------------------------------
+const talkHtml = `<script>
+window.__TALK__INITIAL__STATE__ = window.__TALK__INITIAL__STATE__ || {"user":{"id":"1000008789694","roles":["Teacher"],"teacherGroups":{"2232176621299702379":{}},"classTeacherGroups":["2232176621299702379"],"schoolIds":["1000005979869"]}};
+</script>`;
+const talk = extractTalkUser(talkHtml);
+check("talk user topildi", talk !== null, talk);
+check("rol Teacher", talk?.roles.includes("Teacher") === true, talk?.roles);
+check("classTeacherGroupIds parse", talk?.classTeacherGroupIds.includes("2232176621299702379") === true, talk?.classTeacherGroupIds);
+check("teacherGroupIds parse", talk?.teacherGroupIds.includes("2232176621299702379") === true, talk?.teacherGroupIds);
+
+const classHtml = `
+<ul class="peopleS"><li><a href="/v2/user/user?user=1000008789694" title="Karimov Anvar">o'qituvchi</a></li></ul>
+<ul class="peopleSmall">
+<li><a href="/v2/user/user?user=1000016476677" title="Aliyev Vali">1</a></li>
+<li><a href="/v2/user/user?user=1000016476678" title="Karimova Malika">2</a></li>
+</ul>`;
+const anchors = classHtml.match(/<a\b/gi);
+check("sinf sahifasi HTML tayyor", Boolean(anchors && anchors.length === 3));
 
 console.log(`\nNatija: ${passed} o'tdi, ${failed} yiqildi`);
 process.exit(failed > 0 ? 1 : 0);

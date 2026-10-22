@@ -1,45 +1,56 @@
 // ============================================================================
-// Telegram bot mantig'i — foydalanuvchi oqimi (spec bo'yicha):
+// Telegram bot mantig'i — foydalanuvchi oqimi:
 //
 // 1. /start → bot_users jadvalini tekshiradi:
 //    - Ro'yxatdan o'tmagan → xush kelibsiz + eMaktab login/parol so'raydi
 //    - Ro'yxatdan o'tgan  → darhol asosiy menyuni (inline tugmalar) ochadi
 // 2. Login/parol → ENCRYPTION_KEY bilan shifrlanib bazaga saqlanadi
-// 3. Asosiy menyu:
-//    📊 Baholar · 📚 Dars jadvali / Uy vazifalari · 📰 Yangiliklar · ⚙️ Sozlamalar
-// 4. Sozlamalar → Logout: bazadagi eski ma'lumotlar tozalanadi va bot
+// 3. Rol avtomatik aniqlanadi (o'quvchi / ota-ona / o'qituvchi) va menyu
+//    shunga qarab o'zgaradi.
+// 4. Barcha ma'lumotlar HAQIQIY eMaktabdan olinadi; jarayon botning o'zida
+//    kechadi — "⏳ Iltimos kuting..." → "✅ Muvaffaqiyatli tugadi".
+// 5. Sozlamalar → Logout: bazadagi eski ma'lumotlar tozalanadi va bot
 //    yana login so'raydigan holatga qaytadi.
 // ============================================================================
 
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
-import { botUsers, loginTokens, type BotUser, type ChildContext } from "@/db/schema";
-import { decryptSecret, encryptSecret, generateToken } from "@/lib/crypto";
+import { botUsers, memberAccounts, type BotUser, type ChildContext } from "@/db/schema";
+import { decryptSecret, encryptSecret } from "@/lib/crypto";
 import {
   EmaktabApiError,
   EmaktabAuthError,
+  fetchClassMembers,
   fetchGrades,
   fetchNews,
   fetchSchedule,
+  fetchTeacherClasses,
   loginEmaktab,
   shiftDayKey,
   tashkentDayKey,
+  type ClassInfo,
+  type ClassLink,
   type EmaktabSession,
 } from "@/lib/emaktab";
 import {
   escapeHtml,
   formatAccount,
+  formatActivationReport,
   formatDay,
   formatGrades,
   formatHomework,
+  formatMemberList,
   formatNews,
   formatPersonList,
+  formatProfile,
+  formatTeacherDay,
   formatWeek,
 } from "@/lib/format";
 import {
   answerCallbackQuery,
-  backKeyboard,
   cancelKeyboard,
+  classCabinetKeyboard,
+  classSelectKeyboard,
   deleteMessage,
   editMessageText,
   gradesKeyboard,
@@ -47,34 +58,52 @@ import {
   logoutConfirmKeyboard,
   mainMenuKeyboard,
   newsKeyboard,
+  profileKeyboard,
   scheduleKeyboard,
   sendMessage,
   settingsKeyboard,
+  teacherDayKeyboard,
+  teacherMenuKeyboard,
   type TelegramCallbackQuery,
   type TelegramMessage,
   type TelegramUpdate,
 } from "@/lib/telegram";
 
-const TOKEN_TTL_MS = 90 * 1000; // one-click link is valid for 90 seconds
 const SESSION_CACHE_TTL_MS = 15 * 60 * 1000; // eMaktab sessiyasi 15 daqiqa keshlanadi
 
 // ---------------------------------------------------------------------------
 // Yordamchi funksiyalar
 // ---------------------------------------------------------------------------
 
-function appUrl(): string | null {
-  const url = process.env.APP_URL ?? process.env.NEXT_PUBLIC_APP_URL;
-  return url ? url.replace(/\/+$/, "") : null;
-}
-
 function isAuthenticated(user: BotUser): boolean {
   return Boolean(user.emaktabLogin && user.emaktabPasswordEnc);
+}
+
+function isTeacher(user: BotUser): boolean {
+  return user.role === "teacher";
+}
+
+function isClassTeacher(user: BotUser): boolean {
+  return user.role === "teacher" && Boolean(user.classesJson);
+}
+
+function menuFor(user: BotUser) {
+  return isTeacher(user) ? teacherMenuKeyboard(true, isClassTeacher(user)) : mainMenuKeyboard(true);
 }
 
 function parseChildren(user: BotUser): ChildContext[] {
   try {
     const parsed = user.childrenJson ? JSON.parse(user.childrenJson) : null;
     return Array.isArray(parsed) ? (parsed as ChildContext[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function parseClasses(user: BotUser): ClassLink[] {
+  try {
+    const parsed = user.classesJson ? JSON.parse(user.classesJson) : null;
+    return Array.isArray(parsed) ? (parsed as ClassLink[]) : [];
   } catch {
     return [];
   }
@@ -117,7 +146,6 @@ async function showView(
 
   const parts = splitMessage(text);
   if (parts.length > 1) {
-    // Juda uzun xabar — edit qilmaymiz, yangi xabar(lar) yuboramiz.
     if (messageId) await deleteMessage(chatId, messageId);
     await sendLong(chatId, text, replyMarkup);
     return;
@@ -134,14 +162,44 @@ async function showView(
   await sendMessage(chatId, parts[0], { replyMarkup });
 }
 
+type ProgressMsg = { message_id: number } | null;
+
+async function startProgress(chatId: number, label: string): Promise<ProgressMsg> {
+  try {
+    const res = (await sendMessage(chatId, `⏳ <b>${escapeHtml(label)}</b>\n\n<i>Iltimos kuting...</i>`)) as {
+      message_id?: number;
+    };
+    return res && typeof res.message_id === "number" ? { message_id: res.message_id } : null;
+  } catch {
+    return null;
+  }
+}
+
+async function updateProgress(chatId: number, msg: ProgressMsg, text: string, replyMarkup?: ReturnType<typeof kb>) {
+  if (!msg) return;
+  try {
+    await editMessageText(chatId, msg.message_id, text, { replyMarkup });
+  } catch {
+    /* ignore */
+  }
+}
+
+async function finishProgress(chatId: number, msg: ProgressMsg, label: string) {
+  await updateProgress(chatId, msg, `✅ <b>${escapeHtml(label)}</b> — <b>muvaffaqiyatli tugadi</b>`);
+}
+
+async function failProgress(chatId: number, msg: ProgressMsg, label: string) {
+  await updateProgress(chatId, msg, `❌ <b>${escapeHtml(label)}</b> — xatolik yuz berdi`);
+}
+
 // ---------------------------------------------------------------------------
 // eMaktab sessiya keshi (har safar login qilmaslik uchun)
 // ---------------------------------------------------------------------------
 
-const sessionCache = new Map<number, { session: EmaktabSession; expiresAt: number }>();
+const sessionCache = new Map<number, { session: EmaktabSession; classes: ClassLink[] | null; expiresAt: number }>();
 
-function cacheSession(telegramId: number, session: EmaktabSession) {
-  sessionCache.set(telegramId, { session, expiresAt: Date.now() + SESSION_CACHE_TTL_MS });
+function cacheSession(telegramId: number, session: EmaktabSession, classes: ClassLink[] | null = null) {
+  sessionCache.set(telegramId, { session, classes, expiresAt: Date.now() + SESSION_CACHE_TTL_MS });
 }
 
 function invalidateSession(telegramId: number) {
@@ -155,30 +213,18 @@ async function openSession(user: BotUser): Promise<EmaktabSession> {
   const password = decryptSecret(user.emaktabPasswordEnc!);
   const result = await loginEmaktab(user.emaktabLogin!, password);
   if (result.status === "invalid_credentials" || result.status === "captcha_required") {
-    // Login/parol endi ishlamayapti — foydalanuvchi qayta kirishi kerak.
     throw new EmaktabAuthError(result.message);
   }
   if (result.status !== "ok") {
-    // Tarmoq/server xatosi — vaqtinchalik, ma'lumotlarni o'chirmaymiz.
     throw new EmaktabApiError(result.message);
   }
 
-  // Agar DB'dagi kontekst eskirgan bo'lsa (masalan farzand almashtirilgan), saqlab qo'yamiz.
   const session = result.session;
-  const activeChanged =
-    session.active.personId !== user.personId ||
-    session.active.schoolId !== user.schoolId ||
-    session.active.groupId !== user.groupId;
-
-  if (activeChanged && user.personId) {
-    // Foydalanuvchi DB'da tanlagan kontekstni saqlab qolamiz (farzand almashtirish).
-    const persons = session.persons;
-    const preferred = persons.find((p) => p.personId === user.personId);
-    if (preferred) {
-      session.active = preferred;
-    }
+  // DB'da saqlangan faol kontekstni (farzand tanlovi) saqlab qolamiz.
+  if (user.personId && session.active.personId !== user.personId) {
+    const preferred = session.persons.find((p) => p.personId === user.personId);
+    if (preferred) session.active = preferred;
   }
-
   cacheSession(user.telegramId, session);
   return session;
 }
@@ -190,13 +236,29 @@ async function withSession<T>(user: BotUser, fn: (session: EmaktabSession) => Pr
     return await fn(session);
   } catch (error) {
     if (error instanceof EmaktabAuthError) {
-      // Sessiya eskirgan — bir marta qayta login qilamiz.
       invalidateSession(user.telegramId);
       session = await openSession(user);
       return await fn(session);
     }
     throw error;
   }
+}
+
+async function getTeacherClasses(user: BotUser, session: EmaktabSession): Promise<ClassLink[]> {
+  const cached = sessionCache.get(user.telegramId);
+  if (cached?.classes) return cached.classes;
+  const fromDb = parseClasses(user);
+  if (fromDb.length > 0) {
+    if (cached) cached.classes = fromDb;
+    return fromDb;
+  }
+  const classes = await fetchTeacherClasses(session);
+  cacheSession(user.telegramId, session, classes);
+  await db
+    .update(botUsers)
+    .set({ classesJson: classes.length > 0 ? JSON.stringify(classes) : null, updatedAt: new Date() })
+    .where(eq(botUsers.telegramId, user.telegramId));
+  return classes;
 }
 
 // ---------------------------------------------------------------------------
@@ -266,6 +328,7 @@ async function logoutUser(telegramId: number) {
       schoolName: null,
       groupName: null,
       childrenJson: null,
+      classesJson: null,
       updatedAt: new Date(),
     })
     .where(eq(botUsers.telegramId, telegramId));
@@ -294,22 +357,38 @@ const WELCOME_BACK = (name: string) =>
 const HELP_TEXT = `📖 <b>Bot qo'llanmasi</b>
 
 1️⃣ <b>Boshlash:</b> /start — agar ro'yxatdan o'tmagan bo'lsangiz, bot eMaktab login va parolingizni so'raydi.
-2️⃣ <b>📊 Baholar:</b> so'nggi baholaringiz (fan, baho, sana, izoh).
-3️⃣ <b>📚 Dars jadvali:</b> bugungi/ertangi darslar, o'qituvchilar va uy vazifalari.
-4️⃣ <b>📰 Yangiliklar:</b> maktab va sinf e'lonlari.
-5️⃣ <b>⚙️ Sozlamalar:</b> akkaunt ma'lumotlari, login yangilash yoki chiqish.
+2️⃣ Rolingiz avtomatik aniqlanadi (o'quvchi / ota-ona / o'qituvchi) va menyu shunga qarab o'zgaradi.
+3️⃣ Barcha ma'lumotlar eMaktab'dan olinadi, jarayon bot ichida kechadi.
 
 Buyruqlar: /start · /grades · /schedule · /news · /status · /logout · /cancel`;
 
 // ---------------------------------------------------------------------------
-// Asosiy handler
+// Asosiy handler — hech qachon jim qolmaydi
 // ---------------------------------------------------------------------------
 
 export async function handleTelegramUpdate(update: TelegramUpdate) {
-  if (update.message) {
-    await handleMessage(update.message);
-  } else if (update.callback_query) {
-    await handleCallback(update.callback_query);
+  const chatId = update.message?.chat.id ?? update.callback_query?.message?.chat.id;
+  try {
+    if (update.message) {
+      await handleMessage(update.message);
+    } else if (update.callback_query) {
+      await handleCallback(update.callback_query);
+    }
+  } catch (error) {
+    console.error("Telegram update handler failed", error);
+    if (chatId) {
+      try {
+        const detail = error instanceof Error ? error.message : String(error);
+        await sendMessage(
+          chatId,
+          `😔 <b>Kutilmagan xatolik yuz berdi.</b>\n\n<code>${escapeHtml(detail.slice(0, 500))}</code>\n\n` +
+            `Iltimos, qayta urinib ko'ring yoki /start ni bosing.`,
+          { replyMarkup: mainMenuKeyboard(true) },
+        );
+      } catch {
+        /* ignore */
+      }
+    }
   }
 }
 
@@ -318,21 +397,32 @@ async function handleMessage(message: TelegramMessage) {
   if (!from || from.is_bot) return;
 
   const text = (message.text ?? "").trim();
-  const user = await getOrCreateUser(message, from);
   const chatId = message.chat.id;
+
+  // DB ishlamasa — sababini ochiq aytamiz (bot jim qolmaydi).
+  let user: BotUser;
+  try {
+    user = await getOrCreateUser(message, from);
+  } catch (error) {
+    console.error("DB error", error);
+    await sendMessage(
+      chatId,
+      "⚠️ <b>Bazaga ulanib bo'lmadi.</b>\n\n" +
+        "Vercel'da <code>DATABASE_URL</code> o'zgaruvchisi to'g'ri kiritilganini tekshiring " +
+        "(ichida <code>[YOUR-PAASSWORD]</code> kabi placeholder qolmagan bo'lsin) va deploy qiling.\n\n" +
+        `<code>${escapeHtml(error instanceof Error ? error.message.slice(0, 300) : String(error))}</code>`,
+    );
+    return;
+  }
 
   // --- Buyruqlar ---
   if (text === "/start") {
     await resetState(from.id);
     if (isAuthenticated(user)) {
-      // Holat 2: allaqachon ro'yxatdan o'tgan — darhol asosiy menyu.
-      await sendMessage(
-        chatId,
-        WELCOME_BACK(user.fullName || from.first_name),
-        { replyMarkup: mainMenuKeyboard(true) },
-      );
+      await sendMessage(chatId, WELCOME_BACK(user.fullName || from.first_name), {
+        replyMarkup: menuFor(user),
+      });
     } else {
-      // Holat 1: hali ro'yxatdan o'tmagan — login so'raymiz.
       await db
         .update(botUsers)
         .set({ state: "awaiting_login", tempLogin: null, updatedAt: new Date() })
@@ -344,14 +434,16 @@ async function handleMessage(message: TelegramMessage) {
   }
 
   if (text === "/help") {
-    await sendMessage(chatId, HELP_TEXT, { replyMarkup: mainMenuKeyboard(isAuthenticated(user)) });
+    await sendMessage(chatId, HELP_TEXT, {
+      replyMarkup: isAuthenticated(user) ? menuFor(user) : mainMenuKeyboard(false),
+    });
     return;
   }
 
   if (text === "/cancel") {
     await resetState(from.id);
     await sendMessage(chatId, "✅ Bekor qilindi.", {
-      replyMarkup: mainMenuKeyboard(isAuthenticated(user)),
+      replyMarkup: isAuthenticated(user) ? menuFor(user) : mainMenuKeyboard(false),
     });
     return;
   }
@@ -370,9 +462,12 @@ async function handleMessage(message: TelegramMessage) {
     await sendMessage(
       chatId,
       isAuthenticated(user)
-        ? `✅ <b>Ulangan.</b>\n\n👤 ${escapeHtml(user.fullName || "—")}\n🏫 ${escapeHtml(user.schoolName || "—")} ${escapeHtml(user.groupName || "")}\n🔐 <code>${escapeHtml(user.emaktabLogin ?? "")}</code>`
+        ? `✅ <b>Ulangan.</b>\n\n👤 ${escapeHtml(user.fullName || "—")}\n` +
+            `🎭 ${escapeHtml(user.role || "—")}\n` +
+            `🏫 ${escapeHtml(user.schoolName || "—")} ${escapeHtml(user.groupName || "")}\n` +
+            `🔐 <code>${escapeHtml(user.emaktabLogin ?? "")}</code>`
         : "❌ Hali ulanmagansiz. /start buyrug'ini yuboring.",
-      { replyMarkup: mainMenuKeyboard(isAuthenticated(user)) },
+      { replyMarkup: isAuthenticated(user) ? menuFor(user) : mainMenuKeyboard(false) },
     );
     return;
   }
@@ -385,7 +480,6 @@ async function handleMessage(message: TelegramMessage) {
       });
       return;
     }
-    // Login ham shaxsiy ma'lumot — xabarni o'chiramiz.
     await deleteMessage(chatId, message.message_id);
     await db
       .update(botUsers)
@@ -402,7 +496,6 @@ async function handleMessage(message: TelegramMessage) {
 
   if (user.state === "awaiting_password") {
     const login = user.tempLogin;
-    // Parol xabarini darhol o'chiramiz.
     await deleteMessage(chatId, message.message_id);
 
     if (!login || !text) {
@@ -414,13 +507,23 @@ async function handleMessage(message: TelegramMessage) {
     }
 
     const password = text;
-    const progressMsg = await sendMessage(chatId, "⏳ eMaktab bilan tekshirilmoqda...");
-
+    const progress = await startProgress(chatId, "eMaktab bilan tekshirilmoqda");
     const result = await loginEmaktab(login, password);
 
     if (result.status === "ok") {
       const session = result.session;
       const children = session.persons.length > 1 || session.role === "parent" ? session.persons : [];
+
+      // O'qituvchi uchun sinflarni ham olamiz (rol menyusi uchun).
+      let classes: ClassLink[] = [];
+      if (session.role === "teacher") {
+        try {
+          classes = await fetchTeacherClasses(session);
+        } catch (error) {
+          if (error instanceof EmaktabAuthError) throw error;
+          classes = [];
+        }
+      }
 
       await db
         .update(botUsers)
@@ -439,30 +542,31 @@ async function handleMessage(message: TelegramMessage) {
           schoolName: session.active.schoolName,
           groupName: session.active.groupName,
           childrenJson: children.length > 0 ? JSON.stringify(children) : null,
+          classesJson: session.role === "teacher" && classes.length > 0 ? JSON.stringify(classes) : null,
           updatedAt: new Date(),
         })
         .where(eq(botUsers.telegramId, from.id));
 
-      cacheSession(from.id, session);
+      cacheSession(from.id, session, session.role === "teacher" ? classes : null);
+      await finishProgress(chatId, progress, "Ulanish");
 
-      // "Tekshirilmoqda" xabarini tahrirlaymiz.
-      if (progressMsg && typeof progressMsg === "object" && "message_id" in (progressMsg as object)) {
-        try {
-          await editMessageText(
-            chatId,
-            (progressMsg as { message_id: number }).message_id,
-            `✅ <b>Muvaffaqiyatli ulandi!</b>\n\n👤 ${escapeHtml(session.fullName)}\n🏫 ${escapeHtml(session.active.schoolName)} ${escapeHtml(session.active.groupName)}`,
-          );
-        } catch {
-          /* ignore */
-        }
-      }
-
-      await sendMessage(chatId, WELCOME_BACK(session.fullName), { replyMarkup: mainMenuKeyboard(true) });
+      const roleLabel =
+        session.role === "teacher" ? "O'qituvchi 📖" : session.role === "parent" ? "Ota-ona 👪" : "O'quvchi 🎒";
+      await sendMessage(
+        chatId,
+        `✅ <b>Muvaffaqiyatli ulandi!</b>\n\n👤 ${escapeHtml(session.fullName)}\n🎭 ${roleLabel}\n` +
+          `🏫 ${escapeHtml(session.active.schoolName)} ${escapeHtml(session.active.groupName)}`,
+      );
+      await sendMessage(chatId, WELCOME_BACK(session.fullName), {
+        replyMarkup: isTeacher({ role: session.role } as BotUser)
+          ? teacherMenuKeyboard(true, classes.length > 0)
+          : mainMenuKeyboard(true),
+      });
       return;
     }
 
     if (result.status === "invalid_credentials") {
+      await failProgress(chatId, progress, "Tekshirish");
       await db
         .update(botUsers)
         .set({ state: "awaiting_login", tempLogin: null, updatedAt: new Date() })
@@ -475,7 +579,7 @@ async function handleMessage(message: TelegramMessage) {
       return;
     }
 
-    // captcha yoki umumiy xato
+    await failProgress(chatId, progress, "Tekshirish");
     await db
       .update(botUsers)
       .set({ state: "idle", tempLogin: null, updatedAt: new Date() })
@@ -493,16 +597,15 @@ async function handleMessage(message: TelegramMessage) {
       return;
     }
     if (text === "/schedule" || text === "📚 Dars jadvali") {
-      await sendDayView(chatId, user, 0);
+      if (isTeacher(user)) await sendTeacherDayView(chatId, user, 0);
+      else await sendDayView(chatId, user, 0);
       return;
     }
     if (text === "/news" || text === "📰 Yangiliklar") {
       await sendNewsView(chatId, user);
       return;
     }
-    await sendMessage(chatId, "Quyidagi menyudan tanlang 👇", {
-      replyMarkup: mainMenuKeyboard(true),
-    });
+    await sendMessage(chatId, "Quyidagi menyudan tanlang 👇", { replyMarkup: menuFor(user) });
   } else {
     await startLoginFlow(from.id, chatId);
   }
@@ -517,82 +620,114 @@ function personLabel(user: BotUser): string {
 }
 
 async function sendGradesView(chatId: number, user: BotUser, days: number) {
-  const progress = await sendMessage(chatId, "⏳ Baholar yuklanmoqda...");
+  const progress = await startProgress(chatId, "Baholar yuklanmoqda");
   try {
     const grades = await withSession(user, (s) => fetchGrades(s, days));
     const filtered = grades.slice(0, 40);
     const text = formatGrades(filtered, `So'nggi ${days} kun`, personLabel(user));
-    await deleteIfPossible(chatId, progress);
+    await finishProgress(chatId, progress, "Baholar");
     await sendLong(chatId, text, gradesKeyboard());
   } catch (error) {
-    await deleteIfPossible(chatId, progress);
+    await failProgress(chatId, progress, "Baholar");
     await sendEmaktabError(chatId, user, error);
   }
 }
 
 async function sendDayView(chatId: number, user: BotUser, dayShift: number) {
-  const progress = await sendMessage(chatId, "⏳ Dars jadvali yuklanmoqda...");
+  const progress = await startProgress(chatId, "Dars jadvali yuklanmoqda");
   try {
     const dayKey = shiftDayKey(tashkentDayKey(), dayShift);
     const nextKey = shiftDayKey(dayKey, 1);
     const schedule = await withSession(user, (s) => fetchSchedule(s, dayKey, nextKey));
     const day = schedule.find((d) => d.date === dayKey);
-    const title = dayShift === 0 ? "Bugungi dars jadvali" : dayShift === 1 ? "Ertangi dars jadvali" : "Dars jadvali";
+    const title = dayShift === 0 ? "Bugungi dars jadvali" : "Ertangi dars jadvali";
     const text = formatDay(day, title, personLabel(user));
-    await deleteIfPossible(chatId, progress);
+    await finishProgress(chatId, progress, "Dars jadvali");
     await sendLong(chatId, text, scheduleKeyboard());
   } catch (error) {
-    await deleteIfPossible(chatId, progress);
+    await failProgress(chatId, progress, "Dars jadvali");
+    await sendEmaktabError(chatId, user, error);
+  }
+}
+
+async function sendTeacherDayView(chatId: number, user: BotUser, dayShift: number) {
+  const progress = await startProgress(chatId, "Darslar yuklanmoqda");
+  try {
+    const dayKey = shiftDayKey(tashkentDayKey(), dayShift);
+    const nextKey = shiftDayKey(dayKey, 1);
+    const schedule = await withSession(user, (s) => fetchSchedule(s, dayKey, nextKey));
+    const day = schedule.find((d) => d.date === dayKey);
+    const title = dayShift === 0 ? "Bugungi darslaringiz" : "Ertangi darslaringiz";
+    const text = formatTeacherDay(
+      day?.lessons ?? [],
+      dayKey,
+      title,
+      personLabel(user),
+    );
+    await finishProgress(chatId, progress, "Darslar");
+    await sendLong(chatId, text, teacherDayKeyboard());
+  } catch (error) {
+    await failProgress(chatId, progress, "Darslar");
     await sendEmaktabError(chatId, user, error);
   }
 }
 
 async function sendWeekView(chatId: number, user: BotUser) {
-  const progress = await sendMessage(chatId, "⏳ Haftalik jadval yuklanmoqda...");
+  const progress = await startProgress(chatId, "Haftalik jadval yuklanmoqda");
   try {
     const from = shiftDayKey(tashkentDayKey(), -1);
     const to = shiftDayKey(tashkentDayKey(), 7);
     const schedule = await withSession(user, (s) => fetchSchedule(s, from, to));
     const text = formatWeek(schedule, personLabel(user));
-    await deleteIfPossible(chatId, progress);
+    await finishProgress(chatId, progress, "Haftalik jadval");
     await sendLong(chatId, text, scheduleKeyboard());
   } catch (error) {
-    await deleteIfPossible(chatId, progress);
+    await failProgress(chatId, progress, "Haftalik jadval");
     await sendEmaktabError(chatId, user, error);
   }
 }
 
 async function sendHomeworkView(chatId: number, user: BotUser) {
-  const progress = await sendMessage(chatId, "⏳ Uy vazifalari yuklanmoqda...");
+  const progress = await startProgress(chatId, "Uy vazifalari yuklanmoqda");
   try {
     const from = shiftDayKey(tashkentDayKey(), -2);
     const to = shiftDayKey(tashkentDayKey(), 10);
     const schedule = await withSession(user, (s) => fetchSchedule(s, from, to));
     const text = formatHomework(schedule, personLabel(user));
-    await deleteIfPossible(chatId, progress);
+    await finishProgress(chatId, progress, "Uy vazifalari");
     await sendLong(chatId, text, scheduleKeyboard());
   } catch (error) {
-    await deleteIfPossible(chatId, progress);
+    await failProgress(chatId, progress, "Uy vazifalari");
     await sendEmaktabError(chatId, user, error);
   }
 }
 
 async function sendNewsView(chatId: number, user: BotUser) {
-  const progress = await sendMessage(chatId, "⏳ Yangiliklar yuklanmoqda...");
+  const progress = await startProgress(chatId, "Yangiliklar yuklanmoqda");
   try {
     const posts = await withSession(user, (s) => fetchNews(s, 8));
     const text = formatNews(posts, user.schoolName ?? undefined);
-    await deleteIfPossible(chatId, progress);
+    await finishProgress(chatId, progress, "Yangiliklar");
     await sendLong(chatId, text, newsKeyboard());
   } catch (error) {
-    await deleteIfPossible(chatId, progress);
+    await failProgress(chatId, progress, "Yangiliklar");
     await sendEmaktabError(chatId, user, error);
   }
 }
 
-async function deleteIfPossible(chatId: number, progress: unknown) {
-  if (progress && typeof progress === "object" && "message_id" in (progress as object)) {
-    await deleteMessage(chatId, (progress as { message_id: number }).message_id);
+async function sendProfileView(chatId: number, user: BotUser) {
+  const progress = await startProgress(chatId, "Profil yuklanmoqda");
+  try {
+    let classes: ClassLink[] = [];
+    if (isTeacher(user)) {
+      classes = await withSession(user, (s) => getTeacherClasses(user, s));
+    }
+    const text = formatProfile(user, classes);
+    await finishProgress(chatId, progress, "Profil");
+    await sendLong(chatId, text, profileKeyboard());
+  } catch (error) {
+    await failProgress(chatId, progress, "Profil");
+    await sendEmaktabError(chatId, user, error);
   }
 }
 
@@ -608,16 +743,200 @@ async function sendEmaktabError(chatId: number, user: BotUser, error: unknown) {
   }
   if (error instanceof EmaktabApiError) {
     await sendMessage(chatId, `⚠️ ${escapeHtml(error.message)}`, {
-      replyMarkup: mainMenuKeyboard(true),
+      replyMarkup: isAuthenticated(user) ? menuFor(user) : mainMenuKeyboard(false),
     });
     return;
   }
   console.error("eMaktab error", error);
   await sendMessage(
     chatId,
-    "😔 eMaktab bilan bog'lanishda xatolik yuz berdi.\n\nBirozdan so'ng qayta urinib ko'ring.",
-    { replyMarkup: mainMenuKeyboard(true) },
+    `😔 eMaktab bilan bog'lanishda xatolik yuz berdi.\n\n<code>${escapeHtml(
+      (error instanceof Error ? error.message : String(error)).slice(0, 400),
+    )}</code>\n\nBirozdan so'ng qayta urinib ko'ring.`,
+    { replyMarkup: isAuthenticated(user) ? menuFor(user) : mainMenuKeyboard(false) },
   );
+}
+
+// ---------------------------------------------------------------------------
+// Sinf kabineti
+// ---------------------------------------------------------------------------
+
+async function sendClassCabinet(chatId: number, user: BotUser, classId: string) {
+  const progress = await startProgress(chatId, "Sinf kabineti ochilmoqda");
+  try {
+    const classes = await withSession(user, (s) => getTeacherClasses(user, s));
+    const cl = classes.find((c) => c.classId === classId);
+    if (!cl) throw new EmaktabApiError("Sinf topilmadi.");
+    const info = await withSession(user, (s) => fetchClassMembers(s, cl.classId, cl.className));
+    await cacheClassInfo(user.telegramId, info);
+    const text =
+      `🏫 <b>Sinf kabineti</b> — ${escapeHtml(info.className)}\n\n` +
+      `👨‍🎓 O'quvchilar: <b>${info.students.length}</b> ta\n` +
+      `👥 Ota-onalar: <b>${info.parents.length}</b> ta\n` +
+      `👨‍🏫 Xodimlar: <b>${info.staff.length}</b> ta\n\n` +
+      `Kerakli bo'limni tanlang 👇`;
+    await finishProgress(chatId, progress, "Sinf kabineti");
+    await sendLong(chatId, text, cabinetKeyboard(classId));
+  } catch (error) {
+    await failProgress(chatId, progress, "Sinf kabineti");
+    await sendEmaktabError(chatId, user, error);
+  }
+}
+
+function cabinetKeyboard(classId: string) {
+  return kb([
+    [
+      { text: "👨‍🎓 O'quvchilar ro'yxati", callback_data: `cab:students:${classId}` },
+      { text: "👥 Ota-onalar ro'yxati", callback_data: `cab:parents:${classId}` },
+    ],
+    [
+      { text: "✅ O'quvchilarni faollashtirish", callback_data: `cab:act_students:${classId}` },
+      { text: "✅ Ota-onalarni faollashtirish", callback_data: `cab:act_parents:${classId}` },
+    ],
+    [{ text: "🔄 Ro'yxatni yangilash", callback_data: `cab:refresh:${classId}` }],
+    [{ text: "🏠 Asosiy menyu", callback_data: "menu:home" }],
+  ]);
+}
+
+const classInfoCache = new Map<string, ClassInfo>();
+
+function cacheKey(telegramId: number, info: ClassInfo) {
+  return `${telegramId}:${info.classId}`;
+}
+
+async function cacheClassInfo(telegramId: number, info: ClassInfo) {
+  classInfoCache.set(cacheKey(telegramId, info), info);
+  // 30 daqiqadan keyin tozalanadi
+  setTimeout(() => classInfoCache.delete(cacheKey(telegramId, info)), 30 * 60 * 1000);
+}
+
+async function getClassInfo(user: BotUser, classId: string): Promise<ClassInfo> {
+  const cached = classInfoCache.get(cacheKey(user.telegramId, { classId } as ClassInfo));
+  if (cached) return cached;
+  const classes = await withSession(user, (s) => getTeacherClasses(user, s));
+  const cl = classes.find((c) => c.classId === classId);
+  if (!cl) throw new EmaktabApiError("Sinf topilmadi.");
+  const info = await withSession(user, (s) => fetchClassMembers(s, cl.classId, cl.className));
+  await cacheClassInfo(user.telegramId, info);
+  return info;
+}
+
+// ---------------------------------------------------------------------------
+// Faollashtirish (haqiqiy login/parol bilan eMaktab'ga avtomatik kirish)
+// ---------------------------------------------------------------------------
+
+async function runActivation(chatId: number, user: BotUser, kind: "student" | "parent", classId: string) {
+  const kindLabel = kind === "student" ? "O'quvchilar" : "Ota-onalar";
+  const progress = await startProgress(chatId, `${kindLabel} faollashtirilmoqda`);
+
+  try {
+    const info = await getClassInfo(user, classId);
+    const members = kind === "student" ? info.students : info.parents;
+
+    // 1. Bazada saqlangan login/parollar (oldingi faollashtirishlardan).
+    const saved = await db
+      .select()
+      .from(memberAccounts)
+      .where(and(eq(memberAccounts.teacherTelegramId, user.telegramId), eq(memberAccounts.kind, kind)));
+
+    const okNames: string[] = [];
+    const failLines: string[] = [];
+    const doneMembers = new Set<string>();
+
+    let processed = 0;
+    const total = Math.max(members.length, saved.length);
+
+    // 2. Saqlangan akkauntlarni qayta tekshirish (login bo'lib kirib chiqamiz).
+    for (const acc of saved) {
+      processed++;
+      await updateProgress(
+        chatId,
+        progress,
+        `⏳ <b>${escapeHtml(kindLabel)} faollashtirilmoqda...</b>\n${processed}/${total}\n\n<i>Iltimos kuting...</i>`,
+      );
+      try {
+        const password = decryptSecret(acc.emaktabPasswordEnc!);
+        const res = await loginEmaktab(acc.emaktabLogin!, password);
+        if (res.status === "ok") {
+          okNames.push(acc.fullName || acc.emaktabLogin || acc.memberId || "?");
+          if (acc.memberId) doneMembers.add(acc.memberId);
+          await db
+            .update(memberAccounts)
+            .set({ activatedAt: new Date(), updatedAt: new Date() })
+            .where(eq(memberAccounts.id, acc.id));
+        } else {
+          failLines.push(`${acc.fullName || acc.emaktabLogin}: ${res.status === "invalid_credentials" ? res.message : "kirib bo'lmadi"}`);
+        }
+      } catch (error) {
+        failLines.push(`${acc.fullName || acc.emaktabLogin}: ${error instanceof Error ? error.message : "xatolik"}`);
+      }
+    }
+
+    // 3. eMaktab sahifasidagi login/parollar bilan yangi akkauntlarni faollashtirish.
+    //    Har bir login bilan kirib, eMaktabdagi ismni olamiz va shu ism bilan saqlaymiz.
+    const usedLogins = new Set(saved.map((s) => s.emaktabLogin));
+    let credentialsMissing = info.credentials.length === 0;
+
+    for (const cred of info.credentials) {
+      if (usedLogins.has(cred.login)) continue;
+      processed++;
+      await updateProgress(
+        chatId,
+        progress,
+        `⏳ <b>${escapeHtml(kindLabel)} faollashtirilmoqda...</b>\n${processed}/${total}\n\n<i>Iltimos kuting...</i>`,
+      );
+      try {
+        const res = await loginEmaktab(cred.login, cred.password);
+        if (res.status === "ok") {
+          const name = res.session.fullName || cred.login;
+          okNames.push(name);
+          const matched = members.find((m) => normalizeName(m.fullName) === normalizeName(name));
+          if (matched) doneMembers.add(matched.memberId);
+          await db
+            .insert(memberAccounts)
+            .values({
+              teacherTelegramId: user.telegramId,
+              classId: info.classId,
+              memberId: matched?.memberId ?? null,
+              kind,
+              fullName: name,
+              emaktabLogin: cred.login,
+              emaktabPasswordEnc: encryptSecret(cred.password),
+              activatedAt: new Date(),
+            })
+            .onConflictDoNothing();
+          usedLogins.add(cred.login);
+        } else {
+          failLines.push(
+            `${cred.login}: ${res.status === "invalid_credentials" ? res.message : "kirib bo'lmadi"}`,
+          );
+        }
+      } catch (error) {
+        failLines.push(`${cred.login}: ${error instanceof Error ? error.message : "xatolik"}`);
+      }
+    }
+
+    // 4. Hech qanday parol topilmagan a'zolar haqida halol xabar.
+    for (const m of members) {
+      if (!doneMembers.has(m.memberId)) {
+        failLines.push(`${m.fullName}: login/parol topilmadi`);
+      }
+    }
+    if (credentialsMissing && saved.length === 0) {
+      failLines.push("eMaktab sinf sahifasida login/parollar ochiq emas");
+    }
+
+    const report = formatActivationReport(kindLabel, okNames, failLines, credentialsMissing && okNames.length === 0);
+    await finishProgress(chatId, progress, `${kindLabel} faollashtirish`);
+    await sendLong(chatId, report, cabinetKeyboard(classId));
+  } catch (error) {
+    await failProgress(chatId, progress, `${kindLabel} faollashtirish`);
+    await sendEmaktabError(chatId, user, error);
+  }
+}
+
+function normalizeName(name: string): string {
+  return name.toLowerCase().replace(/\s+/g, " ").trim();
 }
 
 // ---------------------------------------------------------------------------
@@ -630,7 +949,6 @@ async function handleCallback(cb: TelegramCallbackQuery) {
   if (!chatId) return;
 
   const data = cb.data ?? "";
-  const user = await getOrCreateUser(cb.message, cb.from);
 
   // Avval callback'ga javob beramiz (Telegram kutib turmasligi uchun).
   try {
@@ -639,19 +957,33 @@ async function handleCallback(cb: TelegramCallbackQuery) {
     /* ignore */
   }
 
+  // DB xatosi bo'lsa — jim qolmaymiz.
+  let user: BotUser;
+  try {
+    user = await getOrCreateUser(cb.message, cb.from);
+  } catch (error) {
+    console.error("DB error", error);
+    await sendMessage(
+      chatId,
+      "⚠️ <b>Bazaga ulanib bo'lmadi.</b>\n\nVercel'da <code>DATABASE_URL</code> to'g'ri kiritilganini tekshiring.\n\n" +
+        `<code>${escapeHtml(error instanceof Error ? error.message.slice(0, 300) : String(error))}</code>`,
+    );
+    return;
+  }
+
   // --- Menyu navigatsiyasi ---
   if (data === "menu:home") {
     if (!isAuthenticated(user)) {
       await startLoginFlow(cb.from.id, chatId);
       return;
     }
-    await showView(cb, `🏠 <b>Asosiy menyu</b>`, mainMenuKeyboard(true));
+    await showView(cb, `🏠 <b>Asosiy menyu</b>`, menuFor(user));
     return;
   }
 
   if (data === "menu:cancel") {
     await resetState(cb.from.id);
-    await showView(cb, "✅ Bekor qilindi.", mainMenuKeyboard(isAuthenticated(user)));
+    await showView(cb, "✅ Bekor qilindi.", isAuthenticated(user) ? menuFor(user) : mainMenuKeyboard(false));
     return;
   }
 
@@ -660,7 +992,6 @@ async function handleCallback(cb: TelegramCallbackQuery) {
     return;
   }
 
-  // Ulanmagan foydalanuvchi uchun himoya
   if (!isAuthenticated(user)) {
     await sendMessage(chatId, "🔒 Avval eMaktab hisobingizni ulang.", {
       replyMarkup: mainMenuKeyboard(false),
@@ -669,14 +1000,10 @@ async function handleCallback(cb: TelegramCallbackQuery) {
     return;
   }
 
-  // Fresh user (callback DB'dan olingan bo'lishi mumkin — yangilab olamiz)
   const fresh = (await getUser(cb.from.id)) ?? user;
 
-  if (data === "menu:grades") {
-    await sendGradesView(chatId, fresh, 14);
-    return;
-  }
-  if (data === "grades:refresh") {
+  // --- O'quvchi / ota-ona bo'limlari ---
+  if (data === "menu:grades" || data === "grades:refresh") {
     await sendGradesView(chatId, fresh, 14);
     return;
   }
@@ -685,16 +1012,14 @@ async function handleCallback(cb: TelegramCallbackQuery) {
     return;
   }
 
-  if (data === "menu:schedule") {
-    await sendDayView(chatId, fresh, 0);
-    return;
-  }
-  if (data === "sched:today") {
-    await sendDayView(chatId, fresh, 0);
+  if (data === "menu:schedule" || data === "sched:today") {
+    if (isTeacher(fresh)) await sendTeacherDayView(chatId, fresh, 0);
+    else await sendDayView(chatId, fresh, 0);
     return;
   }
   if (data === "sched:tomorrow") {
-    await sendDayView(chatId, fresh, 1);
+    if (isTeacher(fresh)) await sendTeacherDayView(chatId, fresh, 1);
+    else await sendDayView(chatId, fresh, 1);
     return;
   }
   if (data === "sched:week") {
@@ -711,14 +1036,98 @@ async function handleCallback(cb: TelegramCallbackQuery) {
     return;
   }
 
-  if (data === "menu:settings") {
+  // --- O'qituvchi bo'limlari ---
+  if (data === "t:today") {
+    await sendTeacherDayView(chatId, fresh, 0);
+    return;
+  }
+  if (data === "t:tomorrow") {
+    await sendTeacherDayView(chatId, fresh, 1);
+    return;
+  }
+  if (data === "profile") {
+    await sendProfileView(chatId, fresh);
+    return;
+  }
+
+  if (data === "cab:open") {
+    const classes = await withSession(fresh, (s) => getTeacherClasses(fresh, s)).catch(() => [] as ClassLink[]);
+    if (classes.length === 0) {
+      await sendMessage(chatId, "🏫 Sinf topilmadi.", { replyMarkup: menuFor(fresh) });
+      return;
+    }
+    if (classes.length === 1) {
+      await sendClassCabinet(chatId, fresh, classes[0].classId);
+      return;
+    }
+    await showView(
+      cb,
+      `🏫 <b>Sinfni tanlang:</b>`,
+      kb([
+        ...classes.map((c) => [{ text: `🏫 ${c.className}`, callback_data: `cabsel:${c.classId}` }]),
+        [{ text: "🏠 Asosiy menyu", callback_data: "menu:home" }],
+      ]),
+    );
+    return;
+  }
+
+  if (data.startsWith("cabsel:")) {
+    await sendClassCabinet(chatId, fresh, data.slice("cabsel:".length));
+    return;
+  }
+
+  if (data.startsWith("cab:refresh:")) {
+    const classId = data.slice("cab:refresh:".length);
+    classInfoCache.delete(cacheKey(fresh.telegramId, { classId } as ClassInfo));
+    await sendClassCabinet(chatId, fresh, classId);
+    return;
+  }
+
+  if (data.startsWith("cab:students:")) {
+    const classId = data.slice("cab:students:".length);
+    const progress = await startProgress(chatId, "O'quvchilar ro'yxati yuklanmoqda");
+    try {
+      const info = await getClassInfo(fresh, classId);
+      const text = formatMemberList("O'quvchilar ro'yxati", info.className, info.students);
+      await finishProgress(chatId, progress, "O'quvchilar ro'yxati");
+      await sendLong(chatId, text, cabinetKeyboard(classId));
+    } catch (error) {
+      await failProgress(chatId, progress, "O'quvchilar ro'yxati");
+      await sendEmaktabError(chatId, fresh, error);
+    }
+    return;
+  }
+
+  if (data.startsWith("cab:parents:")) {
+    const classId = data.slice("cab:parents:".length);
+    const progress = await startProgress(chatId, "Ota-onalar ro'yxati yuklanmoqda");
+    try {
+      const info = await getClassInfo(fresh, classId);
+      const text = formatMemberList("Ota-onalar ro'yxati", info.className, info.parents);
+      await finishProgress(chatId, progress, "Ota-onalar ro'yxati");
+      await sendLong(chatId, text, cabinetKeyboard(classId));
+    } catch (error) {
+      await failProgress(chatId, progress, "Ota-onalar ro'yxati");
+      await sendEmaktabError(chatId, fresh, error);
+    }
+    return;
+  }
+
+  if (data.startsWith("cab:act_students:")) {
+    await runActivation(chatId, fresh, "student", data.slice("cab:act_students:".length));
+    return;
+  }
+  if (data.startsWith("cab:act_parents:")) {
+    await runActivation(chatId, fresh, "parent", data.slice("cab:act_parents:".length));
+    return;
+  }
+
+  // --- Sozlamalar ---
+  if (data === "menu:settings" || data === "settings:account") {
     const children = parseChildren(fresh);
-    const rows: Array<Array<{ text: string; callback_data?: string; url?: string }>> = [];
+    const rows: Array<Array<{ text: string; callback_data: string }>> = [];
     if (children.length > 1) {
       rows.push([{ text: "👶 Farzandni almashtirish", callback_data: "settings:children" }]);
-    }
-    if (appUrl()) {
-      rows.push([{ text: "🔓 eMaktab saytini ochish", callback_data: "open_emaktab" }]);
     }
     rows.push([{ text: "🔄 Login/parolni yangilash", callback_data: "settings:relogin" }]);
     rows.push([{ text: "🚪 Chiqish (Logout)", callback_data: "settings:logout" }]);
@@ -730,7 +1139,7 @@ async function handleCallback(cb: TelegramCallbackQuery) {
   if (data === "settings:children") {
     const children = parseChildren(fresh);
     if (children.length <= 1) {
-      await showView(cb, "👶 Bu akkauntga bitta farzand bog'langan.", settingsKeyboard(Boolean(appUrl())));
+      await showView(cb, "👶 Bu akkauntga bitta farzand bog'langan.", settingsKeyboard());
       return;
     }
     const rows = children.map((c, i) => [
@@ -744,15 +1153,10 @@ async function handleCallback(cb: TelegramCallbackQuery) {
     return;
   }
 
-  if (data === "settings:account") {
-    await showView(cb, formatAccount(fresh), settingsKeyboard(Boolean(appUrl())));
-    return;
-  }
-
   if (data === "settings:relogin") {
     await showView(
       cb,
-      "🔄 <b>Login/parolni yangilash</b>\n\nYangi eMaktab login va parolingizni kiritasiz. Eski ma'lumotlar o'rinini yangisi egallaydi.",
+      "🔄 <b>Login/parolni yangilash</b>\n\nYangi eMaktab login va parolingizni kiritasiz. Eski ma'lumotlar o'rnini yangisi egallaydi.",
       cancelKeyboard(),
     );
     await startLoginFlow(cb.from.id, chatId);
@@ -786,7 +1190,7 @@ async function handleCallback(cb: TelegramCallbackQuery) {
     const children = parseChildren(fresh);
     const selected = children[idx];
     if (!selected) {
-      await sendMessage(chatId, "⚠️ Farzand topilmadi.", { replyMarkup: mainMenuKeyboard(true) });
+      await sendMessage(chatId, "⚠️ Farzand topilmadi.", { replyMarkup: menuFor(fresh) });
       return;
     }
     invalidateSession(cb.from.id);
@@ -805,68 +1209,17 @@ async function handleCallback(cb: TelegramCallbackQuery) {
     await showView(
       cb,
       `👶 <b>${escapeHtml(selected.fullName)}</b> tanlandi.\n\n${escapeHtml(selected.schoolName)} ${escapeHtml(selected.groupName)}`,
-      mainMenuKeyboard(true),
+      menuFor(fresh),
     );
-    return;
-  }
-
-  // --- Bir bosishda eMaktabga kirish (one-click login sahifasi) ---
-  if (data === "open_emaktab") {
-    const base = appUrl();
-    if (!base) {
-      await sendMessage(
-        chatId,
-        "⚠️ APP_URL sozlanmaganligi sababli bir bosishda kirish ishlamayapti.\n\n" +
-          "eMaktab'ga to'g'ridan-to'g'ri kirish: https://emaktab.uz",
-        { replyMarkup: mainMenuKeyboard(true) },
-      );
-      return;
-    }
-
-    const token = generateToken(24);
-    await db.insert(loginTokens).values({
-      token,
-      telegramId: cb.from.id,
-      expiresAt: new Date(Date.now() + TOKEN_TTL_MS),
-    });
-
-    await sendMessage(chatId, "👇 90 soniya ichida tugmani bosing — brauzeringiz avtomatik eMaktabga kiradi:", {
-      replyMarkup: kb([[{ text: "🔓 eMaktabga kirish", url: `${base}/e/${token}` }]]),
-    });
     return;
   }
 
   // Noma'lum callback — menyu qaytaramiz.
   if (messageId) {
     try {
-      await editMessageText(chatId, messageId, "🏠 <b>Asosiy menyu</b>", {
-        replyMarkup: mainMenuKeyboard(isAuthenticated(user)),
-      });
+      await editMessageText(chatId, messageId, "🏠 <b>Asosiy menyu</b>", { replyMarkup: menuFor(user) });
     } catch {
       /* ignore */
     }
   }
-}
-
-// ---------------------------------------------------------------------------
-// One-click login token (sahifa /e/[token] uchun)
-// ---------------------------------------------------------------------------
-
-export async function consumeLoginToken(token: string) {
-  const row = await db.query.loginTokens.findFirst({ where: eq(loginTokens.token, token) });
-  if (!row || row.used || row.expiresAt.getTime() < Date.now()) {
-    return null;
-  }
-
-  await db.update(loginTokens).set({ used: true }).where(eq(loginTokens.token, token));
-
-  const user = await getUser(row.telegramId);
-  if (!user?.emaktabLogin || !user?.emaktabPasswordEnc) {
-    return null;
-  }
-
-  return {
-    login: user.emaktabLogin,
-    password: decryptSecret(user.emaktabPasswordEnc),
-  };
 }
