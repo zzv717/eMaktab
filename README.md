@@ -2,35 +2,47 @@
 
 **eMaktab (kundalik.com)** — O'zbekiston maktablarining elektron kundaligi uchun Telegram bot.
 
-Bot o'quvchi/ota-onaning eMaktab hisobini Telegram'ga ulaydi va quyidagilarni **inline tugmalar** orqali ko'rsatadi:
+Barcha jarayon **botning o'zida** kechadi — brauzerga yoki boshqa ilovaga o'tish shart emas. Har bir so'rovda bot **"⏳ Iltimos kuting..."** deb turadi va tugagach **"✅ Muvaffaqiyatli tugadi"** deb xabar beradi. Barcha ma'lumotlar **haqiqiy eMaktab'dan** olinadi.
 
+## 🎭 Rollar avtomatik aniqlanadi
+
+Bot eMaktabga kirgandan so'ng rolni (o'quvchi / ota-ona / o'qituvchi) avtomatik aniqlaydi va menyu shunga qarab o'zgaradi.
+
+### O'quvchi / Ota-ona menyusi
 | Tugma | Vazifa |
 |---|---|
-| 📊 **Baholar** | eMaktab tizimidan so'nggi baholarni tortib keladi va tartibli ko'rinishda chiqaradi (fan, baho, sana, izoh, o'rtacha) |
-| 📚 **Dars jadvali / Uy vazifalari** | Bugungi yoki ertangi darslarni, o'qituvchilar nomini va berilgan uy vazifalarini ko'rsatadi (haftalik jadval ham bor) |
-| 📰 **Yangiliklar** | Maktab yoki sinf bo'yicha e'lon qilingan yangiliklarni yetkazadi |
-| ⚙️ **Sozlamalar** | Akkunt ma'lumotlari, login/parolni yangilash, **Logout** (eski ma'lumotlar bazadan tozalanadi va bot qayta login so'raydi) |
+| 📊 **Baholar** | So'nggi baholar (fan, baho, sana, izoh, o'rtacha) |
+| 📚 **Dars jadvali** | Bugun/ertaga/haftalik darslar + uy vazifalari |
+| 📰 **Yangiliklar** | Maktab/sinf e'lonlari |
+| ⚙️ **Sozlamalar** | Akkunt, farzand almashtirish, logout |
 
-Qo'shimcha: **bir bosishda eMaktabga kirish** — bot brauzer uchun bir martalik havola yaratadi va eMaktab login formasi avtomatik to'ldiriladi.
+### O'qituvchi menyusi
+| Tugma | Vazifa |
+|---|---|
+| 📅 **Bugungi darslar** | Bugun qaysi soatda, qaysi sinfga, qaysi fan darsi borligi |
+| 📆 **Ertangi darslar** | Ertangi darslar |
+| 🏫 **Sinf kabineti** | (sinf rahbarida) — quyida batafsil |
+| 📰 **Yangiliklar** | Maktab/sinf yangiliklari |
+| 👤 **Profil** | O'qituvchi profili (F.I.Sh., maktab, sinflar) |
+| ⚙️ **Sozlamalar** | Login yangilash, logout |
+
+### 🏫 Sinf kabineti (sinf rahbari uchun)
+| Tugma | Vazifa |
+|---|---|
+| 👨‍🎓 **O'quvchilar ro'yxati** | eMaktabdagi haqiqiy ro'yxat |
+| 👪 **Ota-onalar ro'yxati** | eMaktabdagi haqiqiy ro'yxat |
+| ✅ **O'quvchilarni faollashtirish** | Bot o'quvchilarning eMaktab hisobiga o'zi avtomatik kirib chiqadi (login/parol saqlanadi) |
+| ✅ **Ota-onalarni faollashtirish** | Xuddi shunday, ota-onalar uchun |
+
+> Faollashtirish jarayoni bir necha daqiqa ketishi mumkin — bot davomida "⏳ Iltimos kuting..." deb turadi va oxirida kim muvaffaqiyatli bo'lgani/bo'lmaganini halol ko'rsatadi. Login/parollar bazada **AES-256 shifrlangan** holda saqlanadi va keyingi safar qayta ishlatiladi.
 
 ---
 
-## 🔄 Foydalanuvchi oqimi (spec)
+## 🔄 `/start` oqimi
 
-### `/start` buyrug'i
 1. Bot `bot_users` jadvalini tekshiradi: bu Telegram ID avval ro'yxatdan o'tganmi?
-2. **Ro'yxatdan o'tmagan bo'lsa:**
-   - Xush kelibsiz xabari + eMaktab (kundalik.com) **login** va **parol**ini kiritishni so'raydi;
-   - Foydalanuvchi login, keyin parol yuboradi (bu xabarlar darhol chatdan o'chiriladi);
-   - Bot ma'lumotlarni **`ENCRYPTION_KEY`** yordamida **AES-256-GCM** bilan shifrlab, `bot_users` jadvaliga saqlaydi va eMaktab'da haqiqiy ekanligini tekshiradi.
-3. **Ro'yxatdan o'tgan bo'lsa:**
-   - Qayta ro'yxatdan o'tkazmaydi — **darhol asosiy menyuni** ochadi.
-
-### Asosiy menyu
-```
-[ 📊 Baholar ]  [ 📚 Dars jadvali ]
-[ 📰 Yangiliklar ]  [ ⚙️ Sozlamalar ]
-```
+2. **Ro'yxatdan o'tmagan bo'lsa** → xush kelibsiz + eMaktab login/parol so'raydi. Kiritilgan ma'lumotlar `ENCRYPTION_KEY` bilan shifrlanib bazaga saqlanadi (login/parol xabarlari chatdan darhol o'chiriladi).
+3. **Ro'yxatdan o'tgan bo'lsa** → qayta so'ramaydi, darhol menyuni ochadi.
 
 ---
 
@@ -41,58 +53,52 @@ src/
 ├── app/
 │   ├── api/telegram/webhook/     # Telegram webhook endpointi
 │   ├── api/telegram/set-webhook/ # Webhook'ni bir martalik sozlash
-│   ├── api/health/               # Sog'liqni tekshirish
-│   └── e/[token]/                # Bir bosishda eMaktabga kirish sahifasi
+│   └── api/health/               # Sog'liqni tekshirish (DB ulanishi)
 ├── db/
-│   ├── schema.ts                 # bot_users, login_tokens jadvallari (Drizzle ORM)
-│   └── index.ts                  # PostgreSQL (Supabase) ulanishi
+│   ├── schema.ts                 # bot_users, member_accounts (Drizzle ORM)
+│   └── index.ts                  # PostgreSQL (Supabase)
 └── lib/
-    ├── bot.ts                    # Bot mantig'i: /start, state-machine, menyu handlerlari
-    ├── emaktab.ts                # eMaktab klienti: login, baholar, jadval, yangiliklar
+    ├── bot.ts                    # Bot mantig'i, rollar, menyu handlerlari
+    ├── emaktab.ts                # eMaktab klienti (login, baholar, jadval, yangiliklar, sinflar)
     ├── crypto.ts                 # AES-256-GCM shifrlash (ENCRYPTION_KEY)
     ├── format.ts                 # Telegram HTML formatlash
     └── telegram.ts               # Telegram Bot API klienti + klaviaturalar
 ```
 
-### eMaktab integratsiyasi
-eMaktab cookie-based autentifikatsiya ishlatadi (rasmiy OAuth partner API emas):
+### eMaktab integratsiyasi (cookie-based, rasmiy OAuth emas)
+- `POST https://login.emaktab.uz/login` — form login → cookie'lar
+- `GET /api/userfeed` — bosh sahifa state (jadval, baholar, kontekst, rollar)
+- `GET /api/v2/marks/diary` — baholar, darslar, uy vazifalari
+- `GET /api/userfeed/posts` — yangiliklar lentasi
+- `GET https://schools.emaktab.uz/v2/myclasses` — o'qituvchi sinflari
+- `GET https://schools.emaktab.uz/v2/class?class=ID` — sinf kabineti (o'quvchilar/ota-onalar)
 
-1. `POST https://login.emaktab.uz/login` — form login → `UZDnevnikAuth_a`, `t0` cookie'lari;
-2. Cookie'lar bilan so'rovlar:
-   - `GET /api/userfeed` — bosh sahifa state (`window.__USER__START__PAGE__INITIAL__STATE__`): jadval, baholar, kontekst;
-   - `GET /api/v2/marks/diary?personId&schoolId&startDate&finishDate` — kundalik (baholar, darslar, uy vazifalari);
-   - `GET /api/v2/persons/{p}/groups/{g}/schedules` — dars jadvali;
-   - `GET /api/userfeed/posts` — yangiliklar lentasi (maktab/sinf e'lonlari);
-   - `GET /api/v2/users/me`, `/api/v2/users/me/context`, `/api/v2/users/me/children` — profil.
-
-> ⚠️ eMaktab IDlari (personId/schoolId/groupId) 19+ xonali — ular doimo **string** sifatida saqlanadi.
+> ⚠️ eMaktab IDlari 19+ xonali — ular doimo **string** sifatida saqlanadi.
 
 ### Xavfsizlik
-- Parol hech qachon ochiq matnda saqlanmaydi — **AES-256-GCM** + `ENCRYPTION_KEY` (scrypt-derived key);
-- Login/parol yozilgan xabarlar Telegram chatidan **darhol o'chiriladi**;
-- One-click kirish uchun **bir martalik**, 90 soniyali token ishlatiladi.
+- Parollar **AES-256-GCM** + `ENCRYPTION_KEY` bilan shifrlanadi
+- Login/parol yozilgan xabarlar chatdan **darhol o'chiriladi**
+- Bot hech qachon jim qolmaydi — xatolik bo'lsa sababini ko'rsatadi
 
 ---
 
 ## ⚙️ O'rnatish
 
-### 1. O'zgaruvchilar (`.env`)
+### 1. `.env` fayli
 
 ```env
 TELEGRAM_BOT_TOKEN=...        # @BotFather dan
 DATABASE_URL=...              # PostgreSQL (Supabase) connection string
 ENCRYPTION_KEY=...            # Maxfiy satr — parollarni shifrlash kaliti
-APP_URL=...                   # Ilovaning ommaviy URL (one-click kirish uchun)
+APP_URL=...                   # Ilovaning ommaviy URL (webhook uchun)
 TELEGRAM_WEBHOOK_SECRET=...   # Webhook himoyasi uchun maxfiy satr
 ```
-
-`.env.example` faylini namuna sifatida ko'ring.
 
 ### 2. Bazani tayyorlash
 
 ```bash
 npm install
-npm run db:push      # drizzle-kit orqali jadvallarni yaratadi/yangilaydi
+npm run db:push      # jadvallarni yaratadi/yangiladi
 ```
 
 ### 3. Ishga tushirish
@@ -104,35 +110,20 @@ npm run build && npm start   # production
 
 ### 4. Webhook'ni ulash
 
-Deploy qilgandan so'ng bir marta oching:
-
 ```
 GET https://<APP_URL>/api/telegram/set-webhook?secret=<TELEGRAM_WEBHOOK_SECRET>
 ```
 
-Bot ishlaydi! Telegram'da `/start` yuboring.
+`{"ok": true}` qaytsa — tayyor! Telegram'da `/start` yuboring.
 
 ---
 
 ## 🧪 Testlar
 
-Parserlar haqiqiy eMaktab API namunalari (`scripts/sample-userfeed.html`) bilan tekshiriladi:
-
 ```bash
-npx tsx scripts/verify-parsing.ts
+npx tsx scripts/verify-parsing.ts   # 48 ta test — haqiqiy API namunalari bilan
 ```
 
----
+## 📦 Buyruqlar
 
-## 📦 Asosiy buyruqlar
-
-| Buyruq | Tavsif |
-|---|---|
-| `/start` | Ro'yxatdan o'tish / asosiy menyu |
-| `/grades` | So'nggi baholar |
-| `/schedule` | Bugungi dars jadvali |
-| `/news` | Yangiliklar |
-| `/status` | Ulanish holati |
-| `/logout` | Chiqish (ma'lumotlar tozalanadi) |
-| `/cancel` | Joriy amalni bekor qilish |
-| `/help` | Qo'llanma |
+`/start` · `/grades` · `/schedule` · `/news` · `/status` · `/logout` · `/cancel` · `/help`

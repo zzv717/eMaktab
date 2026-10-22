@@ -1,6 +1,5 @@
 import {
   bigint,
-  boolean,
   pgTable,
   serial,
   text,
@@ -46,22 +45,33 @@ export const botUsers = pgTable("bot_users", {
   // The active child's values are duplicated into the columns above.
   childrenJson: text("children_json"),
 
+  // For teachers: JSON array of taught classes [{ classId, className }, ...]
+  classesJson: text("classes_json"),
+
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
-// Short-lived, single-use tokens used to open the "one click" auto-login page
-// from a Telegram button without ever putting the password in the URL/chat again.
-export const loginTokens = pgTable("login_tokens", {
+// eMaktab credentials of class members (students/parents), saved by a class teacher
+// after the "faollashtirish" (activation) flow so the teacher can re-activate
+// or verify accounts again later. Passwords are AES-256-GCM encrypted (ENCRYPTION_KEY).
+export const memberAccounts = pgTable("member_accounts", {
   id: serial("id").primaryKey(),
-  token: varchar("token", { length: 64 }).notNull().unique(),
-  telegramId: bigint("telegram_id", { mode: "number" }).notNull(),
-  used: boolean("used").notNull().default(false),
-  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  teacherTelegramId: bigint("teacher_telegram_id", { mode: "number" }).notNull(),
+  classId: varchar("class_id", { length: 32 }),
+  // eMaktab user id of the member (from schools.emaktab.uz user?user=NNN links)
+  memberId: varchar("member_id", { length: 32 }),
+  kind: varchar("kind", { length: 16 }).notNull(), // student | parent
+  fullName: varchar("full_name", { length: 255 }),
+  emaktabLogin: varchar("emaktab_login", { length: 255 }),
+  emaktabPasswordEnc: text("emaktab_password_enc"),
+  activatedAt: timestamp("activated_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 export type BotUser = typeof botUsers.$inferSelect;
+export type MemberAccount = typeof memberAccounts.$inferSelect;
 export type ChildContext = {
   personId: string;
   schoolId: string;

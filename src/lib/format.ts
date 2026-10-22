@@ -109,7 +109,8 @@ function formatLesson(lesson: Lesson): string {
   const time = lesson.startTime
     ? `🕘 ${lesson.startTime}${lesson.endTime ? `–${lesson.endTime}` : ""}\n`
     : "";
-  const title = `${lesson.number ? `${lesson.number}. ` : ""}${escapeHtml(lesson.subject)}`;
+  const groupSuffix = lesson.groupName ? ` — ${escapeHtml(lesson.groupName)} sinf` : "";
+  const title = `${lesson.number ? `${lesson.number}. ` : ""}${escapeHtml(lesson.subject)}${groupSuffix}`;
   let body = time + (lesson.isCanceled ? `   ❌ <s>${title}</s> — bekor qilingan` : `   📖 ${title}`);
 
   if (lesson.theme) body += `\n   🎯 ${escapeHtml(lesson.theme)}`;
@@ -283,5 +284,111 @@ export function formatPersonList(persons: PersonContext[], activePersonId: strin
     text += `\n${i + 1}. ${escapeHtml(p.fullName || p.personId)}${active}\n`;
     text += `   ${escapeHtml(p.schoolName || "")} ${escapeHtml(p.groupName || "")}`.trim() + "\n";
   });
+  return text;
+}
+
+// ---------------------------------------------------------------------------
+// O'qituvchi: darslar, sinf kabineti, profil
+// ---------------------------------------------------------------------------
+
+export function formatTeacherDay(
+  lessons: Array<{ number: number; subject: string; groupName: string | null; startTime: string | null; endTime: string | null; room: string | null; isCanceled: boolean; theme: string | null; teacher?: string | null }>,
+  dayKey: string | null,
+  title: string,
+  teacherName?: string,
+): string {
+  const header = teacherName
+    ? `📅 <b>${escapeHtml(title)}</b> — ${escapeHtml(teacherName)}\n`
+    : `📅 <b>${escapeHtml(title)}</b>\n`;
+  const dateLine = dayKey ? `🗓 ${escapeHtml(formatDayTitle(dayKey))}\n` : "";
+
+  if (lessons.length === 0) {
+    return header + dateLine + `\nBu kunda darslar topilmadi. 🏖`;
+  }
+
+  let text = header + dateLine;
+  for (const l of lessons) {
+    const time = l.startTime ? `🕘 ${l.startTime}${l.endTime ? `–${l.endTime}` : ""}\n` : "";
+    const main = `${l.number ? `${l.number}. ` : ""}${escapeHtml(l.subject)}`;
+    const group = l.groupName ? ` — <b>${escapeHtml(l.groupName)}</b> sinf` : "";
+    text += `\n${time}   📖 ${main}${group}`;
+    if (l.isCanceled) text += `  ❌ <i>bekor qilingan</i>`;
+    if (l.theme) text += `\n   🎯 ${escapeHtml(l.theme)}`;
+    if (l.room) text += `\n   🚪 ${escapeHtml(l.room)}`;
+    text += `\n`;
+  }
+  return text;
+}
+
+export function formatMemberList(
+  title: string,
+  className: string,
+  members: Array<{ memberId: string; fullName: string }>,
+): string {
+  const header = `👥 <b>${escapeHtml(title)}</b> — ${escapeHtml(className)}\n`;
+  if (members.length === 0) {
+    return header + `\nRo'yxat bo'sh yoki eMaktab bu ma'lumotni bermadi.`;
+  }
+  let text = header + `<i>Jami: ${members.length} ta</i>\n`;
+  members.forEach((m, i) => {
+    text += `\n${i + 1}. ${escapeHtml(m.fullName)}`;
+  });
+  return text;
+}
+
+export function formatProfile(user: {
+  fullName?: string | null;
+  role?: string | null;
+  emaktabLogin?: string | null;
+  schoolName?: string | null;
+  groupName?: string | null;
+  emaktabUserId?: string | null;
+  connectedAt?: Date | null;
+}, classes: Array<{ classId: string; className: string }> = []): string {
+  const roleNames: Record<string, string> = {
+    student: "O'quvchi 🎒",
+    parent: "Ota-ona 👪",
+    teacher: "O'qituvchi 📖",
+  };
+
+  const lines = [
+    `👤 <b>Profil</b>`,
+    ``,
+    `F.I.Sh.: <b>${escapeHtml(user.fullName || "—")}</b>`,
+    `Rol: <b>${escapeHtml(user.role ? (roleNames[user.role] ?? user.role) : "—")}</b>`,
+    `Maktab: <b>${escapeHtml(user.schoolName || "—")}</b>`,
+  ];
+  if (user.groupName) lines.push(`Sinf: <b>${escapeHtml(user.groupName)}</b>`);
+  if (classes.length > 0) {
+    lines.push(`Dars beradigan sinflar: <b>${classes.map((c) => escapeHtml(c.className)).join(", ")}</b>`);
+  }
+  lines.push(`eMaktab ID: <code>${escapeHtml(user.emaktabUserId || "—")}</code>`);
+  if (user.connectedAt) {
+    lines.push(`Botga ulangan: <b>${escapeHtml(formatDate(user.connectedAt.toISOString().slice(0, 10)))}</b>`);
+  }
+  return lines.join("\n");
+}
+
+export function formatActivationReport(
+  kindLabel: string,
+  okNames: string[],
+  failLines: string[],
+  credentialsMissing: boolean,
+): string {
+  let text = `✅ <b>Muvaffaqiyatli tugadi</b> — ${escapeHtml(kindLabel)} faollashtirish\n\n`;
+  text += `✔️ Faollashtirildi: <b>${okNames.length}</b> ta\n`;
+  if (okNames.length > 0) {
+    text += okNames.map((n) => `   • ${escapeHtml(n)}`).join("\n") + "\n";
+  }
+  if (failLines.length > 0) {
+    text += `\n❌ Muvaffaqiyatsiz: <b>${failLines.length}</b> ta\n`;
+    text += failLines.map((l) => `   • ${escapeHtml(l)}`).join("\n") + "\n";
+  }
+  if (credentialsMissing) {
+    text +=
+      `\n⚠️ <i>Eslatma:</i> eMaktab sinf sahifasida o'quvchi/ota-onalarning login-paroli ochiq ko'rinmadi. ` +
+      `Ular eMaktabdagi sinf kabinetidan olinadi — agar u yerda parollar ko'rinmasa, ` +
+      `eMaktab ma'muri orqali olinadi va botga qayta yuboriladi.`;
+  }
   return text;
 }

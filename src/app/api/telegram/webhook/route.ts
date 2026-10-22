@@ -3,6 +3,8 @@ import { handleTelegramUpdate } from "@/lib/bot";
 import type { TelegramUpdate } from "@/lib/telegram";
 
 export const dynamic = "force-dynamic";
+// Faollashtirish kabi uzoq jarayonlar uchun (Vercel Fluid: 5 daqiqagacha)
+export const maxDuration = 300;
 
 export async function POST(req: NextRequest) {
   const expectedSecret = process.env.TELEGRAM_WEBHOOK_SECRET;

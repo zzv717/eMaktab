@@ -4,9 +4,10 @@ import * as schema from "./schema";
 
 const databaseUrl = process.env.DATABASE_URL;
 
-if (!databaseUrl) {
-  throw new Error("DATABASE_URL is required");
-}
+// Import paytida xatolik tashlamaymiz — aks holda butun API route ishlamay qoladi
+// va bot jim bo'ladi. Xatolik birinchi DB so'rovida ko'rinadi va foydalanuvchiga
+// yetkaziladi.
+export const dbConfigError = databaseUrl ? null : "DATABASE_URL sozlanmagan";
 
 const globalForDb = globalThis as typeof globalThis & {
   __arenaNextJsPostgresqlPool?: Pool;
