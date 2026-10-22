@@ -34,5 +34,16 @@ export async function POST(req: NextRequest) {
 }
 
 export async function GET() {
-  return NextResponse.json({ ok: true, message: "Telegram webhook is alive. Use POST." });
+  // Diagnostika — hech qanday sir qaytarmaydi, faqat sozlangan-yo'qligini ko'rsatadi.
+  return NextResponse.json({
+    ok: true,
+    message: "Telegram webhook is alive. Use POST.",
+    config: {
+      botTokenConfigured: Boolean(process.env.TELEGRAM_BOT_TOKEN),
+      webhookSecretConfigured: Boolean(process.env.TELEGRAM_WEBHOOK_SECRET),
+      appUrlConfigured: Boolean(process.env.APP_URL ?? process.env.NEXT_PUBLIC_APP_URL),
+      databaseUrlConfigured: Boolean(process.env.DATABASE_URL),
+      encryptionKeyConfigured: Boolean(process.env.ENCRYPTION_KEY),
+    },
+  });
 }

@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/telegram/refresh-webhook",
+      "schedule": "0 7 * * *"
+    }
+  ]
+}

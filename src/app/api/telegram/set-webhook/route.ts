@@ -11,7 +11,18 @@ export async function GET(req: NextRequest) {
   const given = req.nextUrl.searchParams.get("secret");
 
   if (!secret || given !== secret) {
-    return NextResponse.json({ ok: false, error: "forbidden" }, { status: 403 });
+    // Sir qiymatini hech qachon qaytarmaymiz — faqat sozlangan-yo'qligini bildiramiz.
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "forbidden",
+        webhookSecretConfigured: Boolean(secret),
+        hint: !secret
+          ? "TELEGRAM_WEBHOOK_SECRET Vercel muhitida sozlanmagan"
+          : "?secret= qiymati Vercel'dagi TELEGRAM_WEBHOOK_SECRET bilan mos kelmadi",
+      },
+      { status: 403 },
+    );
   }
 
   const appUrl = process.env.APP_URL ?? process.env.NEXT_PUBLIC_APP_URL;
@@ -22,7 +33,8 @@ export async function GET(req: NextRequest) {
   const webhookUrl = `${appUrl.replace(/\/+$/, "")}/api/telegram/webhook`;
 
   try {
-    const result = await setWebhook(webhookUrl, secret);
+    // Qo'lda chaqirilganda eski yig'ilgan xabarlarni tashlaymiz — bot toza boshlaydi.
+    const result = await setWebhook(webhookUrl, secret, { dropPendingUpdates: true });
     const info = await getWebhookInfo();
     return NextResponse.json({ ok: true, webhookUrl, result, info });
   } catch (error) {

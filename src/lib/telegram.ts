@@ -83,12 +83,16 @@ export async function deleteMessage(chatId: number, messageId: number) {
   }
 }
 
-export async function setWebhook(url: string, secretToken: string) {
+export async function setWebhook(
+  url: string,
+  secretToken: string,
+  opts?: { dropPendingUpdates?: boolean },
+) {
   return callTelegram("setWebhook", {
     url,
     secret_token: secretToken,
     allowed_updates: ["message", "callback_query"],
-    drop_pending_updates: false,
+    drop_pending_updates: opts?.dropPendingUpdates ?? false,
   });
 }
 
