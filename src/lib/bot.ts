@@ -82,7 +82,15 @@ async function handleMessage(message: TelegramMessage) {
 
   if (text === "/start" || text === "/help") {
     await resetState(from.id);
-    await sendMessage(message.chat.id, WELCOME, { replyMarkup: mainMenu(Boolean(user.emaktabLogin)) });
+    await sendMessage(
+      message.chat.id,
+      `🤖 <b>Avto eMaktab botidan foydalanish bo'yicha qo'llanma:</b>\n\n` +
+      `1️⃣ *Kirish:* /login buyrug'i orqali eMaktab (kundalik.com) login va parolingizni kiriting.\n` +
+      `2️⃣ *Baholar:* Asosiy menyudagi "Baholar" tugmasini bosib joriy baholaringizni ko'ring.\n` +
+      `3️⃣ *Dars jadvali:* Kunlik darslar jadvalini kuzatib boring.\n\n` +
+      WELCOME,
+      { replyMarkup: mainMenu(Boolean(user.emaktabLogin)) }
+    );
     return;
   }
 
@@ -116,18 +124,18 @@ async function handleMessage(message: TelegramMessage) {
     return;
   }
 
-  // --- O'QUVCHI VA O'QITUVCHI TUGMALARI MANZILI ---
-  if (text === "📅 Dars jadvali") {
+  // --- TUGMALAR VA MENYU BUYruqlari ---
+  if (text === "📅 Dars jadvali" || text === "/schedule") {
     await sendMessage(message.chat.id, "📅 <b>Bugungi dars jadvali:</b>\n\n1. Matematika (08:30)\n2. Ona tili (09:20)\n3. Ingliz tili (10:10)\n4. Fizika (11:00)");
     return;
   }
 
-  if (text === "📊 Baholar") {
+  if (text === "📊 Baholar" || text === "/grades") {
     await sendMessage(message.chat.id, "📊 <b>Bugungi baholaringiz:</b>\n\n* Matematika: <b>5</b> (Uyga vazifa uchun)\n* Ona tili: <b>4</b> (Darsda faol qatnashgani uchun)");
     return;
   }
 
-  if (text === "📚 Darslar") {
+  if (text === "📚 Darslar" || text === "/myclasses") {
     await sendMessage(message.chat.id, "📚 <b>Bugungi darslaringiz (O'qituvchi):</b>\n\n* 2-soat: 9-'A' sinf (Matematika)\n* 3-soat: 9-'B' sinf (Geometriya)");
     return;
   }
@@ -174,7 +182,7 @@ async function handleMessage(message: TelegramMessage) {
     return;
   }
 
-  // Conversation state machine for collecting login + password.
+  // --- LOGIN VA PAROL YIG'ISH JARAYONI (STATE MACHINE) ---
   if (user.state === "awaiting_login") {
     if (!text) {
       await sendMessage(message.chat.id, "Iltimos, eMaktab loginingizni matn sifatida yuboring.");
@@ -202,13 +210,13 @@ async function handleMessage(message: TelegramMessage) {
     }
 
     const password = text;
-    const checking = await sendMessage(message.chat.id, "⏳ eMaktab bilan tekshirilmoqda...");
-    void checking;
+    await sendMessage(message.chat.id, "⏳ eMaktab bilan tekshirilmoqda...");
 
     const result = await verifyEmaktabCredentials(login, password);
 
     if (result.status === "ok") {
-      const userRole: 'student' | 'teacher' = 'teacher'; // Sinov uchun o'qituvchi qilindi
+      // Rolni aniqlash (Hozircha sinov uchun teacher, keyinchalik API natijasiga ko'ra o'zgaradi)
+      const userRole: 'student' | 'teacher' = 'teacher'; 
 
       await db
         .update(botUsers)

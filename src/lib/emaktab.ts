@@ -123,3 +123,81 @@ export async function verifyEmaktabCredentials(login: string, password: string):
     return { status: "error", message: "eMaktab bilan bog'lanib bo'lmadi. Birozdan so'ng qayta urinib ko'ring." };
   }
 }
+import axios from 'axios';
+
+// eMaktab orqali avtorizatsiya qilish va tokenni olish
+export async function loginToEmaktab(username: string, password: string) {
+  try {
+    // Bu yerda eMaktab/Kundalik API yoki autentifikatsiya manzili bo'ladi
+    // Misol uchun so'rov yuborish strukturasi:
+    const response = await axios.post('https://api.emaktab.uz/auth', {
+      username,
+      password,
+    });
+
+    // Agar muvaffaqiyatli bo'lsa token qaytariladi
+    return {
+      success: true,
+      token: response.data.token,
+    };
+  } catch (error) {
+    console.error('eMaktab login xatoligi:', error);
+    return {
+      success: false,
+      message: 'Login yoki parol noto\'g\'ri!',
+    };
+  }
+}
+
+// Baholarni tortib kelish funksiyasi
+export async function getStudentGrades(token: string) {
+  try {
+    const response = await axios.get('https://api.emaktab.uz/grades', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    return response.data;
+  } catch (error) {
+    console.error('Baholarni olishda xatolik:', error);
+    return null;
+  }
+}
+
+// Dars jadvalini tortib kelish funksiyasi
+export async function getStudentSchedule(token: string) {
+  try {
+    const response = await axios.get('https://api.emaktab.uz/schedule', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    return response.data;
+  } catch (error) {
+    console.error('Dars jadvalini olishda xatolik:', error);
+    return null;
+  }
+}
+import axios from 'axios';
+
+// eMaktab'ga kirish va foydalanuvchi turini (o'quvchi yoki o'qituvchi) aniqlash
+export async function loginToEmaktab(username: string, password: string) {
+  try {
+    const response = await axios.post('https://api.emaktab.uz/auth', {
+      username,
+      password,
+    });
+
+    // API'dan kelgan javobda foydalanuvchi roli bo'ladi (masalan: 'student' yoki 'teacher')
+    return {
+      success: true,
+      token: response.data.token,
+      role: response.data.role, // 'student' yoki 'teacher'
+      name: response.data.fullName,
+    };
+  } catch (error) {
+    console.error('eMaktab login xatoligi:', error);
+    return {
+      success: false,
+      message: 'Login yoki parol noto\'g\'ri!',
+    };
+  }
+}
