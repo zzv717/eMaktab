@@ -1,0 +1,135 @@
+// Parserlarni haqiqiy eMaktab namunalari (window.__USER__START__PAGE__INITIAL__STATE__)
+// bilan tekshirish uchun ishlatiladigan skript.
+//
+// Ishga tushirish: npx tsx scripts/verify-parsing.ts
+import { readFileSync } from "fs";
+import {
+  dayStartTs,
+  dayWeekday,
+  extractStartState,
+  gradesFromDiaryDays,
+  newsFromUnknown,
+  personsFromStartState,
+  scheduleFromDiaryDays,
+  shiftDayKey,
+  tashkentDayKey,
+} from "../src/lib/emaktab";
+import { decryptSecret, encryptSecret } from "../src/lib/crypto";
+import { formatDay, formatGrades, formatNews, formatWeek } from "../src/lib/format";
+
+let passed = 0;
+let failed = 0;
+
+function check(name: string, cond: boolean, extra?: unknown) {
+  if (cond) {
+    passed++;
+    console.log(`  ✅ ${name}`);
+  } else {
+    failed++;
+    console.log(`  ❌ ${name}`, extra ?? "");
+  }
+}
+
+// ---------------------------------------------------------------------------
+console.log("1) HTML ichidan __USER__START__PAGE__INITIAL__STATE__ parse qilish");
+// ---------------------------------------------------------------------------
+const html = readFileSync(new URL("./sample-userfeed.html", import.meta.url), "utf-8");
+const state = extractStartState(html);
+check("state topildi", state !== null);
+check("userSchedule mavjud", Boolean(state?.userSchedule?.children?.length));
+check("userMarks mavjud", Boolean(state?.userMarks?.children?.length));
+check("userContext mavjud", Boolean(state?.userContext?.contextPersons?.length));
+
+const persons = personsFromStartState(state);
+check("persons bo'sh emas", persons.length > 0, persons);
+if (persons.length > 0) {
+  check("personId raqam sifatida saqlangan (string)", typeof persons[0].personId === "string");
+  check("personId uzun (10+ xona, string saqlanadi)", persons[0].personId.length >= 10, persons[0].personId);
+  check("maktab nomi bor", Boolean(persons[0].schoolName), persons[0]);
+  check("sinf nomi bor", Boolean(persons[0].groupName), persons[0]);
+  check("FIO bor", Boolean(persons[0].fullName), persons[0]);
+}
+
+// ---------------------------------------------------------------------------
+console.log("2) Jadval parse qilish (darslar, uy vazifasi, baholar)");
+// ---------------------------------------------------------------------------
+const schedule = scheduleFromDiaryDays(
+  (state?.userSchedule?.children?.[0]?.schedule?.days ?? []) as never,
+);
+check("kunlar parse bo'ldi", schedule.length > 0);
+if (schedule.length > 0) {
+  const day = schedule[0];
+  check("darslar soni > 0", day.lessons.length > 0, day);
+  const lesson = day.lessons[0];
+  check("fan nomi bor", Boolean(lesson.subject) && lesson.subject !== "Noma'lum fan", lesson);
+  check("dars raqami bor", lesson.number >= 1, lesson);
+  check("vaqt parse bo'ldi", lesson.startTime === "08:00", lesson);
+  check("uy vazifasi parse bo'ldi", lesson.homework === "Тема 18, №8-9", lesson);
+  check("uy vazifasi bajarilgan", lesson.homeworkDone === true, lesson);
+  check("ish belgisi baho parse bo'ldi", lesson.marks.includes(5), lesson);
+  check("hafta kuni to'g'ri (2024-09-30 = dushanba=0)", day.weekday === 0, day.date);
+  const formatted = formatDay(day, "Bugungi dars jadvali", "Test O'quvchi");
+  check("format uzunligi mos", formatted.length > 50);
+  check("formatda fan bor", formatted.includes("Математика") || formatted.includes("Matematika"), formatted.slice(0, 200));
+}
+
+// ---------------------------------------------------------------------------
+console.log("3) Baholar parse qilish (userMarks)");
+// ---------------------------------------------------------------------------
+const gradesState = extractStartState(html);
+const marks = (gradesState?.userMarks?.children?.[0]?.marks ?? []) as Array<Record<string, unknown>>;
+check("baholar massivi bor", marks.length > 0);
+const grades = gradesFromDiaryDays([{ date: undefined, marks }]);
+check("baholar parse bo'ldi", grades.length > 0, grades);
+if (grades.length > 0) {
+  check("baho qiymati raqam", typeof grades[0].values[0] === "number", grades[0]);
+  check("fan nomi bor", Boolean(grades[0].subject) && grades[0].subject !== "Noma'lum fan", grades[0]);
+  check("sana YYYY-MM-DD", /^\d{4}-\d{2}-\d{2}$/.test(grades[0].date), grades[0]);
+  const formatted = formatGrades(grades.slice(0, 10), "So'nggi 14 kun", "Test");
+  check("format ishladi", formatted.includes("📊") && formatted.includes("O'rtacha"), formatted.slice(0, 120));
+}
+
+// ---------------------------------------------------------------------------
+console.log("4) Yangiliklar parse qilish (turli formatlar)");
+// ---------------------------------------------------------------------------
+const news1 = newsFromUnknown([
+  { id: "1", title: "Maktab e'loni", text: "Ertangi tadbir...", author: { firstName: "Ali", lastName: "Valiyev" }, date: "2026-10-20T10:00:00" },
+  { postId: 2, message: "Sinf e'loni", community: { name: "9-A sinf" }, createdDate: 1761000000 },
+]);
+check("2 ta yangilik parse bo'ldi", news1.length === 2, news1);
+check("title/text", news1[0].title === "Maktab e'loni" && news1[0].text === "Ertangi tadbir...");
+check("author FIO", news1[0].author === "Valiyev Ali", news1[0]);
+check("community nomi", news1[1].community === "9-A sinf", news1[1]);
+check("unix timestamp sana", /^\d{4}-\d{2}-\d{2}$/.test(news1[1].date ?? ""), news1[1]);
+const newsObj = newsFromUnknown({ posts: [{ text: "Bitta post", date: "2026-10-01" }] });
+check("posts wrapper parse", newsObj.length === 1, newsObj);
+const newsFormatted = formatNews(news1, "11-maktab");
+check("news format", newsFormatted.includes("Yangiliklar") && newsFormatted.includes("Maktab e&#39;loni"), newsFormatted.slice(0, 200));
+
+// ---------------------------------------------------------------------------
+console.log("5) Sana yordamchilari");
+// ---------------------------------------------------------------------------
+check("dayWeekday(2026-10-22) = 3 (payshanba)", dayWeekday("2026-10-22") === 3, dayWeekday("2026-10-22"));
+check("dayStartTs(2026-10-22) UTC+5 midnight", dayStartTs("2026-10-22") === Math.floor(Date.UTC(2026, 9, 22) / 1000) - 5 * 3600);
+check("shiftDayKey +1", shiftDayKey("2026-10-31", 1) === "2026-11-01", shiftDayKey("2026-10-31", 1));
+check("shiftDayKey -1 yil chegarasi", shiftDayKey("2026-01-01", -1) === "2025-12-31", shiftDayKey("2026-01-01", -1));
+check("tashkentDayKey format", /^\d{4}-\d{2}-\d{2}$/.test(tashkentDayKey()));
+
+// ---------------------------------------------------------------------------
+console.log("6) Shifrlash (AES-256-GCM, ENCRYPTION_KEY)");
+// ---------------------------------------------------------------------------
+process.env.ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || "test-key";
+const secret = "my-super-password-123";
+const enc = encryptSecret(secret);
+check("shifr format (iv.tag.data)", enc.split(".").length === 3);
+check("ochiq matn ko'rinmaydi", !enc.includes(secret));
+check("decrypt qaytaradi", decryptSecret(enc) === secret);
+
+// ---------------------------------------------------------------------------
+console.log("7) Haftalik format");
+// ---------------------------------------------------------------------------
+const weekFormatted = formatWeek(schedule, "Test");
+check("week format", weekFormatted.includes("Haftalik"), weekFormatted.slice(0, 100));
+
+console.log(`\nNatija: ${passed} o'tdi, ${failed} yiqildi`);
+process.exit(failed > 0 ? 1 : 0);

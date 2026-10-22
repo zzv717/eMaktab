@@ -22,3 +22,5 @@ yarn-error.log*
 #env files
 .env
 .env*.local
+# TypeScript build info
+*.tsbuildinfo

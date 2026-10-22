@@ -48,7 +48,7 @@ export default async function AutoLoginPage({ params }: { params: Promise<{ toke
 
       {/* Auto-submit as soon as the HTML is parsed, before React even hydrates. */}
       <script
-        // eslint-disable-next-line react/no-danger
+         
         dangerouslySetInnerHTML={{
           __html: `document.getElementById('auto-login-form').submit();`,
         }}
@@ -61,7 +61,7 @@ function Shell({ children }: { children: React.ReactNode }) {
   return (
     <div style={styles.body}>
       <style
-        // eslint-disable-next-line react/no-danger
+         
         dangerouslySetInnerHTML={{ __html: `@keyframes spin { to { transform: rotate(360deg); } }` }}
       />
       <main style={styles.card}>{children}</main>
