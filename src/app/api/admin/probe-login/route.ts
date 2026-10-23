@@ -148,6 +148,44 @@ export async function GET(req: NextRequest) {
         } catch (error) {
           check.dia = `xato ${String(error).slice(0, 25)}`;
         }
+        // Jurnal to'liq URL (fixture'dagi naqsh: /journal/school/{sid}/group/{gid}/week/{dd}/{m})
+        const pad2 = (n: number) => String(n).padStart(2, "0");
+        const now = new Date(Date.now() + 5 * 3600 * 1000); // Toshkent
+        const monday = new Date(now);
+        monday.setUTCDate(now.getUTCDate() - ((now.getUTCDay() + 6) % 7));
+        const tryUrls: Array<[string, string]> = [
+          ["jr1", `https://emaktab.uz/journal/school/${result.session.active.schoolId}/group/${firstClassId}/week/${pad2(now.getUTCDate())}/${now.getUTCMonth() + 1}`],
+          ["jr2", `https://emaktab.uz/journal/school/${result.session.active.schoolId}/group/${firstClassId}/week/${pad2(monday.getUTCDate())}/${monday.getUTCMonth() + 1}`],
+        ];
+        check.ids = `sid=${result.session.active.schoolId ? result.session.active.schoolId.slice(0, 8) : 0} gid=${firstClassId ? firstClassId.slice(0, 8) : 0}`;
+        for (const [label, url] of tryUrls) {
+          try {
+            const r = await fetch(url, {
+              headers: { "User-Agent": "Mozilla/5.0", Cookie: cookieStr },
+              redirect: "follow",
+            });
+            const b = await r.text();
+            const lessons = (b.match(/"lessons"/g) ?? []).length;
+            const subj = (b.match(/"subject"/g) ?? []).length;
+            const paths = [
+              ...new Set(
+                (b.match(/(?:href|action)="([^"]{4,120})"/g) ?? [])
+                  .map((h) => h.replace(/^(?:href|action)="/, "").slice(0, -1))
+                  .map((h) => {
+                    try {
+                      return h.startsWith("http") ? new URL(h).pathname : h.split("?")[0];
+                    } catch {
+                      return h.split("?")[0];
+                    }
+                  })
+                  .filter((h) => /^\/[a-z]/i.test(h) && !h.includes("static")),
+              ),
+            ];
+            check[label] = `${r.status} les=${lessons} subj=${subj} ${paths.slice(0, 6).join(" ").slice(0, 70)}`;
+          } catch (error) {
+            check[label] = `xato ${String(error).slice(0, 25)}`;
+          }
+        }
         out.check = check;
       }
     } else if (result.status === "captcha_required") {
