@@ -36,6 +36,9 @@ const STATEMENTS: { name: string; run: string }[] = [
       group_name varchar(64),
       children_json text,
       classes_json text,
+      temp_password_enc text,
+      temp_session_enc text,
+      session_enc text,
       created_at timestamptz NOT NULL DEFAULT now(),
       updated_at timestamptz NOT NULL DEFAULT now()
     )`,
@@ -58,6 +61,9 @@ const STATEMENTS: { name: string; run: string }[] = [
   { name: "bot_users.group_name", run: `ALTER TABLE bot_users ADD COLUMN IF NOT EXISTS group_name varchar(64)` },
   { name: "bot_users.children_json", run: `ALTER TABLE bot_users ADD COLUMN IF NOT EXISTS children_json text` },
   { name: "bot_users.classes_json", run: `ALTER TABLE bot_users ADD COLUMN IF NOT EXISTS classes_json text` },
+  { name: "bot_users.temp_password_enc", run: `ALTER TABLE bot_users ADD COLUMN IF NOT EXISTS temp_password_enc text` },
+  { name: "bot_users.temp_session_enc", run: `ALTER TABLE bot_users ADD COLUMN IF NOT EXISTS temp_session_enc text` },
+  { name: "bot_users.session_enc", run: `ALTER TABLE bot_users ADD COLUMN IF NOT EXISTS session_enc text` },
   { name: "bot_users.created_at", run: `ALTER TABLE bot_users ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now()` },
   { name: "bot_users.updated_at", run: `ALTER TABLE bot_users ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now()` },
   {

@@ -27,6 +27,20 @@ async function callTelegram<T = unknown>(method: string, payload: Record<string,
   return json.result as T;
 }
 
+/** Rasm yuboradi (manzil yoki file_id) — captcha rasmlari uchun. */
+export async function sendPhoto(
+  chatId: number,
+  photo: string,
+  opts?: { caption?: string; replyMarkup?: ReturnType<typeof kb> },
+): Promise<void> {
+  await callTelegram("sendPhoto", {
+    chat_id: chatId,
+    photo,
+    ...(opts?.caption ? { caption: opts.caption, parse_mode: "HTML" } : {}),
+    ...(opts?.replyMarkup ? { reply_markup: opts.replyMarkup } : {}),
+  });
+}
+
 export type InlineButton = {
   text: string;
   callback_data?: string;

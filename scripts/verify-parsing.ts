@@ -5,6 +5,7 @@
 import { readFileSync } from "fs";
 import {
   captchaVisible,
+  extractCaptchaUrl,
   dayStartTs,
   dayWeekday,
   extractStartState,
@@ -192,6 +193,17 @@ check(
   "value'siz hidden",
   parseHiddenInputs(`<input type="hidden" name="emptyVal">`)["emptyVal"] === "",
 );
+check(
+  "captcha URL (absolut)",
+  extractCaptchaUrl(`<img src="https://login.emaktab.uz/captcha/true/abc-123">`, "https://login.emaktab.uz/login") ===
+    "https://login.emaktab.uz/captcha/true/abc-123",
+);
+check(
+  "captcha URL (nisbiy)",
+  extractCaptchaUrl(`<img src='/captcha/false/xyz-9'>`, "https://login.emaktab.uz/login") ===
+    "https://login.emaktab.uz/captcha/false/xyz-9",
+);
+check("captcha URL yo'q", extractCaptchaUrl("<html></html>", "https://x.uz/") === null);
 
 console.log(`\nNatija: ${passed} o'tdi, ${failed} yiqildi`);
 process.exit(failed > 0 ? 1 : 0);
