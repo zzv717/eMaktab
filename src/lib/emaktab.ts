@@ -34,8 +34,23 @@ export const TZ_OFFSET_MS = 5 * 60 * 60 * 1000;
 export type EmaktabLoginStatus =
   | { status: "ok"; session: EmaktabSession }
   | { status: "invalid_credentials"; message: string }
-  | { status: "captcha_required"; message: string }
+  | {
+      status: "captcha_required";
+      message: string;
+      /** Captcha rasm manzili — foydalanuvchiga ko'rsatiladi. */
+      captchaUrl?: string;
+      /** Captcha yechilgandan keyin POST qilish uchun forma holati. */
+      formState?: LoginFormState;
+    }
   | { status: "error"; message: string };
+
+/** Login formasi holati — captcha yechilguncha saqlanadi. */
+export interface LoginFormState {
+  cookies: Record<string, string>;
+  hidden: Record<string, string>;
+  postUrl: string;
+  captchaUrl: string | null;
+}
 
 export interface PersonContext {
   personId: string;
@@ -216,10 +231,6 @@ function extractLoginErrors(html: string): { hasErrors: boolean; text?: string; 
   }
 }
 
-/**
- * eMaktab'ga kiradi va cookie'larni qaytaradi.
- * Muvaffaqiyat: 302 redirect yoki UZDnevnikAuth_a cookie'si paydo bo'lishi.
- */
 // ---------------------------------------------------------------------------
 // Login sahifasi parserlari (jamoaviy ochiq kodga mos: bakhromov-coder/kundalik)
 // ---------------------------------------------------------------------------
@@ -321,120 +332,279 @@ async function fetchFollowing(
   throw new EmaktabAuthError("unknown");
 }
 
-/**
- * eMaktab'ga kiradi va cookie'larni qaytaradi.
- *
- * Muvaffaqiyat belgilari (birortasi):
- *  - javob sahifasida login formasi yo'qoldi (dashboard/redirect)
- *  - UZDnevnikAuth_a autentifikatsiya cookie'si paydo bo'ldi
- *
- * Aks holda xato turi aniqlanadi: captcha / noto'g'ri parol / texnik.
- * Kerakli yashirin maydonlar (__RequestVerificationToken, captcha__value,
- * exceededAttempts, ...) formadan O'QILIB yuboriladi — qattiq kod emas.
- */
-async function performLogin(login: string, password: string): Promise<Record<string, string>> {
+/** Sahifadagi captcha rasm manzilini topadi. */
+export function extractCaptchaUrl(html: string, baseUrl: string): string | null {
+  const m = html.match(/(?:https?:\/\/[^"'\s>]+)?\/captcha\/[^"'\s>]+/i);
+  if (!m) return null;
+  try {
+    return new URL(m[0].replace(/&amp;/g, "&"), baseUrl).toString();
+  } catch {
+    return null;
+  }
+}
+
+type LoginAttempt =
+  | { status: "ok"; cookies: Record<string, string> }
+  | { status: "captcha"; form: LoginFormState }
+  | { status: "invalid_credentials"; message: string }
+  | { status: "error"; message: string };
+
+function formStateFrom(page: FollowedResponse, jar: Record<string, string>): LoginFormState {
+  const action = formAction(page.body);
+  return {
+    cookies: jar,
+    hidden: parseHiddenInputs(page.body),
+    postUrl: action ? new URL(action, page.finalUrl).toString() : page.finalUrl,
+    captchaUrl: extractCaptchaUrl(page.body, page.finalUrl),
+  };
+}
+
+/** Forma qaytgan javobni baholaydi. */
+function classifyFormResult(result: FollowedResponse, jar: Record<string, string>): LoginAttempt {
+  if (captchaVisible(result.body)) {
+    return { status: "captcha", form: formStateFrom(result, jar) };
+  }
+  const errors = extractLoginErrors(result.body);
+  if (errors?.exceededAttempts) {
+    return { status: "captcha", form: formStateFrom(result, jar) };
+  }
+  if (errors?.hasErrors) {
+    return {
+      status: "invalid_credentials",
+      message: errors.text ?? "Login yoki parol noto'g'ri.",
+    };
+  }
+  // Xatosiz qayta forma + captcha belgilari — captcha talab qilinmoqda
+  if (extractCaptchaUrl(result.body, result.finalUrl)) {
+    return { status: "captcha", form: formStateFrom(result, jar) };
+  }
+  return {
+    status: "error",
+    message: `eMaktab formani qaytardi (status ${result.status}, ${result.finalUrl})`,
+  };
+}
+
+/** Saqlangan forma holati bilan POST yuboradi (captcha qiymati bilan yoki holda). */
+async function postLoginForm(
+  form: LoginFormState,
+  login: string,
+  password: string,
+  captchaValue: string,
+): Promise<LoginAttempt> {
+  const body = new URLSearchParams({ ...form.hidden, login, password });
+  if (!body.get("FingerprintId")) body.set("FingerprintId", deviceFingerprint(login));
+  body.set("captcha__value", captchaValue.trim());
+
+  const result = await fetchFollowing(
+    form.postUrl,
+    {
+      method: "POST",
+      body: body.toString(),
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Referer: form.postUrl,
+        Origin: "https://login.emaktab.uz",
+      },
+    },
+    form.cookies,
+  );
+
+  const authCookie = Boolean(form.cookies["UZDnevnikAuth_a"] ?? form.cookies["UZDnevnikAuth_s"]);
+  if (!hasLoginForm(result.body) || authCookie) {
+    return { status: "ok", cookies: form.cookies };
+  }
+  return classifyFormResult(result, form.cookies);
+}
+
+/** Login sahifasini ochadi va birinchi login urinishini qiladi. */
+async function attemptLogin(login: string, password: string): Promise<LoginAttempt> {
   let diag = "";
 
   for (let attempt = 0; attempt < 2; attempt++) {
     const jar: Record<string, string> = {};
 
-    // 1. Login sahifasi (root'dan boshlaymiz, kerak bo'lsa /login).
-    let page = await fetchFollowing(
-      LOGIN_BASE,
-      { headers: { Referer: LOGIN_BASE } },
-      jar,
-    );
+    let page = await fetchFollowing(LOGIN_BASE, { headers: { Referer: LOGIN_BASE } }, jar);
     if (!hasLoginForm(page.body)) {
       const alt = await fetchFollowing(LOGIN_URL, { headers: { Referer: LOGIN_URL } }, jar);
       if (hasLoginForm(alt.body)) page = alt;
     }
     if (!hasLoginForm(page.body)) {
       diag = `login formasi topilmadi (status ${page.status}, ${page.finalUrl})`;
-      console.error("performLogin:", diag, page.body.slice(0, 300));
+      console.error("attemptLogin:", diag, page.body.slice(0, 300));
       continue;
     }
+
+    const form = formStateFrom(page, jar);
     if (captchaVisible(page.body)) {
-      throw new EmaktabAuthError("captcha");
+      return { status: "captcha", form };
     }
 
-    // 2. Yashirin maydonlar + login/parol + FingerprintId.
-    const hidden = parseHiddenInputs(page.body);
-    const action = formAction(page.body);
-    const postUrl = action ? new URL(action, page.finalUrl).toString() : page.finalUrl;
-    const form = new URLSearchParams({ ...hidden, login, password });
-    if (!form.get("FingerprintId")) form.set("FingerprintId", deviceFingerprint(login));
-
-    // 3. Formani yuborish (brauzer bilan bir xil).
-    const result = await fetchFollowing(
-      postUrl,
-      {
-        method: "POST",
-        body: form.toString(),
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-          Referer: page.finalUrl,
-          Origin: "https://login.emaktab.uz",
-        },
-      },
-      jar,
-    );
-
-    // 4. Baholash.
-    const authCookie = Boolean(jar["UZDnevnikAuth_a"] ?? jar["UZDnevnikAuth_s"]);
-    if (!hasLoginForm(result.body) || authCookie) {
-      return jar; // muvaffaqiyat
-    }
-
-    if (captchaVisible(result.body)) {
-      throw new EmaktabAuthError("captcha");
-    }
-    const errors = extractLoginErrors(result.body);
-    if (errors?.exceededAttempts) {
-      throw new EmaktabAuthError("captcha");
-    }
-    if (errors?.hasErrors) {
-      throw new EmaktabAuthError(errors.text ?? "Login yoki parol noto'g'ri.");
-    }
-
-    // Xatosiz qayta forma — texnik sabab (token eskirgan bo'lishi mumkin): bir marta qayta urinamiz.
-    diag = `forma xatosiz qaytdi (status ${result.status}, ${result.finalUrl})`;
-    console.error("performLogin:", diag);
+    const outcome = await postLoginForm(form, login, password, "");
+    if (outcome.status !== "error") return outcome;
+    diag = outcome.message;
+    console.error("attemptLogin: qayta urinish", diag);
   }
 
-  throw new EmaktabAuthError(`unknown:${diag}`);
+  return {
+    status: "error",
+    message: `eMaktab bilan ulanib bo'lmadi (${diag || "noma'lum sabab"})`,
+  };
+}
+
+async function toLoginStatus(
+  attempt: LoginAttempt,
+  login: string,
+): Promise<EmaktabLoginStatus> {
+  if (attempt.status === "ok") {
+    const session = await buildSession(attempt.cookies, login);
+    return { status: "ok", session };
+  }
+  if (attempt.status === "captcha") {
+    return {
+      status: "captcha_required",
+      message: "eMaktab rasmli kod (captcha) talab qilmoqda.",
+      captchaUrl: attempt.form.captchaUrl ?? undefined,
+      formState: attempt.form,
+    };
+  }
+  return attempt;
+}
+
+function wrapLoginError(error: unknown): EmaktabLoginStatus {
+  if (error instanceof EmaktabAuthError) {
+    if (error.message === "captcha") {
+      return {
+        status: "captcha_required",
+        message:
+          "Urinishlar soni ko'p bo'lgani uchun eMaktab rasmli kodni kiritish talab qilinmoqda. Birozdan so'ng qayta urinib ko'ring.",
+      };
+    }
+    if (error.message === "unknown" || error.message.startsWith("unknown:")) {
+      return {
+        status: "error",
+        message: `eMaktab serveridan kutilmagan javob keldi. Birozdan so'ng qayta urinib ko'ring. (${error.message})`,
+      };
+    }
+    return { status: "invalid_credentials", message: error.message };
+  }
+  console.error("loginEmaktab failed", error);
+  return {
+    status: "error",
+    message: "eMaktab bilan bog'lanib bo'lmadi. Birozdan so'ng qayta urinib ko'ring.",
+  };
 }
 
 /**
- * Login/parolni tekshiradi va to'liq sessiya (cookie + profil konteksti) qaytaradi.
+ * eMaktab'ga kiradi.
+ * Muvaffaqiyat: login formasi yo'qolishi yoki UZDnevnikAuth cookie'si.
+ * Agar eMaktab captcha so'rasa — captcha_required + rasm manzili qaytadi
+ * (foydalanuvchi kodni yozadi, submitCaptchaLogin bilan yakunlanadi).
  */
 export async function loginEmaktab(login: string, password: string): Promise<EmaktabLoginStatus> {
   try {
-    const cookies = await performLogin(login, password);
-    const session = await buildSession(cookies, login);
-    return { status: "ok", session };
+    return await toLoginStatus(await attemptLogin(login, password), login);
   } catch (error) {
-    if (error instanceof EmaktabAuthError) {
-      if (error.message === "captcha") {
-        return {
-          status: "captcha_required",
-          message:
-            "Urinishlar soni ko'p bo'lgani uchun eMaktab rasmiy saytida (login.emaktab.uz) rasmli kodni kiritish talab qilinmoqda. Birozdan so'ng qayta urinib ko'ring.",
-        };
-      }
-      if (error.message === "unknown" || error.message.startsWith("unknown:")) {
-        return {
-          status: "error",
-          message: "eMaktab serveridan kutilmagan javob keldi. Birozdan so'ng qayta urinib ko'ring.",
-        };
-      }
-      return { status: "invalid_credentials", message: error.message };
-    }
-    console.error("loginEmaktab failed", error);
-    return {
-      status: "error",
-      message: "eMaktab bilan bog'lanib bo'lmadi. Birozdan so'ng qayta urinib ko'ring.",
-    };
+    return wrapLoginError(error);
   }
+}
+
+/** Captcha kodini yuborib, loginni yakunlaydi. */
+export async function submitCaptchaLogin(
+  login: string,
+  password: string,
+  form: LoginFormState,
+  captchaValue: string,
+): Promise<EmaktabLoginStatus> {
+  try {
+    return await toLoginStatus(await postLoginForm(form, login, password, captchaValue), login);
+  } catch (error) {
+    return wrapLoginError(error);
+  }
+}
+
+/** Saqlangan cookie'lardan sessiya quradi (cookie eskirgan bo'lsa EmaktabAuthError). */
+export async function sessionFromCookies(
+  cookies: Record<string, string>,
+  login: string,
+): Promise<EmaktabSession> {
+  return buildSession(cookies, login);
+}
+
+// ---------------------------------------------------------------------------
+// Masofaviy diagnostika (probe) — eMaktab login sahifasining holatini ko'rish
+// ---------------------------------------------------------------------------
+
+export interface LoginProbe {
+  step: string;
+  status: number;
+  finalUrl: string;
+  hasForm: boolean;
+  captchaVisible: boolean;
+  captchaUrl: string | null;
+  hiddenNames: string[];
+  errorState: unknown;
+  snippet: string;
+}
+
+export async function probeLogin(): Promise<{ get: LoginProbe; post: LoginProbe | null; note: string }> {
+  const jar: Record<string, string> = {};
+  const page = await fetchFollowing(LOGIN_BASE, { headers: { Referer: LOGIN_BASE } }, jar);
+  const base: Omit<LoginProbe, "step"> = {
+    status: page.status,
+    finalUrl: page.finalUrl,
+    hasForm: hasLoginForm(page.body),
+    captchaVisible: captchaVisible(page.body),
+    captchaUrl: extractCaptchaUrl(page.body, page.finalUrl),
+    hiddenNames: Object.keys(parseHiddenInputs(page.body)),
+    errorState: extractLoginErrors(page.body),
+    snippet: page.body.slice(0, 500).replace(/\s+/g, " "),
+  };
+  const get: LoginProbe = { step: "get", ...base };
+
+  if (!get.hasForm) {
+    return { get, post: null, note: "login formasi topilmadi" };
+  }
+
+  const form = formStateFrom(page, jar);
+  const result = await fetchFollowing(
+    form.postUrl,
+    {
+      method: "POST",
+      body: new URLSearchParams({
+        ...form.hidden,
+        login: "diagnostika_test",
+        password: "diagnostika_test",
+        FingerprintId: form.hidden["FingerprintId"] || deviceFingerprint("diagnostika_test"),
+        captcha__value: "",
+      }).toString(),
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Referer: form.postUrl,
+        Origin: "https://login.emaktab.uz",
+      },
+    },
+    jar,
+  );
+  const post: LoginProbe = {
+    step: "post(dummy)",
+    status: result.status,
+    finalUrl: result.finalUrl,
+    hasForm: hasLoginForm(result.body),
+    captchaVisible: captchaVisible(result.body),
+    captchaUrl: extractCaptchaUrl(result.body, result.finalUrl),
+    hiddenNames: Object.keys(parseHiddenInputs(result.body)),
+    errorState: extractLoginErrors(result.body),
+    snippet: result.body.slice(0, 500).replace(/\s+/g, " "),
+  };
+
+  const authCookie = Boolean(jar["UZDnevnikAuth_a"] ?? jar["UZDnevnikAuth_s"]);
+  let note = "post qaytdi (forma)";
+  if (!post.hasForm || authCookie) note = "post MUVAFFAQIYAT (forma yo'q/auth cookie)";
+  else if (post.captchaVisible) note = "captcha KO'RINADI";
+  else if (post.errorState) note = `xato holati: ${JSON.stringify(post.errorState)}`;
+  else if (post.captchaUrl) note = "captcha belgilari bor (hidden)";
+
+  return { get, post, note };
 }
 
 // ---------------------------------------------------------------------------

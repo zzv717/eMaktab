@@ -23,6 +23,9 @@ export const botUsers = pgTable("bot_users", {
   // Conversation state machine: idle | awaiting_login | awaiting_password
   state: varchar("state", { length: 32 }).notNull().default("idle"),
   tempLogin: varchar("temp_login", { length: 255 }),
+  // Captcha oqimi uchun vaqtinchalik (shifrlangan): parol + forma holati
+  tempPasswordEnc: text("temp_password_enc"),
+  tempSessionEnc: text("temp_session_enc"),
 
   // eMaktab account, saved only after credentials are verified successfully.
   emaktabLogin: varchar("emaktab_login", { length: 255 }),
@@ -47,6 +50,9 @@ export const botUsers = pgTable("bot_users", {
 
   // For teachers: JSON array of taught classes [{ classId, className }, ...]
   classesJson: text("classes_json"),
+
+  // eMaktab cookie'lari (shifrlangan) — qayta login qilmaslik uchun
+  sessionEnc: text("session_enc"),
 
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

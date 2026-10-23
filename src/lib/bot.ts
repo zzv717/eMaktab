@@ -26,6 +26,9 @@ import {
   fetchSchedule,
   fetchTeacherClasses,
   loginEmaktab,
+  sessionFromCookies,
+  submitCaptchaLogin,
+  type LoginFormState,
   shiftDayKey,
   tashkentDayKey,
   type ClassInfo,
@@ -61,6 +64,7 @@ import {
   profileKeyboard,
   scheduleKeyboard,
   sendMessage,
+  sendPhoto,
   settingsKeyboard,
   teacherDayKeyboard,
   teacherMenuKeyboard,
@@ -240,6 +244,23 @@ async function openSession(user: BotUser): Promise<EmaktabSession> {
   const cached = sessionCache.get(user.telegramId);
   if (cached && cached.expiresAt > Date.now()) return cached.session;
 
+  // 1) Saqlangan cookie'lar bilan (login qilmaslik uchun). Eskirgan bo'lsa — to'liq login.
+  if (user.sessionEnc && user.emaktabLogin) {
+    try {
+      const cookies = JSON.parse(decryptSecret(user.sessionEnc)) as Record<string, string>;
+      const session = await sessionFromCookies(cookies, user.emaktabLogin);
+      if (user.personId && session.active.personId !== user.personId) {
+        const preferred = session.persons.find((p) => p.personId === user.personId);
+        if (preferred) session.active = preferred;
+      }
+      cacheSession(user.telegramId, session);
+      return session;
+    } catch (error) {
+      console.error("saved eMaktab session invalid, re-login", error);
+    }
+  }
+
+  // 2) To'liq login.
   let password: string;
   try {
     if (!user.emaktabPasswordEnc) throw new Error("missing");
@@ -262,6 +283,17 @@ async function openSession(user: BotUser): Promise<EmaktabSession> {
     if (preferred) session.active = preferred;
   }
   cacheSession(user.telegramId, session);
+
+  // Cookie'larni saqlaymiz — keyingi safar login qilish shart emas (captcha kamroq chiqadi).
+  try {
+    await db
+      .update(botUsers)
+      .set({ sessionEnc: encryptSecret(JSON.stringify(session.cookies)), updatedAt: new Date() })
+      .where(eq(botUsers.telegramId, user.telegramId));
+  } catch (error) {
+    console.error("save eMaktab cookies", error);
+  }
+
   return session;
 }
 
@@ -341,7 +373,13 @@ async function startLoginFlow(telegramId: number, chatId: number) {
 async function resetState(telegramId: number) {
   await db
     .update(botUsers)
-    .set({ state: "idle", tempLogin: null, updatedAt: new Date() })
+    .set({
+      state: "idle",
+      tempLogin: null,
+      tempPasswordEnc: null,
+      tempSessionEnc: null,
+      updatedAt: new Date(),
+    })
     .where(eq(botUsers.telegramId, telegramId));
 }
 
@@ -365,9 +403,117 @@ async function logoutUser(telegramId: number) {
       groupName: null,
       childrenJson: null,
       classesJson: null,
+      tempPasswordEnc: null,
+      tempSessionEnc: null,
+      sessionEnc: null,
       updatedAt: new Date(),
     })
     .where(eq(botUsers.telegramId, telegramId));
+}
+
+// ---------------------------------------------------------------------------
+// Login yakunlash (umumiy — oddiy login va captcha oqimi uchun)
+// ---------------------------------------------------------------------------
+
+/** Login muvaffaqiyatli yakunlandi — bazaga saqlaydi va menyuni ko'rsatadi. */
+async function finishLoginSuccess(
+  chatId: number,
+  from: { id: number; first_name: string },
+  login: string,
+  password: string,
+  session: EmaktabSession,
+  progress: ProgressMsg,
+) {
+  const children = session.persons.length > 1 || session.role === "parent" ? session.persons : [];
+
+  // O'qituvchi uchun sinflarni ham olamiz (rol menyusi uchun).
+  let classes: ClassLink[] = [];
+  if (session.role === "teacher") {
+    try {
+      classes = await fetchTeacherClasses(session);
+    } catch (error) {
+      // Login allaqachon muvaffaqiyatli — sinflar keyinroq ham olinadi.
+      console.error("fetchTeacherClasses at login", error);
+      classes = [];
+    }
+  }
+
+  await db
+    .update(botUsers)
+    .set({
+      emaktabLogin: login,
+      emaktabPasswordEnc: encryptSecret(password),
+      tempLogin: null,
+      tempPasswordEnc: null,
+      tempSessionEnc: null,
+      state: "idle",
+      connectedAt: new Date(),
+      fullName: session.fullName,
+      role: session.role,
+      emaktabUserId: session.userId || null,
+      personId: session.active.personId,
+      schoolId: session.active.schoolId,
+      groupId: session.active.groupId,
+      schoolName: session.active.schoolName,
+      groupName: session.active.groupName,
+      childrenJson: children.length > 0 ? JSON.stringify(children) : null,
+      classesJson: session.role === "teacher" && classes.length > 0 ? JSON.stringify(classes) : null,
+      sessionEnc: encryptSecret(JSON.stringify(session.cookies)),
+      updatedAt: new Date(),
+    })
+    .where(eq(botUsers.telegramId, from.id));
+
+  cacheSession(from.id, session, session.role === "teacher" ? classes : null);
+  await finishProgress(chatId, progress, "Ulanish");
+
+  const roleLabel =
+    session.role === "teacher" ? "O'qituvchi 📖" : session.role === "parent" ? "Ota-ona 👪" : "O'quvchi 🎒";
+  await sendMessage(
+    chatId,
+    `✅ <b>Muvaffaqiyatli ulandi!</b>\n\n👤 ${escapeHtml(session.fullName)}\n🎭 ${roleLabel}\n` +
+      `🏫 ${escapeHtml(session.active.schoolName)} ${escapeHtml(session.active.groupName)}`,
+  );
+  await sendMessage(chatId, WELCOME_BACK(session.fullName), {
+    replyMarkup: isTeacher({ role: session.role } as BotUser)
+      ? teacherMenuKeyboard(true, classes.length > 0)
+      : mainMenuKeyboard(true),
+  });
+}
+
+/** Captcha rasmini yuboradi va kodni so'raydi. */
+async function handleCaptchaChallenge(
+  chatId: number,
+  from: { id: number; first_name: string },
+  login: string,
+  password: string,
+  result: { captchaUrl?: string; formState?: LoginFormState; message: string },
+  progress?: ProgressMsg,
+) {
+  if (!result.captchaUrl || !result.formState) return;
+
+  await db
+    .update(botUsers)
+    .set({
+      tempLogin: login,
+      tempPasswordEnc: encryptSecret(password),
+      tempSessionEnc: encryptSecret(JSON.stringify(result.formState)),
+      state: "awaiting_captcha",
+      updatedAt: new Date(),
+    })
+    .where(eq(botUsers.telegramId, from.id));
+
+  if (progress) {
+    await updateProgress(chatId, progress, "🖼 Captcha kiritilmoqda...");
+  }
+  await sendPhoto(chatId, result.captchaUrl, {
+    caption: "🖼 <b>eMaktab rasmli kod (captcha) so'rayapti.</b>",
+  });
+  await sendMessage(
+    chatId,
+    "Rasmdagi <b>barcha belgilarni</b> (harf va raqamlarni) matn sifatida yuboring.\n\n" +
+      "<i>Agar rasm ochilmasa — /start bosing, yangi rasm yuboraman.</i>",
+    { replyMarkup: cancelKeyboard() },
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -558,59 +704,12 @@ async function handleMessage(message: TelegramMessage) {
     const result = await loginEmaktab(login, password);
 
     if (result.status === "ok") {
-      const session = result.session;
-      const children = session.persons.length > 1 || session.role === "parent" ? session.persons : [];
+      await finishLoginSuccess(chatId, from, login, password, result.session, progress);
+      return;
+    }
 
-      // O'qituvchi uchun sinflarni ham olamiz (rol menyusi uchun).
-      let classes: ClassLink[] = [];
-      if (session.role === "teacher") {
-        try {
-          classes = await fetchTeacherClasses(session);
-        } catch (error) {
-          // Login allaqachon muvaffaqiyatli — sinflar keyinroq ham olinadi.
-          // Bu yerda throw qilsak, bot JIM qoladi (progress xabari yangilanmaydi).
-          console.error("fetchTeacherClasses at login", error);
-          classes = [];
-        }
-      }
-
-      await db
-        .update(botUsers)
-        .set({
-          emaktabLogin: login,
-          emaktabPasswordEnc: encryptSecret(password),
-          tempLogin: null,
-          state: "idle",
-          connectedAt: new Date(),
-          fullName: session.fullName,
-          role: session.role,
-          emaktabUserId: session.userId || null,
-          personId: session.active.personId,
-          schoolId: session.active.schoolId,
-          groupId: session.active.groupId,
-          schoolName: session.active.schoolName,
-          groupName: session.active.groupName,
-          childrenJson: children.length > 0 ? JSON.stringify(children) : null,
-          classesJson: session.role === "teacher" && classes.length > 0 ? JSON.stringify(classes) : null,
-          updatedAt: new Date(),
-        })
-        .where(eq(botUsers.telegramId, from.id));
-
-      cacheSession(from.id, session, session.role === "teacher" ? classes : null);
-      await finishProgress(chatId, progress, "Ulanish");
-
-      const roleLabel =
-        session.role === "teacher" ? "O'qituvchi 📖" : session.role === "parent" ? "Ota-ona 👪" : "O'quvchi 🎒";
-      await sendMessage(
-        chatId,
-        `✅ <b>Muvaffaqiyatli ulandi!</b>\n\n👤 ${escapeHtml(session.fullName)}\n🎭 ${roleLabel}\n` +
-          `🏫 ${escapeHtml(session.active.schoolName)} ${escapeHtml(session.active.groupName)}`,
-      );
-      await sendMessage(chatId, WELCOME_BACK(session.fullName), {
-        replyMarkup: isTeacher({ role: session.role } as BotUser)
-          ? teacherMenuKeyboard(true, classes.length > 0)
-          : mainMenuKeyboard(true),
-      });
+    if (result.status === "captcha_required" && result.captchaUrl && result.formState) {
+      await handleCaptchaChallenge(chatId, from, login, password, result, progress);
       return;
     }
 
@@ -634,6 +733,53 @@ async function handleMessage(message: TelegramMessage) {
       .set({ state: "idle", tempLogin: null, updatedAt: new Date() })
       .where(eq(botUsers.telegramId, from.id));
     await sendMessage(chatId, `⚠️ ${escapeHtml(result.message)}`, {
+      replyMarkup: mainMenuKeyboard(false),
+    });
+    return;
+  }
+
+  if (user.state === "awaiting_captcha") {
+    const code = text?.trim() ?? "";
+    await deleteMessage(chatId, message.message_id);
+
+    if (!code || !user.tempLogin || !user.tempPasswordEnc || !user.tempSessionEnc) {
+      await resetState(from.id);
+      await sendMessage(chatId, "⚠️ Xatolik yuz berdi. Qaytadan boshlang: /start", {
+        replyMarkup: mainMenuKeyboard(false),
+      });
+      return;
+    }
+
+    const login = user.tempLogin;
+    let password: string;
+    let form: LoginFormState;
+    try {
+      password = decryptSecret(user.tempPasswordEnc);
+      form = JSON.parse(decryptSecret(user.tempSessionEnc)) as LoginFormState;
+    } catch {
+      await resetState(from.id);
+      await sendMessage(chatId, "🔐 Sessiya ma'lumotlari buzilgan. Qaytadan boshlang: /start", {
+        replyMarkup: mainMenuKeyboard(false),
+      });
+      return;
+    }
+
+    const progress = await startProgress(chatId, "eMaktab bilan tekshirilmoqda");
+    const result = await submitCaptchaLogin(login, password, form, code);
+
+    if (result.status === "ok") {
+      await finishLoginSuccess(chatId, from, login, password, result.session, progress);
+      return;
+    }
+
+    if (result.status === "captcha_required" && result.captchaUrl && result.formState) {
+      await handleCaptchaChallenge(chatId, from, login, password, result, progress);
+      return;
+    }
+
+    await failProgress(chatId, progress, "Tekshirish");
+    await resetState(from.id);
+    await sendMessage(chatId, `❌ ${escapeHtml(result.message)}\n\nQaytadan boshlang: /start`, {
       replyMarkup: mainMenuKeyboard(false),
     });
     return;
