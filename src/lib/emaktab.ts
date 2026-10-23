@@ -23,6 +23,9 @@ const LOGIN_BASE = "https://login.emaktab.uz/";
 const LOGIN_URL = "https://login.emaktab.uz/login";
 const USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36";
+// Login uchun mobil UA — ishlaydigan botlar (kbot2) aynan shundan foydalanadi.
+const LOGIN_USER_AGENT =
+  "Mozilla/5.0 (Linux; Android 11; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36";
 
 // O'zbekiston (Toshkent) uchun UTC+5 — eMaktab ham shu offsetni qaytaradi (utcOffset: 300).
 export const TZ_OFFSET_MS = 5 * 60 * 60 * 1000;
@@ -384,23 +387,71 @@ function classifyFormResult(result: FollowedResponse, jar: Record<string, string
   };
 }
 
-/** Saqlangan forma holati bilan POST yuboradi (captcha qiymati bilan yoki holda). */
-async function postLoginForm(
+/** Captcha bilan bog'liq maydonlar (faqat Captcha.Input yechim bilan yuboriladi). */
+function isCaptchaField(name: string): boolean {
+  return /captcha/i.test(name);
+}
+
+/** Captcha maydonlarisiz nusxa (lavalex usuli — token'siz ishlaydi). */
+export function stripCaptchaFields(hidden: Record<string, string>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(hidden)) {
+    if (isCaptchaField(k)) continue;
+    out[k] = v;
+  }
+  return out;
+}
+
+/** Captcha rasm URL'idagi uuid (Captcha.Id uchun zaxira). */
+function idFromCaptchaUrl(url: string | null): string {
+  if (!url) return "";
+  const m = url.match(/\/captcha\/[^/]+\/([^/?#]+)/);
+  return m ? m[1] : "";
+}
+
+type PostMode = "plain" | "hidden" | "captcha";
+
+/**
+ * Login formasi POST'i — uch xil strategiya:
+ *  - "plain":   isbotlangan minimal maydonlar to'plami (kbot2 — captcha'siz o'tadi)
+ *  - "hidden":  formadagi yashirin maydonlar, captcha maydonlarisiz (lavalex usuli)
+ *  - "captcha": yashirin maydonlar + Captcha.Input (foydalanuvchi yechgan kod)
+ */
+async function postLogin(
   form: LoginFormState,
   login: string,
   password: string,
-  captchaValue: string,
+  opts: { mode: PostMode; captchaValue?: string },
 ): Promise<LoginAttempt> {
-  const body = new URLSearchParams({ ...form.hidden, login, password });
-  if (!body.get("FingerprintId")) body.set("FingerprintId", deviceFingerprint(login));
-  body.set("captcha__value", captchaValue.trim());
+  let fields: Record<string, string>;
+
+  if (opts.mode === "plain") {
+    fields = {
+      exceededAttempts: "False",
+      ReturnUrl: "",
+      FingerprintId: "",
+      login,
+      password,
+    };
+  } else if (opts.mode === "captcha") {
+    fields = { ...form.hidden, login, password };
+    fields["Captcha.Input"] = (opts.captchaValue ?? "").trim();
+    if (!fields["Captcha.Id"]) fields["Captcha.Id"] = idFromCaptchaUrl(form.captchaUrl);
+    if (!fields["captcha__value"]) fields["captcha__value"] = fields["Captcha.Input"];
+  } else {
+    fields = { ...stripCaptchaFields(form.hidden), login, password };
+    if (!fields["FingerprintId"]) fields["FingerprintId"] = deviceFingerprint(login);
+    if (!("exceededAttempts" in fields)) fields["exceededAttempts"] = "False";
+    if (!("ReturnUrl" in fields)) fields["ReturnUrl"] = "";
+  }
 
   const result = await fetchFollowing(
     form.postUrl,
     {
       method: "POST",
-      body: body.toString(),
+      body: new URLSearchParams(fields).toString(),
       headers: {
+        "User-Agent": LOGIN_USER_AGENT,
         "Content-Type": "application/x-www-form-urlencoded",
         Referer: form.postUrl,
         Origin: "https://login.emaktab.uz",
@@ -409,23 +460,41 @@ async function postLoginForm(
     form.cookies,
   );
 
-  const authCookie = Boolean(form.cookies["UZDnevnikAuth_a"] ?? form.cookies["UZDnevnikAuth_s"]);
-  if (!hasLoginForm(result.body) || authCookie) {
+  // Muvaffaqiyat belgilari: auth cookie yoki (forma yo'q + xato yo'q).
+  const authCookie = Boolean(
+    form.cookies["UZDnevnikAuth_a"] ?? form.cookies["UZDnevnikAuth_s"],
+  );
+  const errors = extractLoginErrors(result.body);
+  if (!errors?.hasErrors && (authCookie || !hasLoginForm(result.body))) {
     return { status: "ok", cookies: form.cookies };
   }
   return classifyFormResult(result, form.cookies);
 }
 
-/** Login sahifasini ochadi va birinchi login urinishini qiladi. */
+/**
+ * Login sahifasini ochadi va login urinishlarini qiladi.
+ * Strategiyalar (ishlaydigan botlardan olingan):
+ *   1. "plain"  — minimal 5 maydon (kbot2 usuli): captcha talab qilinmasa shu o'tadi
+ *   2. "hidden" — yashirin maydonlar (captcha maydonlarisiz)
+ *   3. captcha challenge — eMaktab captcha so'rasa, foydalanuvchi rasmni yechadi
+ */
 async function attemptLogin(login: string, password: string): Promise<LoginAttempt> {
   let diag = "";
 
   for (let attempt = 0; attempt < 2; attempt++) {
     const jar: Record<string, string> = {};
 
-    let page = await fetchFollowing(LOGIN_BASE, { headers: { Referer: LOGIN_BASE } }, jar);
+    let page = await fetchFollowing(
+      LOGIN_BASE,
+      { headers: { Referer: LOGIN_BASE, "User-Agent": LOGIN_USER_AGENT } },
+      jar,
+    );
     if (!hasLoginForm(page.body)) {
-      const alt = await fetchFollowing(LOGIN_URL, { headers: { Referer: LOGIN_URL } }, jar);
+      const alt = await fetchFollowing(
+        LOGIN_URL,
+        { headers: { Referer: LOGIN_URL, "User-Agent": LOGIN_USER_AGENT } },
+        jar,
+      );
       if (hasLoginForm(alt.body)) page = alt;
     }
     if (!hasLoginForm(page.body)) {
@@ -439,10 +508,16 @@ async function attemptLogin(login: string, password: string): Promise<LoginAttem
       return { status: "captcha", form };
     }
 
-    const outcome = await postLoginForm(form, login, password, "");
-    if (outcome.status !== "error") return outcome;
-    diag = outcome.message;
-    console.error("attemptLogin: qayta urinish", diag);
+    // 1) Minimal maydonlar (isbotlangan usul)
+    const plain = await postLogin(form, login, password, { mode: "plain" });
+    if (plain.status !== "error") return plain;
+
+    // 2) Yashirin maydonlar bilan
+    const hidden = await postLogin(form, login, password, { mode: "hidden" });
+    if (hidden.status !== "error") return hidden;
+
+    diag = hidden.message;
+    console.error("attemptLogin: strategiyalar o'tmadi", diag);
   }
 
   return {
@@ -516,7 +591,10 @@ export async function submitCaptchaLogin(
   captchaValue: string,
 ): Promise<EmaktabLoginStatus> {
   try {
-    return await toLoginStatus(await postLoginForm(form, login, password, captchaValue), login);
+    return await toLoginStatus(
+      await postLogin(form, login, password, { mode: "captcha", captchaValue }),
+      login,
+    );
   } catch (error) {
     return wrapLoginError(error);
   }
@@ -546,10 +624,19 @@ export interface LoginProbe {
   snippet: string;
 }
 
-export async function probeLogin(): Promise<{ get: LoginProbe; post: LoginProbe | null; note: string }> {
+export async function probeLogin(): Promise<{
+  get: LoginProbe;
+  strategies: Array<{ mode: string; outcome: string; detail: string }>;
+  note: string;
+}> {
   const jar: Record<string, string> = {};
-  const page = await fetchFollowing(LOGIN_BASE, { headers: { Referer: LOGIN_BASE } }, jar);
-  const base: Omit<LoginProbe, "step"> = {
+  const page = await fetchFollowing(
+    LOGIN_BASE,
+    { headers: { Referer: LOGIN_BASE, "User-Agent": LOGIN_USER_AGENT } },
+    jar,
+  );
+  const get: LoginProbe = {
+    step: "get",
     status: page.status,
     finalUrl: page.finalUrl,
     hasForm: hasLoginForm(page.body),
@@ -559,52 +646,45 @@ export async function probeLogin(): Promise<{ get: LoginProbe; post: LoginProbe 
     errorState: extractLoginErrors(page.body),
     snippet: page.body.slice(0, 500).replace(/\s+/g, " "),
   };
-  const get: LoginProbe = { step: "get", ...base };
 
+  const strategies: Array<{ mode: string; outcome: string; detail: string }> = [];
   if (!get.hasForm) {
-    return { get, post: null, note: "login formasi topilmadi" };
+    return { get, strategies, note: "login formasi topilmadi" };
   }
 
-  const form = formStateFrom(page, jar);
-  const result = await fetchFollowing(
-    form.postUrl,
-    {
-      method: "POST",
-      body: new URLSearchParams({
-        ...form.hidden,
-        login: "diagnostika_test",
-        password: "diagnostika_test",
-        FingerprintId: form.hidden["FingerprintId"] || deviceFingerprint("diagnostika_test"),
-        captcha__value: "",
-      }).toString(),
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-        Referer: form.postUrl,
-        Origin: "https://login.emaktab.uz",
-      },
-    },
-    jar,
-  );
-  const post: LoginProbe = {
-    step: "post(dummy)",
-    status: result.status,
-    finalUrl: result.finalUrl,
-    hasForm: hasLoginForm(result.body),
-    captchaVisible: captchaVisible(result.body),
-    captchaUrl: extractCaptchaUrl(result.body, result.finalUrl),
-    hiddenNames: Object.keys(parseHiddenInputs(result.body)),
-    errorState: extractLoginErrors(result.body),
-    snippet: result.body.slice(0, 500).replace(/\s+/g, " "),
-  };
+  for (const mode of ["plain", "hidden"] as const) {
+    const form = formStateFrom(page, jar);
+    try {
+      const outcome = await postLogin(form, "diagnostika_test", "diagnostika_test", { mode });
+      strategies.push({
+        mode,
+        outcome: outcome.status,
+        detail:
+          outcome.status === "invalid_credentials"
+            ? outcome.message
+            : outcome.status === "captcha"
+              ? `captcha challenge (rasm: ${outcome.form.captchaUrl ?? "yo'q"})`
+              : outcome.status === "error"
+                ? outcome.message
+                : "MUVAFFAQIYAT (dummy bilan!)",
+      });
+      if (outcome.status !== "error") break;
+    } catch (error) {
+      strategies.push({ mode, outcome: "exception", detail: String(error).slice(0, 200) });
+    }
+  }
 
-  const authCookie = Boolean(jar["UZDnevnikAuth_a"] ?? jar["UZDnevnikAuth_s"]);
-  let note = "post qaytdi (forma)";
-  if (!post.hasForm || authCookie) note = "post MUVAFFAQIYAT (forma yo'q/auth cookie)";
-  else if (post.captchaVisible) note = "captcha KO'RINADI";
-  else if (post.errorState) note = `xato holati: ${JSON.stringify(post.errorState)}`;
-  else if (post.captchaUrl) note = "captcha belgilari bor (hidden)";
+  const first = strategies[0]?.outcome ?? "?";
+  const note =
+    first === "invalid_credentials"
+      ? "POST GATE O'TDI (dummy login noto'g'ri deb qaytdi — captcha bloklamayapti!)"
+      : first === "captcha"
+        ? "captcha challenge qaytdi — captcha talab qilinmoqda"
+        : first === "ok"
+          ? "kutilmagan muvaffaqiyat (tekshiring)"
+          : "POST o'tmadi — tafsilotlar 'details'da";
 
-  return { get, post, note };
+  return { get, strategies, note };
 }
 
 // ---------------------------------------------------------------------------

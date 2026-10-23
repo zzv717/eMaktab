@@ -6,6 +6,7 @@ import { readFileSync } from "fs";
 import {
   captchaVisible,
   extractCaptchaUrl,
+  stripCaptchaFields,
   dayStartTs,
   dayWeekday,
   extractStartState,
@@ -204,6 +205,15 @@ check(
     "https://login.emaktab.uz/captcha/false/xyz-9",
 );
 check("captcha URL yo'q", extractCaptchaUrl("<html></html>", "https://x.uz/") === null);
+const stripped = stripCaptchaFields({
+  "Captcha.Id": "uuid-1",
+  "captcha__value": "",
+  exceededAttempts: "False",
+  ReturnUrl: "",
+  login: "x",
+});
+check("captcha maydonlar olib tashlandi", !("Captcha.Id" in stripped) && !("captcha__value" in stripped), stripped);
+check("boshqa maydonlar qoldi", stripped["exceededAttempts"] === "False" && stripped["login"] === "x", stripped);
 
 console.log(`\nNatija: ${passed} o'tdi, ${failed} yiqildi`);
 process.exit(failed > 0 ? 1 : 0);
