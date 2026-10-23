@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
+  extractAnyState,
+  extractTalkUser,
   fetchClassMembers,
   fetchNews,
   fetchSchedule,
@@ -70,6 +72,28 @@ export async function GET(req: NextRequest) {
           check.news = String(news.length);
         } catch (error) {
           check.news = `xato ${(error instanceof Error ? error.message : String(error)).slice(0, 30)}`;
+        }
+
+        // Landing state shakli (o'qituvchi portali) — schedule qayerdaligini bilish uchun.
+        try {
+          const res = await fetch("https://emaktab.uz/teachers", {
+            headers: {
+              "User-Agent": "Mozilla/5.0",
+              Cookie: Object.entries(result.session.cookies)
+                .map(([k, v]) => `${k}=${v}`)
+                .join("; "),
+            },
+            redirect: "follow",
+          });
+          const body = await res.text();
+          const states = extractAnyState(body);
+          check.shape = `${res.status} ${states
+            .map((s) => `${s.marker.replace(/__/g, "")}:${Object.keys(s.data as object).slice(0, 6).join(".")}`)
+            .join(" | ")
+            .slice(0, 120)}`;
+          check.talk = extractTalkUser(body) ? "bor" : "yo'q";
+        } catch (error) {
+          check.shape = `xato ${(error instanceof Error ? error.message : String(error)).slice(0, 30)}`;
         }
         out.check = check;
       }

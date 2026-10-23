@@ -1875,21 +1875,26 @@ const SCHOOLS_BASE = "https://schools.emaktab.uz";
 
 /** schools.emaktab.uz sahifalarini (HTML) olish. */
 async function pageGet(cookies: Record<string, string>, url: string): Promise<string> {
-  const res = await fetch(url, {
-    method: "GET",
-    redirect: "manual",
-    headers: {
-      "User-Agent": USER_AGENT,
-      Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-      "Accept-Language": "uz-UZ,uz;q=0.9,en;q=0.8,ru;q=0.7",
-      Cookie: cookieHeader(cookies),
+  // fetchFollowing — SSO/redirect zanjirlarini kuzatadi (schools.emaktab.uz o'z
+  // redirect'ini beradi; uni xato deb tashlash sessiyani 'tugagan' deb ko'rsatardi).
+  const res = await fetchFollowing(
+    url,
+    {
+      headers: {
+        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "uz-UZ,uz;q=0.9,en;q=0.8,ru;q=0.7",
+      },
     },
-    cache: "no-store",
-  });
-  if (res.status === 401 || res.status === 403 || (res.status >= 300 && res.status < 400)) {
+    cookies,
+  );
+  if (res.status === 401 || res.status === 403) {
     throw new EmaktabAuthError();
   }
-  return res.text();
+  // Redirect oxiri login sahifasiga bo'lsa — sessiya qabul qilinmagan.
+  if (hasLoginForm(res.body) && res.finalUrl.includes("login.emaktab.uz")) {
+    throw new EmaktabAuthError();
+  }
+  return res.body;
 }
 
 function stripTags(html: string): string {
