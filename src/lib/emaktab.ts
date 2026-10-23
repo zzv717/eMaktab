@@ -471,6 +471,8 @@ async function fetchStartState(cookies: Record<string, string>): Promise<StartSt
 export interface TalkUser {
   userId: string;
   roles: string[];
+  /** eMaktabdagi haqiqiy to'liq ism (mavjud bo'lsa). */
+  name: string;
   /** O'qituvchi dars beradigan sinflar: { [groupId]: {...} } */
   teacherGroupIds: string[];
   /** Sinf rahbari bo'lgan sinflar IDlari. */
@@ -538,6 +540,10 @@ export function extractTalkUser(html: string): TalkUser | null {
           return {
             userId: str(u.id ?? u.userId),
             roles: Array.isArray(u.roles) ? u.roles.map((r) => str(r)) : [],
+            name:
+              nameFromPerson(u) ||
+              str(u.fullName ?? u.fullNameRu ?? u.name ?? u.shortName) ||
+              [str(u.lastName), str(u.firstName)].filter(Boolean).join(" ").trim(),
             teacherGroupIds: toIdList(u.teacherGroups),
             classTeacherGroupIds: toIdList(u.classTeacherGroups),
             schoolIds: Array.isArray(u.schoolIds) ? u.schoolIds.map((s) => str(s)) : [],
@@ -616,20 +622,36 @@ async function buildSession(cookies: Record<string, string>, login: string): Pro
   try {
     const meRes = await apiGet(cookies, "/api/v2/users/me");
     if (meRes.status === 200) {
-      const me = parseJson(meRes.text) as Record<string, unknown> | null;
-      const name = me ? nameFromPerson(me) : "";
+      const meRaw = parseJson(meRes.text) as Record<string, unknown> | null;
+      const me =
+        meRaw && typeof meRaw.user === "object" && meRaw.user
+          ? (meRaw.user as Record<string, unknown>)
+          : meRaw;
+      const name = me
+        ? nameFromPerson(me) || str(me.fullName ?? me.shortName ?? me.name)
+        : "";
       if (name) fullName = name;
     }
   } catch (error) {
     if (error instanceof EmaktabAuthError) throw error;
   }
 
+  // Chat state'idagi haqiqiy ism (users/me ishlamasa).
+  if (fullName === login && talkUser?.name) fullName = talkUser.name;
+
   if (persons.length === 0) {
     try {
       const ctxRes = await apiGet(cookies, "/api/v2/users/me/context");
       if (ctxRes.status === 200) {
         const ctx = parseJson(ctxRes.text) as unknown;
-        const list = Array.isArray(ctx) ? ctx : ctx ? [ctx] : [];
+        let list: unknown[] = [];
+        if (Array.isArray(ctx)) list = ctx;
+        else if (ctx && typeof ctx === "object") {
+          const obj = ctx as Record<string, unknown>;
+          if (Array.isArray(obj.contextPersons)) list = obj.contextPersons;
+          else if (Array.isArray(obj.persons)) list = obj.persons;
+          else list = [ctx];
+        }
         for (const raw of list) {
           if (!raw || typeof raw !== "object") continue;
           const p = raw as Record<string, unknown>;
@@ -653,10 +675,17 @@ async function buildSession(cookies: Record<string, string>, login: string): Pro
   try {
     const childrenRes = await apiGet(cookies, "/api/v2/users/me/children");
     if (childrenRes.status === 200) {
-      const children = parseJson(childrenRes.text);
-      if (Array.isArray(children) && children.length > 0) {
+      const childrenRaw = parseJson(childrenRes.text) as unknown;
+      let childList: unknown[] = [];
+      if (Array.isArray(childrenRaw)) childList = childrenRaw;
+      else if (childrenRaw && typeof childrenRaw === "object") {
+        const obj = childrenRaw as Record<string, unknown>;
+        if (Array.isArray(obj.children)) childList = obj.children;
+        else if (Array.isArray(obj.persons)) childList = obj.persons;
+      }
+      if (childList.length > 0) {
         role = "parent";
-        for (const raw of children) {
+        for (const raw of childList) {
           if (!raw || typeof raw !== "object") continue;
           const c = raw as Record<string, unknown>;
           const personId = str(c.personId ?? c.person_id ?? c.person);
@@ -683,6 +712,11 @@ async function buildSession(cookies: Record<string, string>, login: string): Pro
     seen.add(p.personId);
     return true;
   });
+
+  // Ism hali ham login bo'lsa — kontekstdagi haqiqiy ismni olamiz (o'quvchi/o'qituvchi uchun).
+  if (fullName === login && role !== "parent" && persons[0]?.fullName) {
+    fullName = persons[0].fullName;
+  }
 
   // O'qituvchi uchun personId bo'lmasligi mumkin — kontekstni minimallashtiramiz.
   if (persons.length === 0 && role === "teacher") {
