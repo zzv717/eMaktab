@@ -30,6 +30,8 @@ export async function GET(req: NextRequest) {
       out.role = result.session.role;
     } else if (result.status === "captcha_required") {
       out.captcha = true;
+      out.captchaUrl = result.captchaUrl ? "bor" : "yo'q";
+      out.formState = result.formState ? "bor" : "yo'q";
     }
     return NextResponse.json(out);
   }

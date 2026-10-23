@@ -20,6 +20,7 @@ import { decryptSecret, encryptSecret } from "@/lib/crypto";
 import {
   EmaktabApiError,
   EmaktabAuthError,
+  fetchCaptchaChallenge,
   fetchCaptchaImage,
   fetchClassMembers,
   fetchGrades,
@@ -491,14 +492,25 @@ async function handleCaptchaChallenge(
   result: { captchaUrl?: string; formState?: LoginFormState; message: string },
   progress?: ProgressMsg,
 ) {
-  if (!result.captchaUrl || !result.formState) return;
+  let captchaUrl = result.captchaUrl ?? "";
+  let formState = result.formState;
+  if (!captchaUrl || !formState) {
+    // Javobda rasm/forma to'liq bo'lmasa — yangi captcha challenge olamiz.
+    const fresh = await fetchCaptchaChallenge();
+    if (!fresh) {
+      await logEvent("captcha_no_image", "yangi captcha ham topilmadi", from.id);
+      return;
+    }
+    captchaUrl = fresh.captchaUrl;
+    formState = fresh.form;
+  }
 
   await db
     .update(botUsers)
     .set({
       tempLogin: login,
       tempPasswordEnc: encryptSecret(password),
-      tempSessionEnc: encryptSecret(JSON.stringify(result.formState)),
+      tempSessionEnc: encryptSecret(JSON.stringify(formState)),
       state: "awaiting_captcha",
       updatedAt: new Date(),
     })
@@ -510,17 +522,17 @@ async function handleCaptchaChallenge(
   const captchaCaption = "🖼 <b>eMaktab rasmli kod (captcha) so'rayapti.</b>";
   // Rasmni avval bayt sifatida yuklab olamiz va Telegram'ga to'g'ridan-to'g'ri yuboramiz —
   // tashqi URL sifatida yuborilsa Telegram uni ocholmay qolishi mumkin (ishlaydigan botlar shunday qiladi).
-  const img = await fetchCaptchaImage(result.captchaUrl);
+  const img = await fetchCaptchaImage(captchaUrl);
   if (img && img.byteLength > 0) {
     try {
       await sendPhotoBytes(chatId, img, { caption: captchaCaption });
     } catch (error) {
       await logError("captcha_send_bytes", error, from.id);
-      await sendPhoto(chatId, result.captchaUrl, { caption: captchaCaption });
+      await sendPhoto(chatId, captchaUrl, { caption: captchaCaption });
     }
   } else {
-    await logEvent("captcha_fetch_empty", result.captchaUrl, from.id);
-    await sendPhoto(chatId, result.captchaUrl, { caption: captchaCaption });
+    await logEvent("captcha_fetch_empty", captchaUrl, from.id);
+    await sendPhoto(chatId, captchaUrl, { caption: captchaCaption });
   }
   await sendMessage(
     chatId,
