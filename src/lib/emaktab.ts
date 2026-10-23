@@ -211,27 +211,59 @@ const ERROR_MESSAGES: Record<string, string> = {
   "login.login.error.captcha": "Rasmdagi kod noto'g'ri kiritildi.",
 };
 
-function extractLoginErrors(html: string): { hasErrors: boolean; text?: string; exceededAttempts?: boolean } | null {
+type LoginErrorState = {
+  hasErrors: boolean;
+  text?: string;
+  exceededAttempts?: boolean;
+  isWrongCaptcha?: boolean;
+};
+
+function extractLoginErrors(html: string): LoginErrorState | null {
   const jsonMatch = html.match(/JSON\.parse\('([^']*)'\)/);
-  if (!jsonMatch) return null;
-  try {
-    const decoded = jsonMatch[1].replace(/\\x([0-9a-fA-F]{2})/g, (_, hex) =>
-      String.fromCharCode(parseInt(hex, 16)),
-    );
-    const data = JSON.parse(decoded) as {
-      hasErrors?: boolean;
-      firstErrorText?: string | null;
-      exceededAttempts?: boolean;
-      isWrongCaptcha?: boolean;
-    };
-    return {
-      hasErrors: Boolean(data.hasErrors),
-      text: data.firstErrorText ? ERROR_MESSAGES[data.firstErrorText] : undefined,
-      exceededAttempts: Boolean(data.exceededAttempts),
-    };
-  } catch {
-    return null;
+  if (jsonMatch) {
+    try {
+      const decoded = jsonMatch[1].replace(/\\x([0-9a-fA-F]{2})/g, (_, hex) =>
+        String.fromCharCode(parseInt(hex, 16)),
+      );
+      const data = JSON.parse(decoded) as {
+        hasErrors?: boolean;
+        firstErrorText?: string | null;
+        exceededAttempts?: boolean;
+        isWrongCaptcha?: boolean;
+      };
+      return {
+        hasErrors: Boolean(data.hasErrors),
+        text: data.firstErrorText ? ERROR_MESSAGES[data.firstErrorText] : undefined,
+        exceededAttempts: Boolean(data.exceededAttempts),
+        isWrongCaptcha: Boolean(data.isWrongCaptcha),
+      };
+    } catch {
+      /* JSON buzilgan bo'lsa — HTML fallbackga o'tamiz */
+    }
   }
+
+  // HTML fallback: eMaktab xatoni JSON blob emas, oddiy HTML'da ham ko'rsatadi.
+  const htmlError = html.match(
+    /class="[^"]*(?:validation-summary-errors|field-validation-error|login__body__error|input-validation-error)[^"]*"[^>]*>([\s\S]{0,120}?)</i,
+  );
+  const htmlText = htmlError?.[1]?.replace(/\s+/g, " ").trim() ?? "";
+  const exceeded = /exceededAttempts\s*[:=]\s*true/i.test(html);
+  const wrongCaptcha = /isWrongCaptcha\s*[:=]\s*true|wrong.?captcha|noto'g'ri captcha/i.test(html);
+  if (htmlText || exceeded || wrongCaptcha) {
+    return { hasErrors: Boolean(htmlText), text: htmlText || undefined, exceededAttempts: exceeded, isWrongCaptcha: wrongCaptcha };
+  }
+  return null;
+}
+
+/** Javob tarkibidagi qisqa belgilar (diagnostika uchun). */
+function bodyMarkers(body: string): string {
+  const bits: string[] = [];
+  if (/JSON\.parse\(/.test(body)) bits.push("json");
+  if (captchaVisible(body)) bits.push("captchaImg");
+  if (hasLoginForm(body)) bits.push("form");
+  const err = extractLoginErrors(body);
+  if (err) bits.push(`err=${err.text ? err.text.slice(0, 30) : err.hasErrors ? "1" : "0"}`);
+  return bits.join("|").slice(0, 60);
 }
 
 // ---------------------------------------------------------------------------
@@ -350,7 +382,7 @@ type LoginAttempt =
   | { status: "ok"; cookies: Record<string, string> }
   | { status: "captcha"; form: LoginFormState }
   | { status: "invalid_credentials"; message: string }
-  | { status: "error"; message: string };
+  | { status: "error"; message: string; markers?: string };
 
 function formStateFrom(page: FollowedResponse, jar: Record<string, string>): LoginFormState {
   const action = formAction(page.body);
@@ -368,7 +400,7 @@ function classifyFormResult(result: FollowedResponse, jar: Record<string, string
     return { status: "captcha", form: formStateFrom(result, jar) };
   }
   const errors = extractLoginErrors(result.body);
-  if (errors?.exceededAttempts) {
+  if (errors?.exceededAttempts || errors?.isWrongCaptcha) {
     return { status: "captcha", form: formStateFrom(result, jar) };
   }
   if (errors?.hasErrors) {
@@ -383,7 +415,8 @@ function classifyFormResult(result: FollowedResponse, jar: Record<string, string
   }
   return {
     status: "error",
-    message: `eMaktab formani qaytardi (status ${result.status}, ${result.finalUrl})`,
+    message: `eMaktab formani qaytardi (status ${result.status}, ${result.finalUrl}) [${bodyMarkers(result.body)}]`,
+    markers: bodyMarkers(result.body),
   };
 }
 
@@ -400,6 +433,24 @@ export function stripCaptchaFields(hidden: Record<string, string>): Record<strin
     out[k] = v;
   }
   return out;
+}
+
+/**
+ * Yangi captcha challenge oladi (forma + mos rasm). Eski sessiya yo'qolganda
+ * yoki javobda rasm bo'lmaganda ishlatiladi — Captcha.Id va rasm uuid'si mos keladi.
+ */
+export async function fetchCaptchaChallenge(): Promise<{ form: LoginFormState; captchaUrl: string } | null> {
+  const jar: Record<string, string> = {};
+  const page = await fetchFollowing(
+    LOGIN_URL,
+    { headers: { Referer: LOGIN_URL, "User-Agent": LOGIN_USER_AGENT } },
+    jar,
+  );
+  if (!hasLoginForm(page.body)) return null;
+  const form = formStateFrom(page, jar);
+  const url = form.captchaUrl ?? extractCaptchaUrl(page.body, page.finalUrl);
+  if (!url) return null;
+  return { form: { ...form, captchaUrl: url }, captchaUrl: url };
 }
 
 /**
@@ -649,7 +700,7 @@ export interface CompactProbe {
     captchaUrl: string | null;
     hidden: string;
   };
-  strategies: Array<{ mode: string; r: string; m?: string }>;
+  strategies: Array<{ mode: string; r: string; m?: string; mk?: string }>;
   oauth: string;
   note: string;
 }
@@ -707,7 +758,12 @@ export async function probeLogin(): Promise<CompactProbe> {
               : outcome.status === "ok"
                 ? "OK?!"
                 : outcome.message;
-        strategies.push({ mode, r: outcome.status, m: message.slice(0, 70) });
+        strategies.push({
+          mode,
+          r: outcome.status,
+          m: message.slice(0, 70),
+          mk: outcome.status === "error" ? outcome.markers ?? "" : "",
+        });
         if (outcome.status !== "error") break;
       } catch (error) {
         strategies.push({ mode, r: "exception", m: String(error).slice(0, 70) });
