@@ -918,17 +918,9 @@ type StartState = {
   };
 };
 
-export function extractStartState(html: string): StartState | null {
-  const marker = "window.__USER__START__PAGE__INITIAL__STATE__";
-  const idx = html.indexOf(marker);
-  if (idx === -1) return null;
-  const eq = html.indexOf("=", idx);
-  if (eq === -1) return null;
-
-  // Birinchi '{' dan boshlab to'liq JSON obyektini qo'lda skanerlaymiz
-  // (HTML ichida JS kod davom etgani uchun sodda JSON.parse ishlamaydi).
-  const start = html.indexOf("{", eq);
-  if (start === -1) return null;
+/** HTML ichidagi JS o'zgaruvchidan ({ dan boshlab) to'liq JSON obyektni skanerlaydi. */
+export function parseJsonObjectAt(html: string, start: number): unknown | null {
+  if (start < 0 || start >= html.length) return null;
   try {
     let depth = 0;
     let inString = false;
@@ -952,14 +944,43 @@ export function extractStartState(html: string): StartState | null {
       else if (ch === "}") {
         depth--;
         if (depth === 0) {
-          return JSON.parse(html.slice(start, i + 1)) as StartState;
+          return JSON.parse(html.slice(start, i + 1)) as unknown;
         }
       }
     }
+    return null;
   } catch {
-    /* ignore */
+    return null;
   }
-  return null;
+}
+
+export function extractStartState(html: string): StartState | null {
+  const marker = "window.__USER__START__PAGE__INITIAL__STATE__";
+  const idx = html.indexOf(marker);
+  if (idx === -1) return null;
+  const eq = html.indexOf("=", idx);
+  if (eq === -1) return null;
+  const start = html.indexOf("{", eq);
+  return parseJsonObjectAt(html, start) as StartState | null;
+}
+
+/**
+ * Sahifadagi BARCHA window.__...__ = {...} state'larini topadi.
+ * Turli rollar (o'quvchi/o'qituvchi) turli markerlar ishlatadi.
+ */
+export function extractAnyState(html: string): Array<{ marker: string; data: unknown }> {
+  const out: Array<{ marker: string; data: unknown }> = [];
+  const re = /window\.(__[A-Z0-9_]+__)\s*=\s*/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(html)) !== null) {
+    const braceAt = html.indexOf("{", m.index + m[0].length);
+    if (braceAt === -1) continue;
+    const next = html.indexOf("window.__", m.index + 5);
+    if (next !== -1 && braceAt > next) continue;
+    const data = parseJsonObjectAt(html, braceAt);
+    if (data && typeof data === "object") out.push({ marker: m[1], data });
+  }
+  return out;
 }
 
 async function fetchStartPage(
@@ -1214,6 +1235,43 @@ async function buildSession(
       talkUser = uf.talkUser;
     }
   }
+
+  // Yakuniy sahifa (masalan /teachers — o'qituvchi portali) — state aynan shu yerda.
+  if (persons.length === 0 && meta?.finalUrl) {
+    try {
+      const land = await fetchFollowing(
+        meta.finalUrl,
+        { headers: { Referer: `${WEB_BASE}/` } },
+        cookies,
+      );
+      const states = extractAnyState(land.body);
+      dbg.push(`land=${land.status} st=${states.length}`);
+      for (const s of states) {
+        if (s.marker.includes("TEACHER")) role = "teacher";
+        for (const raw of collectPersonLike(s.data)) {
+          const p = raw as Record<string, unknown>;
+          const personId = str(p.personId ?? p.person_id);
+          if (!personId) continue;
+          const school = (p.school ?? {}) as Record<string, unknown>;
+          const group = (p.group ?? {}) as Record<string, unknown>;
+          persons.push({
+            personId,
+            schoolId: str(school.id) || str(p.schoolId ?? p.school_id),
+            groupId: str(group.id) || str(p.groupId ?? p.group_id),
+            fullName: nameFromPerson(p) || str(p.shortName ?? p.name ?? p.fullName),
+            schoolName: str(school.name),
+            groupName: str(group.name),
+          });
+        }
+      }
+      if (!talkUser) talkUser = extractTalkUser(land.body);
+    } catch (error) {
+      dbg.push(`land=xato:${(error instanceof Error ? error.message : String(error)).slice(0, 20)}`);
+    }
+  }
+
+  // Yakuniy URL /teachers bo'lsa — bu o'qituvchi portali.
+  if ((meta?.finalUrl ?? "").toLowerCase().includes("teacher")) role = "teacher";
 
   // Rolni chat state'idagi roles/teacherGroups/classTeacherGroups dan aniqlaymiz.
   if (talkUser) {
