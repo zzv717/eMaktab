@@ -75,6 +75,18 @@ const SESSION_CACHE_TTL_MS = 15 * 60 * 1000; // eMaktab sessiyasi 15 daqiqa kesh
 // Yordamchi funksiyalar
 // ---------------------------------------------------------------------------
 
+// DB xatosining haqiqiy sababini ko'rsatadi (drizzle xatolarida asosiy sabab
+// error.cause ichida bo'ladi — masalan "column classes_json does not exist").
+function describeDbError(error: unknown): string {
+  const parts: string[] = [];
+  let current: unknown = error;
+  for (let i = 0; i < 3 && current; i++) {
+    parts.push((current instanceof Error ? current.message : String(current)).slice(0, 250));
+    current = current instanceof Error ? current.cause : undefined;
+  }
+  return parts.join("\n↓ ").slice(0, 500);
+}
+
 function isAuthenticated(user: BotUser): boolean {
   return Boolean(user.emaktabLogin && user.emaktabPasswordEnc);
 }
@@ -407,10 +419,10 @@ async function handleMessage(message: TelegramMessage) {
     console.error("DB error", error);
     await sendMessage(
       chatId,
-      "⚠️ <b>Bazaga ulanib bo'lmadi.</b>\n\n" +
-        "Vercel'da <code>DATABASE_URL</code> o'zgaruvchisi to'g'ri kiritilganini tekshiring " +
-        "(ichida <code>[YOUR-PAASSWORD]</code> kabi placeholder qolmagan bo'lsin) va deploy qiling.\n\n" +
-        `<code>${escapeHtml(error instanceof Error ? error.message.slice(0, 300) : String(error))}</code>`,
+      "⚠️ <b>Bazada xatolik yuz berdi.</b>\n\n" +
+        `<code>${escapeHtml(describeDbError(error))}</code>\n\n` +
+        "Agar <code>does not exist</code> yozuvi ko'rinsa — bazaviy jadval eskirgan, migratsiya kerak. " +
+        "Aks holda — Vercel'da <code>DATABASE_URL</code> ni tekshiring (ichida placeholder qolmagan bo'lsin).",
     );
     return;
   }
@@ -965,8 +977,10 @@ async function handleCallback(cb: TelegramCallbackQuery) {
     console.error("DB error", error);
     await sendMessage(
       chatId,
-      "⚠️ <b>Bazaga ulanib bo'lmadi.</b>\n\nVercel'da <code>DATABASE_URL</code> to'g'ri kiritilganini tekshiring.\n\n" +
-        `<code>${escapeHtml(error instanceof Error ? error.message.slice(0, 300) : String(error))}</code>`,
+      "⚠️ <b>Bazada xatolik yuz berdi.</b>\n\n" +
+        `<code>${escapeHtml(describeDbError(error))}</code>\n\n` +
+        "Agar <code>does not exist</code> yozuvi ko'rinsa — bazaviy jadval eskirgan, migratsiya kerak. " +
+        "Aks holda — Vercel'da <code>DATABASE_URL</code> ni tekshiring.",
     );
     return;
   }
