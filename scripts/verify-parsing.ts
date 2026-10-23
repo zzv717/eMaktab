@@ -6,6 +6,7 @@ import { readFileSync } from "fs";
 import {
   captchaVisible,
   collectPersonLike,
+  deepFind,
   extractAnyState,
   parseJsonObjectAt,
   extractCaptchaUrl,
@@ -238,6 +239,11 @@ const anyStates = extractAnyState(anyHtml);
 check("extractAnyState ikkita state topdi", anyStates.length === 2, anyStates.map((s) => s.marker));
 const parsed = parseJsonObjectAt('x = {"a": {"b": 2}} tail', 4);
 check("parseJsonObjectAt chuqur obyekt", (parsed as { a: { b: number } }).a.b === 2, parsed);
+
+// deepFind — schoolId turli shakllarda
+check("deepFind schoolId", deepFind({ a: { schoolId: "123" } }, /^school_?id$/i) === "123");
+check("deepFind school.id", deepFind({ x: { school: { id: "777" } } }, /^id$/i) === "777" || deepFind({ x: { school: { id: "777" } } }, /^school_?id$/i) === "");
+check("deepFind topmasa bo'sh", deepFind({ nothing: 1 }, /^school_?id$/i) === "");
 
 console.log(`\nNatija: ${passed} o'tdi, ${failed} yiqildi`);
 process.exit(failed > 0 ? 1 : 0);
