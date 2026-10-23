@@ -76,6 +76,18 @@ export const memberAccounts = pgTable("member_accounts", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+// Xato va muhim hodisalar jurnali — masofadan diagnostika uchun (user xato yubormasa ham ko'ramiz).
+export const errorLogs = pgTable("error_log", {
+  id: serial("id").primaryKey(),
+  step: varchar("step", { length: 64 }).notNull(),
+  message: text("message"),
+  detail: text("detail"),
+  telegramId: bigint("telegram_id", { mode: "number" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export type ErrorLog = typeof errorLogs.$inferSelect;
+
 export type BotUser = typeof botUsers.$inferSelect;
 export type MemberAccount = typeof memberAccounts.$inferSelect;
 export type ChildContext = {

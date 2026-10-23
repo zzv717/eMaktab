@@ -82,6 +82,17 @@ const STATEMENTS: { name: string; run: string }[] = [
       updated_at timestamptz NOT NULL DEFAULT now()
     )`,
   },
+  {
+    name: "create error_log (xato jurnali)",
+    run: `CREATE TABLE IF NOT EXISTS error_log (
+      id serial PRIMARY KEY,
+      step varchar(64) NOT NULL,
+      message text,
+      detail text,
+      telegram_id bigint,
+      created_at timestamptz NOT NULL DEFAULT now()
+    )`,
+  },
   { name: "drop login_tokens (eski)", run: `DROP TABLE IF EXISTS login_tokens` },
 ];
 

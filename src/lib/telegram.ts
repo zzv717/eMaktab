@@ -41,6 +41,38 @@ export async function sendPhoto(
   });
 }
 
+/**
+ * Rasmni bayt (bufer) sifatida yuboradi — Telegram serveriga to'g'ridan-to'g'ri yuklanadi.
+ * Captcha rasmlari uchun: tashqi URL orqali yuborishda Telegram uni ocholmay qolishi mumkin,
+ * shuning uchun avval rasmni o'zimiz yuklab olamiz va shu yerga yuboramiz.
+ */
+export async function sendPhotoBytes(
+  chatId: number,
+  data: Uint8Array,
+  opts?: { caption?: string; replyMarkup?: ReturnType<typeof kb> },
+): Promise<void> {
+  const token = getToken();
+  const form = new FormData();
+  form.set("chat_id", String(chatId));
+  form.set("photo", new Blob([data as unknown as BlobPart], { type: "image/png" }), "captcha.png");
+  if (opts?.caption) {
+    form.set("caption", opts.caption);
+    form.set("parse_mode", "HTML");
+  }
+  if (opts?.replyMarkup) {
+    form.set("reply_markup", JSON.stringify(opts.replyMarkup));
+  }
+  const res = await fetch(`${API_BASE}/bot${token}/sendPhoto`, {
+    method: "POST",
+    body: form,
+    cache: "no-store",
+  });
+  const json = (await res.json()) as { ok: boolean; description?: string };
+  if (!json.ok) {
+    throw new Error(`Telegram API error on sendPhoto: ${json.description ?? res.statusText}`);
+  }
+}
+
 export type InlineButton = {
   text: string;
   callback_data?: string;
