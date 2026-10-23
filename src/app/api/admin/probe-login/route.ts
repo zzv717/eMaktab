@@ -23,7 +23,7 @@ export async function GET(req: NextRequest) {
     const result = await loginEmaktab(login, password);
     const out: Record<string, unknown> = {
       login: result.status,
-      message: (result.status === "ok" ? "" : result.message).slice(0, 120),
+      message: (result.status === "ok" ? "" : result.message).slice(0, 300),
     };
     if (result.status === "ok") {
       out.name = result.session.fullName;
