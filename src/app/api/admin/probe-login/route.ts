@@ -28,6 +28,7 @@ export async function GET(req: NextRequest) {
     if (result.status === "ok") {
       out.name = result.session.fullName;
       out.role = result.session.role;
+      out.ck = Object.keys(result.session.cookies).join(",").slice(0, 120);
     } else if (result.status === "captcha_required") {
       out.captcha = true;
       out.captchaUrl = result.captchaUrl ? "bor" : "yo'q";
