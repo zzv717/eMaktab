@@ -988,16 +988,20 @@ async function fetchUserfeedHtml(
   cookies: Record<string, string>,
 ): Promise<{ state: StartState | null; talkUser: TalkUser | null; dbg: string }> {
   try {
-    const res = await apiGet(cookies, "/userfeed");
-    if (res.status !== 200) return { state: null, talkUser: null, dbg: `uf=${res.status}` };
-    const state = extractStartState(res.text);
+    // fetchFollowing — 302 redirect'larni kuzatadi (apiGet 302 ni xato deb tashlaydi).
+    const res = await fetchFollowing(
+      `${WEB_BASE}/userfeed`,
+      { headers: { "User-Agent": USER_AGENT, Referer: `${WEB_BASE}/` } },
+      cookies,
+    );
+    const state = extractStartState(res.body);
     return {
       state,
-      talkUser: extractTalkUser(res.text),
-      dbg: `uf=html st=${state ? 1 : 0} uctx=${safeList(state?.userContext?.contextPersons).length}`,
+      talkUser: extractTalkUser(res.body),
+      dbg: `uf=${res.status} st=${state ? 1 : 0} uctx=${safeList(state?.userContext?.contextPersons).length}`,
     };
   } catch (error) {
-    if (error instanceof EmaktabAuthError) throw error;
+    // Fallback — hech qachon tashlamaydi.
     return { state: null, talkUser: null, dbg: `uf=xato:${(error instanceof Error ? error.message : String(error)).slice(0, 20)}` };
   }
 }
@@ -1175,8 +1179,11 @@ async function buildSession(cookies: Record<string, string>, login: string): Pro
   let classTeacherGroupIds: string[] = [];
 
   const dbg: string[] = [];
+  let talkUser: TalkUser | null = null;
+  try {
   const startPage = await fetchStartPage(cookies);
-  let { state, talkUser } = startPage;
+  let { state } = startPage;
+  talkUser = startPage.talkUser;
   dbg.push(startPage.dbg);
   persons = personsFromStartState(state);
 
@@ -1228,6 +1235,7 @@ async function buildSession(cookies: Record<string, string>, login: string): Pro
   if (persons.length === 0) {
     try {
       const ctxRes = await apiGet(cookies, "/api/v2/users/me/context");
+      dbg.push(`ctx=${ctxRes.status}`);
       if (ctxRes.status === 200) {
         const ctx = parseJson(ctxRes.text) as unknown;
         let list: unknown[] = [];
@@ -1328,6 +1336,15 @@ async function buildSession(cookies: Record<string, string>, login: string): Pro
       "eMaktab profilingizda o'quvchi konteksti topilmadi. " +
         `[diag: ${dbg.join(" ")} talk=${talkUser ? 1 : 0} ism=${fullName === login ? 0 : 1}]`,
     );
+  }
+
+  } catch (error) {
+    if (error instanceof EmaktabAuthError) {
+      throw new EmaktabApiError(
+        `sessiya tugagan [ck=${Object.keys(cookies).join(",").slice(0, 70)}]`,
+      );
+    }
+    throw error;
   }
 
   const userIdCookie = cookies["t0"] ?? talkUser?.userId ?? "";
