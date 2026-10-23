@@ -512,15 +512,24 @@ async function postLogin(
     if (!("ReturnUrl" in fields)) fields["ReturnUrl"] = "";
   }
 
+  // POST aniq /login manziliga (kbot2 isbotlangan usuli). Forma action'i bo'sh yoki
+  // "/" bo'lsa — server POST'ni qayta ishlamay, shunchaki sahifani qaytaradi
+  // (hasErrors:false bilan — biz uni 'formani qaytardi' deb noto'g'ri talqin qilardik).
+  const actionUrl = new URL(form.postUrl);
+  if (actionUrl.pathname === "/" || actionUrl.pathname === "") {
+    actionUrl.pathname = "/login";
+  }
+  const postUrl = actionUrl.toString();
+
   const result = await fetchFollowing(
-    form.postUrl,
+    postUrl,
     {
       method: "POST",
       body: new URLSearchParams(fields).toString(),
       headers: {
         "User-Agent": LOGIN_USER_AGENT,
         "Content-Type": "application/x-www-form-urlencoded",
-        Referer: form.postUrl,
+        Referer: LOGIN_URL,
         Origin: "https://login.emaktab.uz",
       },
     },
@@ -699,6 +708,7 @@ export interface CompactProbe {
     captcha: boolean;
     captchaUrl: string | null;
     hidden: string;
+    act: string;
   };
   strategies: Array<{ mode: string; r: string; m?: string; mk?: string }>;
   oauth: string;
@@ -742,6 +752,7 @@ export async function probeLogin(): Promise<CompactProbe> {
     captcha: captchaVisible(page.body),
     captchaUrl: extractCaptchaUrl(page.body, page.finalUrl),
     hidden: Object.keys(parseHiddenInputs(page.body)).join(","),
+    act: formAction(page.body) ?? "(bo'sh)",
   };
 
   const strategies: CompactProbe["strategies"] = [];
