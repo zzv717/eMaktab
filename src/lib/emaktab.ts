@@ -402,6 +402,22 @@ export function stripCaptchaFields(hidden: Record<string, string>): Record<strin
   return out;
 }
 
+/**
+ * Captcha rasmini bayt sifatida yuklab oladi — Telegram'ga to'g'ridan-to'g'ri yuklash uchun
+ * (tashqi URL sifatida yuborilsa Telegram uni ocholmay qolishi mumkin).
+ */
+export async function fetchCaptchaImage(url: string): Promise<Uint8Array | null> {
+  try {
+    const res = await fetch(url, {
+      headers: { "User-Agent": LOGIN_USER_AGENT, Referer: LOGIN_URL },
+    });
+    if (!res.ok) return null;
+    return new Uint8Array(await res.arrayBuffer());
+  } catch {
+    return null;
+  }
+}
+
 /** Captcha rasm URL'idagi uuid (Captcha.Id uchun zaxira). */
 function idFromCaptchaUrl(url: string | null): string {
   if (!url) return "";
@@ -624,67 +640,92 @@ export interface LoginProbe {
   snippet: string;
 }
 
-export async function probeLogin(): Promise<{
-  get: LoginProbe;
-  strategies: Array<{ mode: string; outcome: string; detail: string }>;
+/** Masofaviy tekshiruv natijasi — iloji boricha ixcham (masofadan to'liq ko'rinadi). */
+export interface CompactProbe {
+  get: {
+    status: number;
+    form: boolean;
+    captcha: boolean;
+    captchaUrl: string | null;
+    hidden: string;
+  };
+  strategies: Array<{ mode: string; r: string; m?: string }>;
+  oauth: string;
   note: string;
-}> {
+}
+
+/** OAuth "API kalit" yo'lini sinaydi (connect/token). Faqat diagnostika uchun. */
+async function probeOauth(): Promise<string> {
+  try {
+    const res = await fetch(`${LOGIN_BASE}/connect/token`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "User-Agent": LOGIN_USER_AGENT,
+      },
+      body: new URLSearchParams({
+        grant_type: "password",
+        client_id: "uzdnevnik",
+        client_secret: "",
+        username: "diagnostika_test",
+        password: "diagnostika_test",
+      }).toString(),
+    });
+    const body = (await res.text()).replace(/\s+/g, " ").slice(0, 60);
+    return `token ${res.status} ${body}`;
+  } catch (error) {
+    return `token xato ${String(error).slice(0, 50)}`;
+  }
+}
+
+export async function probeLogin(): Promise<CompactProbe> {
   const jar: Record<string, string> = {};
   const page = await fetchFollowing(
     LOGIN_BASE,
     { headers: { Referer: LOGIN_BASE, "User-Agent": LOGIN_USER_AGENT } },
     jar,
   );
-  const get: LoginProbe = {
-    step: "get",
+  const get: CompactProbe["get"] = {
     status: page.status,
-    finalUrl: page.finalUrl,
-    hasForm: hasLoginForm(page.body),
-    captchaVisible: captchaVisible(page.body),
+    form: hasLoginForm(page.body),
+    captcha: captchaVisible(page.body),
     captchaUrl: extractCaptchaUrl(page.body, page.finalUrl),
-    hiddenNames: Object.keys(parseHiddenInputs(page.body)),
-    errorState: extractLoginErrors(page.body),
-    snippet: page.body.slice(0, 500).replace(/\s+/g, " "),
+    hidden: Object.keys(parseHiddenInputs(page.body)).join(","),
   };
 
-  const strategies: Array<{ mode: string; outcome: string; detail: string }> = [];
-  if (!get.hasForm) {
-    return { get, strategies, note: "login formasi topilmadi" };
-  }
-
-  for (const mode of ["plain", "hidden"] as const) {
-    const form = formStateFrom(page, jar);
-    try {
-      const outcome = await postLogin(form, "diagnostika_test", "diagnostika_test", { mode });
-      strategies.push({
-        mode,
-        outcome: outcome.status,
-        detail:
+  const strategies: CompactProbe["strategies"] = [];
+  if (get.form) {
+    for (const mode of ["plain", "hidden"] as const) {
+      const form = formStateFrom(page, jar);
+      try {
+        const outcome = await postLogin(form, "diagnostika_test", "diagnostika_test", { mode });
+        const message =
           outcome.status === "invalid_credentials"
             ? outcome.message
             : outcome.status === "captcha"
-              ? `captcha challenge (rasm: ${outcome.form.captchaUrl ?? "yo'q"})`
-              : outcome.status === "error"
-                ? outcome.message
-                : "MUVAFFAQIYAT (dummy bilan!)",
-      });
-      if (outcome.status !== "error") break;
-    } catch (error) {
-      strategies.push({ mode, outcome: "exception", detail: String(error).slice(0, 200) });
+              ? `captcha! rasm=${outcome.form.captchaUrl ?? "?"}`
+              : outcome.status === "ok"
+                ? "OK?!"
+                : outcome.message;
+        strategies.push({ mode, r: outcome.status, m: message.slice(0, 70) });
+        if (outcome.status !== "error") break;
+      } catch (error) {
+        strategies.push({ mode, r: "exception", m: String(error).slice(0, 70) });
+      }
     }
   }
 
-  const first = strategies[0]?.outcome ?? "?";
+  const first = strategies[0]?.r ?? "?";
   const note =
     first === "invalid_credentials"
-      ? "POST GATE O'TDI (dummy login noto'g'ri deb qaytdi — captcha bloklamayapti!)"
+      ? "GATE OK — dummy notogri deb qaytdi (captcha bloklamayapti!)"
       : first === "captcha"
-        ? "captcha challenge qaytdi — captcha talab qilinmoqda"
+        ? "captcha talab qilindi"
         : first === "ok"
-          ? "kutilmagan muvaffaqiyat (tekshiring)"
-          : "POST o'tmadi — tafsilotlar 'details'da";
+          ? "kutilmagan OK"
+          : "POST o'tmadi";
 
-  return { get, strategies, note };
+  return { get, strategies, oauth: await probeOauth(), note };
 }
 
 // ---------------------------------------------------------------------------

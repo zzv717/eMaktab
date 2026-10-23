@@ -24,3 +24,36 @@ if (process.env.NODE_ENV !== "production") {
 }
 
 export const db = drizzle(pool, { schema });
+
+// ---------------------------------------------------------------------------
+// Xato jurnali — bot hech qachon jim qolmaydi, xatolar bazaga yoziladi va
+// /api/admin/recent-errors orqali masofadan ko'rish mumkin.
+// ---------------------------------------------------------------------------
+
+export async function logError(step: string, error: unknown, telegramId?: number): Promise<void> {
+  try {
+    const message = error instanceof Error ? error.message : String(error);
+    const detail = error instanceof Error ? (error.stack ?? "") : "";
+    await db.insert(schema.errorLogs).values({
+      step,
+      message: message.slice(0, 1000),
+      detail: detail.slice(0, 2000),
+      telegramId: telegramId ?? null,
+    });
+  } catch {
+    /* jurnal xatosi bot ishiga xalaqit bermaydi */
+  }
+}
+
+export async function logEvent(step: string, detail: string, telegramId?: number): Promise<void> {
+  try {
+    await db.insert(schema.errorLogs).values({
+      step,
+      message: detail.slice(0, 1000),
+      telegramId: telegramId ?? null,
+    });
+  } catch {
+    /* ignore */
+  }
+}
+

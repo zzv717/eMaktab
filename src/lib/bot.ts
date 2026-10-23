@@ -14,12 +14,13 @@
 // ============================================================================
 
 import { and, eq } from "drizzle-orm";
-import { db } from "@/db";
+import { db, logError, logEvent } from "@/db";
 import { botUsers, memberAccounts, type BotUser, type ChildContext } from "@/db/schema";
 import { decryptSecret, encryptSecret } from "@/lib/crypto";
 import {
   EmaktabApiError,
   EmaktabAuthError,
+  fetchCaptchaImage,
   fetchClassMembers,
   fetchGrades,
   fetchNews,
@@ -65,6 +66,7 @@ import {
   scheduleKeyboard,
   sendMessage,
   sendPhoto,
+  sendPhotoBytes,
   settingsKeyboard,
   teacherDayKeyboard,
   teacherMenuKeyboard,
@@ -505,9 +507,21 @@ async function handleCaptchaChallenge(
   if (progress) {
     await updateProgress(chatId, progress, "🖼 Captcha kiritilmoqda...");
   }
-  await sendPhoto(chatId, result.captchaUrl, {
-    caption: "🖼 <b>eMaktab rasmli kod (captcha) so'rayapti.</b>",
-  });
+  const captchaCaption = "🖼 <b>eMaktab rasmli kod (captcha) so'rayapti.</b>";
+  // Rasmni avval bayt sifatida yuklab olamiz va Telegram'ga to'g'ridan-to'g'ri yuboramiz —
+  // tashqi URL sifatida yuborilsa Telegram uni ocholmay qolishi mumkin (ishlaydigan botlar shunday qiladi).
+  const img = await fetchCaptchaImage(result.captchaUrl);
+  if (img && img.byteLength > 0) {
+    try {
+      await sendPhotoBytes(chatId, img, { caption: captchaCaption });
+    } catch (error) {
+      await logError("captcha_send_bytes", error, from.id);
+      await sendPhoto(chatId, result.captchaUrl, { caption: captchaCaption });
+    }
+  } else {
+    await logEvent("captcha_fetch_empty", result.captchaUrl, from.id);
+    await sendPhoto(chatId, result.captchaUrl, { caption: captchaCaption });
+  }
   await sendMessage(
     chatId,
     "Rasmdagi <b>barcha belgilarni</b> (harf va raqamlarni) matn sifatida yuboring.\n\n" +
@@ -558,6 +572,7 @@ export async function handleTelegramUpdate(update: TelegramUpdate) {
     }
   } catch (error) {
     console.error("Telegram update handler failed", error);
+    await logError("handle_update", error, update.message?.from?.id ?? update.callback_query?.from?.id);
     if (chatId) {
       try {
         const detail = error instanceof Error ? error.message : String(error);
@@ -692,10 +707,17 @@ async function handleMessage(message: TelegramMessage) {
     await deleteMessage(chatId, message.message_id);
 
     if (!login || !text) {
+      await logEvent(
+        "guard_password_missing",
+        `login=${login ? "bor" : "yo'q"} text=${text ? "bor" : "yo'q"}`,
+        from.id,
+      );
       await resetState(from.id);
-      await sendMessage(chatId, "⚠️ Xatolik yuz berdi. Qaytadan boshlang: /start", {
-        replyMarkup: mainMenuKeyboard(false),
-      });
+      await sendMessage(
+        chatId,
+        "⚠️ Xatolik yuz berdi (kod: P0) — login yoki parol topilmadi.\nQaytadan boshlang: /start",
+        { replyMarkup: mainMenuKeyboard(false) },
+      );
       return;
     }
 
@@ -743,10 +765,19 @@ async function handleMessage(message: TelegramMessage) {
     await deleteMessage(chatId, message.message_id);
 
     if (!code || !user.tempLogin || !user.tempPasswordEnc || !user.tempSessionEnc) {
+      await logEvent(
+        "guard_captcha_missing",
+        `code=${code ? "bor" : "yo'q"} login=${user.tempLogin ? "bor" : "yo'q"} pass=${
+          user.tempPasswordEnc ? "bor" : "yo'q"
+        } form=${user.tempSessionEnc ? "bor" : "yo'q"}`,
+        from.id,
+      );
       await resetState(from.id);
-      await sendMessage(chatId, "⚠️ Xatolik yuz berdi. Qaytadan boshlang: /start", {
-        replyMarkup: mainMenuKeyboard(false),
-      });
+      await sendMessage(
+        chatId,
+        "⚠️ Xatolik yuz berdi (kod: C0) — captcha sessiyasi eskirgan.\nQaytadan boshlang: /start",
+        { replyMarkup: mainMenuKeyboard(false) },
+      );
       return;
     }
 
