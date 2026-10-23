@@ -101,10 +101,14 @@ export async function GET(req: NextRequest) {
                       return h.split("?")[0];
                     }
                   })
-                  .filter((h) => /^\/[a-z]/i.test(h) && !h.includes("static")),
+                  .filter(
+                    (h) =>
+                      /^\/[a-z]/i.test(h) &&
+                      !/(static|\/css|\/img|\/assets|\/styles|\/blocks|\/fonts|\.css|\.ico|\.png|\.svg|\.js)/i.test(h),
+                  ),
               ),
             ];
-            check[label] = `${r.status} ${paths.slice(0, 10).join(" ").slice(0, 110)}`;
+            check[label] = `${r.status} ${paths.slice(0, 8).join(" ").slice(0, 90)}`;
           } catch (error) {
             check[label] = `xato ${String(error).slice(0, 25)}`;
           }
@@ -186,7 +190,20 @@ export async function GET(req: NextRequest) {
             check[label] = `xato ${String(error).slice(0, 25)}`;
           }
         }
-        out.check = check;
+        // Muhimlar birinchi (javob uzunligi cheklangani uchun).
+        out.check = {
+          ids: check.ids,
+          jr1: check.jr1,
+          jr2: check.jr2,
+          dia: check.dia,
+          sch: check.sch,
+          classes: check.classes,
+          members: check.members,
+          news: check.news,
+          schedule: check.schedule,
+          cls: check.cls,
+          myc: check.myc,
+        };
       }
     } else if (result.status === "captcha_required") {
       out.captcha = true;
