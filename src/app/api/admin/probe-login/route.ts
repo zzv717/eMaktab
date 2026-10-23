@@ -87,13 +87,31 @@ export async function GET(req: NextRequest) {
           });
           const body = await res.text();
           const states = extractAnyState(body);
-          check.shape = `${res.status} ${states
-            .map((s) => `${s.marker.replace(/__/g, "")}:${Object.keys(s.data as object).slice(0, 6).join(".")}`)
-            .join(" | ")
-            .slice(0, 120)}`;
+          check.shape = `${res.status} ${states.map((s) => s.marker.replace(/__/g, "")).join(",").slice(0, 160)}`;
           check.talk = extractTalkUser(body) ? "bor" : "yo'q";
         } catch (error) {
           check.shape = `xato ${(error instanceof Error ? error.message : String(error)).slice(0, 30)}`;
+        }
+        // Timetable sahifalarini sinab ko'ramiz (jadal qayerdaligini aniqlash).
+        const cookieStr = Object.entries(result.session.cookies)
+          .map(([k, v]) => `${k}=${v}`)
+          .join("; ");
+        for (const [label, url] of [
+          ["tt1", "https://emaktab.uz/timetable"],
+          ["tt2", "https://schools.emaktab.uz/v2/timetable"],
+          ["tt3", "https://emaktab.uz/teachers/timetable"],
+        ] as const) {
+          try {
+            const r = await fetch(url, {
+              headers: { "User-Agent": "Mozilla/5.0", Cookie: cookieStr },
+              redirect: "follow",
+            });
+            const b = await r.text();
+            const mk = extractAnyState(b);
+            check[label] = `${r.status} st=${mk.length} ${mk.map((s) => s.marker.replace(/__/g, "").slice(0, 12)).join(",").slice(0, 50)}`;
+          } catch (error) {
+            check[label] = `xato ${String(error).slice(0, 25)}`;
+          }
         }
         out.check = check;
       }
