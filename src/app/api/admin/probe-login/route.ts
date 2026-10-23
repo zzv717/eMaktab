@@ -5,6 +5,7 @@ import {
   fetchSchedule,
   fetchTeacherClasses,
   loginEmaktab,
+  pageGet,
   probeLogin,
   tashkentDayKey,
 } from "@/lib/emaktab";
@@ -54,6 +55,43 @@ export async function GET(req: NextRequest) {
                 classes[0].className,
               );
               check.members = `${info.students.length}/${info.parents.length}`;
+
+              // O'QUVCHI diary — uning darslari = sinf jadvali (teacher ko'ra oladi!)
+              const firstStu = info.students[0];
+              check.stid = firstStu?.memberId ?? "yok";
+              if (firstStu) {
+                try {
+                  const dayTs2 = Math.floor(new Date(`${today}T00:00:00+05:00`).getTime() / 1000);
+                  const u2 = `https://emaktab.uz/api/v2/marks/diary?personId=${encodeURIComponent(firstStu.memberId)}&schoolId=${result.session.active.schoolId}&startDate=${dayTs2 - 7 * 24 * 3600}&finishDate=${dayTs2 + 24 * 3600 - 1}&timestamp=${Date.now()}`;
+                  const ck2 = Object.entries(result.session.cookies).map(([k, v]) => `${k}=${v}`).join("; ");
+                  const r2 = await fetch(u2, {
+                    headers: {
+                      "User-Agent": "Mozilla/5.0",
+                      Cookie: ck2,
+                      Accept: "application/json, text/plain, */*",
+                      "X-Requested-With": "XMLHttpRequest",
+                      Referer: "https://emaktab.uz/userfeed",
+                    },
+                    redirect: "follow",
+                  });
+                  const b2 = await r2.text();
+                  const daysN = (b2.match(/"date"/g) ?? []).length;
+                  const lesN = (b2.match(/"lessons"/g) ?? []).length;
+                  const subjN = (b2.match(/"subject"/g) ?? []).length;
+                  check.dia2 = `${r2.status} d=${daysN} l=${lesN} s=${subjN} ${b2.slice(0, 45).replace(/\s+/g, " ")}`;
+                } catch (error) {
+                  check.dia2 = `xato ${String(error).slice(0, 25)}`;
+                }
+              }
+
+              // sinf sahifasida uzun gid (17-20 xonali) bormi?
+              try {
+                const classHtml = await pageGet(result.session.cookies, `https://schools.emaktab.uz/v2/class?class=${encodeURIComponent(classes[0].classId)}`);
+                const longIds = [...new Set(classHtml.match(/\b\d{17,20}\b/g) ?? [])].slice(0, 4);
+                check.gid = longIds.join(",").slice(0, 70) || "yok";
+              } catch (error) {
+                check.gid = `xato ${String(error).slice(0, 20)}`;
+              }
             } catch (error) {
               check.members = `xato ${(error instanceof Error ? error.message : String(error)).slice(0, 30)}`;
             }
@@ -197,6 +235,9 @@ export async function GET(req: NextRequest) {
         }
         // Muhimlar birinchi (javob uzunligi cheklangani uchun).
         out.check = {
+          dia2: check.dia2,
+          stid: check.stid,
+          gid: check.gid,
           schedule: check.schedule,
           dia: check.dia,
           ids: check.ids,

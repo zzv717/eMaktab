@@ -1913,7 +1913,7 @@ export interface ClassInfo {
 const SCHOOLS_BASE = "https://schools.emaktab.uz";
 
 /** schools.emaktab.uz sahifalarini (HTML) olish. */
-async function pageGet(cookies: Record<string, string>, url: string): Promise<string> {
+export async function pageGet(cookies: Record<string, string>, url: string): Promise<string> {
   // fetchFollowing — SSO/redirect zanjirlarini kuzatadi (schools.emaktab.uz o'z
   // redirect'ini beradi; uni xato deb tashlash sessiyani 'tugagan' deb ko'rsatardi).
   const res = await fetchFollowing(
