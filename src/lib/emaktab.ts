@@ -956,20 +956,49 @@ export function extractStartState(html: string): StartState | null {
 
 async function fetchStartPage(
   cookies: Record<string, string>,
-): Promise<{ state: StartState | null; talkUser: TalkUser | null }> {
+): Promise<{ state: StartState | null; talkUser: TalkUser | null; dbg: string }> {
   try {
     const res = await apiGet(cookies, "/api/userfeed");
-    if (res.status !== 200) return { state: null, talkUser: null };
+    if (res.status !== 200) return { state: null, talkUser: null, dbg: `feed=${res.status}` };
 
     if (res.contentType.includes("json")) {
       const data = parseJson(res.text) as StartState | null;
-      return { state: data && typeof data === "object" ? data : null, talkUser: null };
+      const ok = data && typeof data === "object";
+      return {
+        state: ok ? data : null,
+        talkUser: null,
+        dbg: `feed=json${ok ? ` uctx=${safeList((data as StartState)?.userContext?.contextPersons).length}` : ""}`,
+      };
     }
-    return { state: extractStartState(res.text), talkUser: extractTalkUser(res.text) };
+    const state = extractStartState(res.text);
+    return {
+      state,
+      talkUser: extractTalkUser(res.text),
+      dbg: `feed=html st=${state ? 1 : 0} uctx=${safeList(state?.userContext?.contextPersons).length}`,
+    };
   } catch (error) {
     if (error instanceof EmaktabAuthError) throw error;
     console.error("fetchStartPage failed", error);
-    return { state: null, talkUser: null };
+    return { state: null, talkUser: null, dbg: `feed=xato:${(error instanceof Error ? error.message : String(error)).slice(0, 30)}` };
+  }
+}
+
+/** HTML bosh sahifa (userfeed) — __USER__START__PAGE__INITIAL__STATE__ shu yerda. */
+async function fetchUserfeedHtml(
+  cookies: Record<string, string>,
+): Promise<{ state: StartState | null; talkUser: TalkUser | null; dbg: string }> {
+  try {
+    const res = await apiGet(cookies, "/userfeed");
+    if (res.status !== 200) return { state: null, talkUser: null, dbg: `uf=${res.status}` };
+    const state = extractStartState(res.text);
+    return {
+      state,
+      talkUser: extractTalkUser(res.text),
+      dbg: `uf=html st=${state ? 1 : 0} uctx=${safeList(state?.userContext?.contextPersons).length}`,
+    };
+  } catch (error) {
+    if (error instanceof EmaktabAuthError) throw error;
+    return { state: null, talkUser: null, dbg: `uf=xato:${(error instanceof Error ? error.message : String(error)).slice(0, 20)}` };
   }
 }
 
@@ -1145,8 +1174,25 @@ async function buildSession(cookies: Record<string, string>, login: string): Pro
   let role: EmaktabSession["role"] = "student";
   let classTeacherGroupIds: string[] = [];
 
-  const { state, talkUser } = await fetchStartPage(cookies);
+  const dbg: string[] = [];
+  const startPage = await fetchStartPage(cookies);
+  let { state, talkUser } = startPage;
+  dbg.push(startPage.dbg);
   persons = personsFromStartState(state);
+
+  // Agar /api/userfeed dan kontekst kelmagan bo'lsa — HTML /userfeed sahifasidan urinamiz
+  // (haqiqiy sahifadagi __USER__START__PAGE__INITIAL__STATE__ aynan shu yerda).
+  if (persons.length === 0) {
+    const uf = await fetchUserfeedHtml(cookies);
+    dbg.push(uf.dbg);
+    if (uf.state && personsFromStartState(uf.state).length > 0) {
+      state = uf.state;
+      talkUser = uf.talkUser ?? talkUser;
+      persons = personsFromStartState(state);
+    } else if (uf.talkUser && !talkUser) {
+      talkUser = uf.talkUser;
+    }
+  }
 
   // Rolni chat state'idagi roles/teacherGroups/classTeacherGroups dan aniqlaymiz.
   if (talkUser) {
@@ -1160,6 +1206,7 @@ async function buildSession(cookies: Record<string, string>, login: string): Pro
   // Qo'shimcha: users/me + context + children (fallback uchun).
   try {
     const meRes = await apiGet(cookies, "/api/v2/users/me");
+    dbg.push(`me=${meRes.status}`);
     if (meRes.status === 200) {
       const meRaw = parseJson(meRes.text) as Record<string, unknown> | null;
       const me =
@@ -1195,6 +1242,7 @@ async function buildSession(cookies: Record<string, string>, login: string): Pro
         if (!list.some((x) => x && typeof x === "object" && ("personId" in (x as object) || "person_id" in (x as object)))) {
           list = [...list, ...collectPersonLike(ctx)];
         }
+        dbg.push(`ctx=${ctxRes.status} n=${list.length}`);
         for (const raw of list) {
           if (!raw || typeof raw !== "object") continue;
           const p = raw as Record<string, unknown>;
@@ -1217,6 +1265,7 @@ async function buildSession(cookies: Record<string, string>, login: string): Pro
 
   try {
     const childrenRes = await apiGet(cookies, "/api/v2/users/me/children");
+    dbg.push(`kids=${childrenRes.status}`);
     if (childrenRes.status === 200) {
       const childrenRaw = parseJson(childrenRes.text) as unknown;
       let childList: unknown[] = [];
@@ -1277,8 +1326,7 @@ async function buildSession(cookies: Record<string, string>, login: string): Pro
   if (persons.length === 0) {
     throw new EmaktabApiError(
       "eMaktab profilingizda o'quvchi konteksti topilmadi. " +
-        "Iltimos, emaktab.uz saytida profilingizni tekshiring. " +
-        `[diagnostika: talk=${talkUser ? "bor" : "yo'q"} ism=${fullName === login ? "login" : "ism"}]`,
+        `[diag: ${dbg.join(" ")} talk=${talkUser ? 1 : 0} ism=${fullName === login ? 0 : 1}]`,
     );
   }
 
