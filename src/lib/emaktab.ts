@@ -667,10 +667,14 @@ function wrapLoginError(error: unknown): EmaktabLoginStatus {
     }
     return { status: "invalid_credentials", message: error.message };
   }
+  if (error instanceof EmaktabApiError) {
+    // Haqiqiy sababni yashirmaymiz (masalan "kontekst topilmadi [me=200 ctx=404]").
+    return { status: "error", message: error.message };
+  }
   console.error("loginEmaktab failed", error);
   return {
     status: "error",
-    message: "eMaktab bilan bog'lanib bo'lmadi. Birozdan so'ng qayta urinib ko'ring.",
+    message: `eMaktab bilan bog'lanib bo'lmadi. Birozdan so'ng qayta urinib ko'ring. (${(error instanceof Error ? error.message : String(error)).slice(0, 120)})`,
   };
 }
 
@@ -859,6 +863,11 @@ function parseJson(text: string): unknown | null {
   } catch {
     return null;
   }
+}
+
+/** Xavfsiz ro'yxat: massiv bo'lmasa — bo'sh (for..of TypeError bermasligi uchun). */
+function safeList(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
 }
 
 function str(value: unknown): string {
@@ -1066,10 +1075,32 @@ export function extractTalkUser(html: string): TalkUser | null {
 // Sessiya qurish (profil konteksti)
 // ---------------------------------------------------------------------------
 
+/**
+ * Noma'lum JSON shaklidan person-ga o'xshash obyektlarni chuqur yig'adi
+ * (masalan {result:{items:[...]}} yoki boshqa o'ramlar).
+ */
+export function collectPersonLike(raw: unknown, depth = 0): Array<Record<string, unknown>> {
+  const out: Array<Record<string, unknown>> = [];
+  if (depth > 4 || !raw || typeof raw !== "object") return out;
+  if (Array.isArray(raw)) {
+    for (const item of raw) out.push(...collectPersonLike(item, depth + 1));
+    return out;
+  }
+  const obj = raw as Record<string, unknown>;
+  const personId = obj.personId ?? obj.person_id;
+  if (personId !== undefined && personId !== null && personId !== "") {
+    out.push(obj);
+  }
+  for (const v of Object.values(obj)) {
+    if (v && typeof v === "object") out.push(...collectPersonLike(v, depth + 1));
+  }
+  return out;
+}
+
 export function personsFromStartState(state: StartState | null): PersonContext[] {
   if (!state) return [];
   const persons: PersonContext[] = [];
-  const contextPersons = state.userContext?.contextPersons ?? [];
+  const contextPersons = safeList(state.userContext?.contextPersons);
 
   for (const raw of contextPersons) {
     if (!raw || typeof raw !== "object") continue;
@@ -1090,12 +1121,15 @@ export function personsFromStartState(state: StartState | null): PersonContext[]
 
   // Agar contextPersons bo'sh bo'lsa — userSchedule.children dan yig'amiz.
   if (persons.length === 0) {
-    for (const ch of state.userSchedule?.children ?? []) {
-      if (!ch?.personId) continue;
+    for (const raw of safeList(state.userSchedule?.children)) {
+      if (!raw || typeof raw !== "object") continue;
+      const ch = raw as Record<string, unknown>;
+      const personId = str(ch.personId ?? ch.person_id);
+      if (!personId) continue;
       persons.push({
-        personId: str(ch.personId),
-        schoolId: str(ch.schoolId),
-        groupId: str(ch.groupId),
+        personId,
+        schoolId: str(ch.schoolId ?? ch.school_id),
+        groupId: str(ch.groupId ?? ch.group_id),
         fullName: "",
         schoolName: "",
         groupName: "",
@@ -1157,6 +1191,10 @@ async function buildSession(cookies: Record<string, string>, login: string): Pro
           else if (Array.isArray(obj.persons)) list = obj.persons;
           else list = [ctx];
         }
+        // Noma'lum o'ram shakllari uchun: personId kalitli obyektlarni chuqur yig'amiz.
+        if (!list.some((x) => x && typeof x === "object" && ("personId" in (x as object) || "person_id" in (x as object)))) {
+          list = [...list, ...collectPersonLike(ctx)];
+        }
         for (const raw of list) {
           if (!raw || typeof raw !== "object") continue;
           const p = raw as Record<string, unknown>;
@@ -1187,6 +1225,7 @@ async function buildSession(cookies: Record<string, string>, login: string): Pro
         const obj = childrenRaw as Record<string, unknown>;
         if (Array.isArray(obj.children)) childList = obj.children;
         else if (Array.isArray(obj.persons)) childList = obj.persons;
+        else childList = collectPersonLike(childrenRaw);
       }
       if (childList.length > 0) {
         role = "parent";
@@ -1237,7 +1276,9 @@ async function buildSession(cookies: Record<string, string>, login: string): Pro
 
   if (persons.length === 0) {
     throw new EmaktabApiError(
-      "eMaktab profilingizda o'quvchi konteksti topilmadi. Iltimos, emaktab.uz saytida profilingizni tekshiring.",
+      "eMaktab profilingizda o'quvchi konteksti topilmadi. " +
+        "Iltimos, emaktab.uz saytida profilingizni tekshiring. " +
+        `[diagnostika: talk=${talkUser ? "bor" : "yo'q"} ism=${fullName === login ? "login" : "ism"}]`,
     );
   }
 
