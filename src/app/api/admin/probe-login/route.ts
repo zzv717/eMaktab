@@ -136,7 +136,8 @@ export async function GET(req: NextRequest) {
           check.sch = `pid=${result.session.active.personId ? 1 : 0} gid=${firstClassId ? 1 : 0}`;
         }
         try {
-          const u = `https://emaktab.uz/api/v2/marks/diary?personId=${result.session.active.personId}&schoolId=${result.session.active.schoolId}&startDate=${today}&finishDate=${today}&timestamp=${Date.now()}`;
+          const dayTs = Math.floor(new Date(`${today}T00:00:00+05:00`).getTime() / 1000);
+          const u = `https://emaktab.uz/api/v2/marks/diary?personId=${result.session.active.personId}&schoolId=${result.session.active.schoolId}&startDate=${dayTs}&finishDate=${dayTs + 24 * 3600 - 1}&timestamp=${Date.now()}`;
           const r = await fetch(u, {
             headers: {
               "User-Agent": "Mozilla/5.0",
@@ -169,8 +170,8 @@ export async function GET(req: NextRequest) {
               redirect: "follow",
             });
             const b = await r.text();
-            const lessons = (b.match(/"lessons"/g) ?? []).length;
-            const subj = (b.match(/"subject"/g) ?? []).length;
+            const lessons = (b.match(/lessons|lesson|urok|урок/gi) ?? []).length;
+            const subj = (b.match(/subject|predmet|предмет|тема|theme/gi) ?? []).length;
             const paths = [
               ...new Set(
                 (b.match(/(?:href|action)="([^"]{4,120})"/g) ?? [])
@@ -192,17 +193,15 @@ export async function GET(req: NextRequest) {
         }
         // Muhimlar birinchi (javob uzunligi cheklangani uchun).
         out.check = {
+          schedule: check.schedule,
+          dia: check.dia,
           ids: check.ids,
           jr1: check.jr1,
           jr2: check.jr2,
-          dia: check.dia,
           sch: check.sch,
           classes: check.classes,
           members: check.members,
           news: check.news,
-          schedule: check.schedule,
-          cls: check.cls,
-          myc: check.myc,
         };
       }
     } else if (result.status === "captcha_required") {
