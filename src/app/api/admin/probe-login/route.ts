@@ -151,43 +151,41 @@ export async function GET(req: NextRequest) {
             check[label] = `xato ${String(error).slice(0, 25)}`;
           }
         }
-        // Jadval API — o'qituvchi sinfi (group) bo'yicha.
-        if (firstClassId && result.session.active.personId) {
+        // Jadval API — 5 ta variant (host + yo'l nomlari)
+        {
           try {
+            const pid = result.session.active.personId;
             const longGid = (check.gid ?? "").split(",")[0] || firstClassId;
-            // 3 ta variant: guruhsiz / schedules?personId / schedule (yakka)
-            const longGid2 = (check.gid ?? "").split(",")[0] || firstClassId;
-            const urls = [
-              `https://emaktab.uz/api/v2/persons/${result.session.active.personId}/schedules?from=${today}&to=${today}&timestamp=${Date.now()}`,
-              `https://emaktab.uz/api/v2/schedules?personId=${result.session.active.personId}&from=${today}&to=${today}&timestamp=${Date.now()}`,
-              `https://emaktab.uz/api/v2/persons/${result.session.active.personId}/groups/${longGid2}/schedule?from=${today}&to=${today}&timestamp=${Date.now()}`,
+            const variants: Array<[string, string]> = [
+              ["s1", `https://schools.emaktab.uz/api/v2/persons/${pid}/groups/${longGid}/schedules?from=${today}&to=${today}`],
+              ["s2", `https://schools.emaktab.uz/api/v2/persons/${pid}/schedules?from=${today}&to=${today}`],
+              ["s3", `https://emaktab.uz/api/userfeed`],
+              ["s4", `https://schools.emaktab.uz/v2/schedule`],
+              ["s5", `https://schools.emaktab.uz/v2/myschedule`],
             ];
             const parts: string[] = [];
-            for (let i = 0; i < urls.length; i++) {
+            for (const [lbl, uu] of variants) {
               try {
-                const r = await fetch(urls[i], {
+                const rr = await fetch(uu, {
                   headers: {
                     "User-Agent": "Mozilla/5.0",
                     Cookie: cookieStr,
                     Accept: "application/json, text/plain, */*",
-                    "X-Requested-With": "XMLHttpRequest",
-                    Referer: "https://emaktab.uz/userfeed",
+                    Referer: "https://emaktab.uz/teachers",
                   },
                   redirect: "follow",
                 });
-                const b = await r.text();
-                const d = (b.match(/"date"/g) ?? []).length;
-                parts.push(`${i}:${r.status}d${d}${b.slice(0, 20).replace(/[\s"{]/g, "").slice(0, 12)}`);
-              } catch (e) {
-                parts.push(`${i}:x`);
+                const bb = await rr.text();
+                const dd = (bb.match(/"date"|lessons/gi) ?? []).length;
+                parts.push(`${lbl}:${rr.status}x${dd}`);
+              } catch {
+                parts.push(`${lbl}:x`);
               }
             }
-            check.sch = parts.join(" ");
+            check.sch = parts.join(" ").slice(0, 60);
           } catch (error) {
             check.sch = `xato ${String(error).slice(0, 25)}`;
           }
-        } else {
-          check.sch = `pid=${result.session.active.personId ? 1 : 0} gid=${firstClassId ? 1 : 0}`;
         }
         try {
           const dayTs = Math.floor(new Date(`${today}T00:00:00+05:00`).getTime() / 1000);
@@ -255,6 +253,7 @@ export async function GET(req: NextRequest) {
         }
         // Muhimlar birinchi (javob uzunligi cheklangani uchun).
         out.check = {
+          sch: check.sch,
           dia2: check.dia2,
           stid: check.stid,
           gid: check.gid,
@@ -263,7 +262,6 @@ export async function GET(req: NextRequest) {
           ids: check.ids,
           jr1: check.jr1,
           jr2: check.jr2,
-          sch: check.sch,
           classes: check.classes,
           members: check.members,
           news: check.news,
