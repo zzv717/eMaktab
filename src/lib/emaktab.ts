@@ -363,7 +363,7 @@ async function fetchFollowing(
   url: string,
   init: { method?: string; body?: string; headers?: Record<string, string> },
   jar: Record<string, string>,
-  maxHops = 5,
+  maxHops = 10,
 ): Promise<FollowedResponse> {
   let currentUrl = url;
   let method = init.method ?? "GET";
@@ -407,7 +407,7 @@ export function extractCaptchaUrl(html: string, baseUrl: string): string | null 
 }
 
 type LoginAttempt =
-  | { status: "ok"; cookies: Record<string, string> }
+  | { status: "ok"; cookies: Record<string, string>; finalUrl?: string; markers?: string }
   | { status: "captcha"; form: LoginFormState }
   | { status: "invalid_credentials"; message: string }
   | { status: "error"; message: string; markers?: string; body?: string };
@@ -571,7 +571,12 @@ async function postLogin(
   );
   const errors = extractLoginErrors(result.body);
   if (!errors?.hasErrors && (authCookie || !hasLoginForm(result.body))) {
-    return { status: "ok", cookies: form.cookies };
+    return {
+      status: "ok",
+      cookies: form.cookies,
+      finalUrl: result.finalUrl,
+      markers: bodyMarkers(result.body),
+    };
   }
   return classifyFormResult(result, form.cookies);
 }
@@ -636,7 +641,10 @@ async function toLoginStatus(
   login: string,
 ): Promise<EmaktabLoginStatus> {
   if (attempt.status === "ok") {
-    const session = await buildSession(attempt.cookies, login);
+    const session = await buildSession(attempt.cookies, login, {
+      finalUrl: attempt.finalUrl,
+      markers: attempt.markers,
+    });
     return { status: "ok", session };
   }
   if (attempt.status === "captcha") {
@@ -1172,13 +1180,19 @@ export function personsFromStartState(state: StartState | null): PersonContext[]
   return persons;
 }
 
-async function buildSession(cookies: Record<string, string>, login: string): Promise<EmaktabSession> {
+async function buildSession(
+  cookies: Record<string, string>,
+  login: string,
+  meta?: { finalUrl?: string; markers?: string },
+): Promise<EmaktabSession> {
   let persons: PersonContext[] = [];
   let fullName = login;
   let role: EmaktabSession["role"] = "student";
   let classTeacherGroupIds: string[] = [];
 
-  const dbg: string[] = [`ck=${Object.keys(cookies).join(",").slice(0, 80)}`];
+  const dbg: string[] = [
+    `fu=${(meta?.finalUrl ?? "").slice(-40)} mk=${meta?.markers ?? ""} ck=${Object.keys(cookies).join(",").slice(0, 160)}`,
+  ];
   let talkUser: TalkUser | null = null;
   try {
   const startPage = await fetchStartPage(cookies);
