@@ -151,7 +151,7 @@ export async function GET(req: NextRequest) {
             check[label] = `xato ${String(error).slice(0, 25)}`;
           }
         }
-        // Jadval API — 5 ta variant (host + yo'l nomlari)
+        // Jadval API — 5 ta variant (host muhim)
         {
           try {
             const pid = result.session.active.personId;
