@@ -1,5 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { loginEmaktab, probeLogin } from "@/lib/emaktab";
+import {
+  fetchClassMembers,
+  fetchNews,
+  fetchSchedule,
+  fetchTeacherClasses,
+  loginEmaktab,
+  probeLogin,
+  tashkentDayKey,
+} from "@/lib/emaktab";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -28,7 +36,43 @@ export async function GET(req: NextRequest) {
     if (result.status === "ok") {
       out.name = result.session.fullName;
       out.role = result.session.role;
-      out.ck = Object.keys(result.session.cookies).join(",").slice(0, 120);
+
+      // ?check=1 — ma'lumot oqimlarini ham sinaymiz (menyu funksiyalari).
+      if (sp.get("check")) {
+        const check: Record<string, string> = {};
+        const today = tashkentDayKey();
+        try {
+          const classes = await fetchTeacherClasses(result.session);
+          check.classes = String(classes.length);
+          if (classes[0]) {
+            try {
+              const info = await fetchClassMembers(
+                result.session,
+                classes[0].classId,
+                classes[0].className,
+              );
+              check.members = `${info.students.length}/${info.parents.length}`;
+            } catch (error) {
+              check.members = `xato ${(error instanceof Error ? error.message : String(error)).slice(0, 30)}`;
+            }
+          }
+        } catch (error) {
+          check.classes = `xato ${(error instanceof Error ? error.message : String(error)).slice(0, 30)}`;
+        }
+        try {
+          const schedule = await fetchSchedule(result.session, today, today);
+          check.schedule = String(schedule.length);
+        } catch (error) {
+          check.schedule = `xato ${(error instanceof Error ? error.message : String(error)).slice(0, 30)}`;
+        }
+        try {
+          const news = await fetchNews(result.session, 3);
+          check.news = String(news.length);
+        } catch (error) {
+          check.news = `xato ${(error instanceof Error ? error.message : String(error)).slice(0, 30)}`;
+        }
+        out.check = check;
+      }
     } else if (result.status === "captcha_required") {
       out.captcha = true;
       out.captchaUrl = result.captchaUrl ? "bor" : "yo'q";
