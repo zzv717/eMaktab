@@ -112,7 +112,12 @@ export async function GET(req: NextRequest) {
             const lessons = (b.match(/"lessons"/g) ?? []).length;
             const subj = (b.match(/"subject"/g) ?? []).length;
             const mk = extractAnyState(b);
-            check[label] = `${r.status} les=${lessons} subj=${subj} st=${mk.map((s) => s.marker.replace(/__/g, "").slice(0, 10)).join(",").slice(0, 60)}`;
+            // Havola naqshlari — saytning haqiqiy tuzilmasi (jadal sahifalari shu yerda).
+            const hrefs = [...new Set((b.match(/href="\/[^"]{2,60}"/g) ?? []).map((h) => h.slice(6, -1).split("?")[0]))]
+              .filter((h) => !h.includes("static") && !h.includes("logout"))
+              .slice(0, 8)
+              .join(",");
+            check[label] = `${r.status} les=${lessons} hrefs=${hrefs.slice(0, 100)}`;
           } catch (error) {
             check[label] = `xato ${String(error).slice(0, 25)}`;
           }
@@ -138,6 +143,23 @@ export async function GET(req: NextRequest) {
           }
         } else {
           check.sch = `pid=${result.session.active.personId ? 1 : 0} gid=${firstClassId ? 1 : 0}`;
+        }
+        try {
+          const u = `https://emaktab.uz/api/v2/marks/diary?personId=${result.session.active.personId}&schoolId=${result.session.active.schoolId}&startDate=${today}&finishDate=${today}&timestamp=${Date.now()}`;
+          const r = await fetch(u, {
+            headers: {
+              "User-Agent": "Mozilla/5.0",
+              Cookie: cookieStr,
+              Accept: "application/json, text/plain, */*",
+              "X-Requested-With": "XMLHttpRequest",
+              Referer: "https://emaktab.uz/userfeed",
+            },
+            redirect: "follow",
+          });
+          const b = await r.text();
+          check.dia = `${r.status} ${b.slice(0, 50).replace(/\s+/g, " ")}`;
+        } catch (error) {
+          check.dia = `xato ${String(error).slice(0, 25)}`;
         }
         out.check = check;
       }
