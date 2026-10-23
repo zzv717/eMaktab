@@ -154,7 +154,8 @@ export async function GET(req: NextRequest) {
         // Jadval API — o'qituvchi sinfi (group) bo'yicha.
         if (firstClassId && result.session.active.personId) {
           try {
-            const u = `https://emaktab.uz/api/v2/persons/${result.session.active.personId}/groups/${firstClassId}/schedules?from=${today}&to=${today}&timestamp=${Date.now()}`;
+            const longGid = (check.gid ?? "").split(",")[0] || firstClassId;
+            const u = `https://emaktab.uz/api/v2/persons/${result.session.active.personId}/groups/${longGid}/schedules?from=${today}&to=${today}&timestamp=${Date.now()}`;
             const r = await fetch(u, {
               headers: {
                 "User-Agent": "Mozilla/5.0",
@@ -166,7 +167,9 @@ export async function GET(req: NextRequest) {
               redirect: "follow",
             });
             const b = await r.text();
-            check.sch = `${r.status} ${b.slice(0, 60).replace(/\s+/g, " ")}`;
+            const daysN2 = (b.match(/"date"/g) ?? []).length;
+            const lesN2 = (b.match(/"lessons"/g) ?? []).length;
+            check.sch = `${r.status} d=${daysN2} l=${lesN2} ${b.slice(0, 45).replace(/\s+/g, " ")}`;
           } catch (error) {
             check.sch = `xato ${String(error).slice(0, 25)}`;
           }
