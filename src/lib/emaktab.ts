@@ -873,6 +873,31 @@ function parseJson(text: string): unknown | null {
   }
 }
 
+/**
+ * Chuqur qidiruv: kalit nomi namunasiga mos keladigan birinchi STRING qiymatni topadi.
+ * (masalan schoolId / school_id / school.id — noma'lum shakllarda ham).
+ */
+export function deepFind(obj: unknown, keyPattern: RegExp, depth = 0): string {
+  if (depth > 4 || !obj || typeof obj !== "object") return "";
+  if (Array.isArray(obj)) {
+    for (const item of obj) {
+      const v = deepFind(item, keyPattern, depth + 1);
+      if (v) return v;
+    }
+    return "";
+  }
+  const rec = obj as Record<string, unknown>;
+  for (const [k, v] of Object.entries(rec)) {
+    if (keyPattern.test(k) && typeof v === "string" && v) return v;
+    if (keyPattern.test(k) && typeof v === "number") return String(v);
+  }
+  for (const v of Object.values(rec)) {
+    const r = deepFind(v, keyPattern, depth + 1);
+    if (r) return r;
+  }
+  return "";
+}
+
 /** Xavfsiz ro'yxat: massiv bo'lmasa — bo'sh (for..of TypeError bermasligi uchun). */
 function safeList(value: unknown): unknown[] {
   return Array.isArray(value) ? value : [];
@@ -1256,10 +1281,14 @@ async function buildSession(
           const group = (p.group ?? {}) as Record<string, unknown>;
           persons.push({
             personId,
-            schoolId: str(school.id) || str(p.schoolId ?? p.school_id),
-            groupId: str(group.id) || str(p.groupId ?? p.group_id),
+            schoolId:
+              str(school.id) ||
+              str(p.schoolId ?? p.school_id) ||
+              deepFind(s.data, /^school_?id$/i),
+            groupId:
+              str(group.id) || str(p.groupId ?? p.group_id) || deepFind(s.data, /^(group|class)_?id$/i),
             fullName: nameFromPerson(p) || str(p.shortName ?? p.name ?? p.fullName),
-            schoolName: str(school.name),
+            schoolName: str(school.name) || deepFind(s.data, /^school_?name$/i),
             groupName: str(group.name),
           });
         }
@@ -1376,6 +1405,16 @@ async function buildSession(
     }
   } catch (error) {
     if (error instanceof EmaktabAuthError) throw error;
+  }
+
+  // schoolId bo'sh qolgan bo'lsa — talkUser.schoolIds yoki state'dagi schoolId dan to'ldiramiz.
+  // (u bo'sh bo'lsa — /api/v2/marks/diary 400 beradi: "schoolId is invalid")
+  const schoolFallback =
+    talkUser?.schoolIds?.[0] ?? deepFind(startPage.state ?? {}, /^school_?id$/i);
+  if (schoolFallback) {
+    for (const p of persons) {
+      if (!p.schoolId) p.schoolId = schoolFallback;
+    }
   }
 
   // Dublikatlarni tozalash (personId bo'yicha).
