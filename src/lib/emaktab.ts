@@ -1178,7 +1178,7 @@ async function buildSession(cookies: Record<string, string>, login: string): Pro
   let role: EmaktabSession["role"] = "student";
   let classTeacherGroupIds: string[] = [];
 
-  const dbg: string[] = [];
+  const dbg: string[] = [`ck=${Object.keys(cookies).join(",").slice(0, 80)}`];
   let talkUser: TalkUser | null = null;
   try {
   const startPage = await fetchStartPage(cookies);
