@@ -87,6 +87,24 @@ function describeDbError(error: unknown): string {
   return parts.join("\n↓ ").slice(0, 500);
 }
 
+// Saqlangan parolni ochib bo'lmadi (odatda ENCRYPTION_KEY o'zgarganida).
+class StoredCredentialsError extends Error {
+  constructor() {
+    super("Saqlangan eMaktab parolini ochib bo'lmadi");
+    this.name = "StoredCredentialsError";
+  }
+}
+
+function canDecryptStored(payload: string | null): boolean {
+  if (!payload) return false;
+  try {
+    decryptSecret(payload);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function isAuthenticated(user: BotUser): boolean {
   return Boolean(user.emaktabLogin && user.emaktabPasswordEnc);
 }
@@ -222,7 +240,13 @@ async function openSession(user: BotUser): Promise<EmaktabSession> {
   const cached = sessionCache.get(user.telegramId);
   if (cached && cached.expiresAt > Date.now()) return cached.session;
 
-  const password = decryptSecret(user.emaktabPasswordEnc!);
+  let password: string;
+  try {
+    if (!user.emaktabPasswordEnc) throw new Error("missing");
+    password = decryptSecret(user.emaktabPasswordEnc);
+  } catch {
+    throw new StoredCredentialsError();
+  }
   const result = await loginEmaktab(user.emaktabLogin!, password);
   if (result.status === "invalid_credentials" || result.status === "captcha_required") {
     throw new EmaktabAuthError(result.message);
@@ -431,6 +455,17 @@ async function handleMessage(message: TelegramMessage) {
   if (text === "/start") {
     await resetState(from.id);
     if (isAuthenticated(user)) {
+      // Saqlangan parol ochilmasa (kalit o'zgargan) — darhol qayta ulanishni taklif qilamiz.
+      if (!canDecryptStored(user.emaktabPasswordEnc)) {
+        await sendMessage(
+          chatId,
+          "🔐 <b>Saqlangan eMaktab parolingizni ochib bo'lmadi</b> (shifrlash kaliti o'zgargan).\n\n" +
+            "Qayta ulanish uchun eMaktab <b>login</b> va <b>parolingizni</b> qayta yuboring.",
+          { replyMarkup: cancelKeyboard() },
+        );
+        await startLoginFlow(user.telegramId, chatId);
+        return;
+      }
       await sendMessage(chatId, WELCOME_BACK(user.fullName || from.first_name), {
         replyMarkup: menuFor(user),
       });
@@ -744,6 +779,18 @@ async function sendProfileView(chatId: number, user: BotUser) {
 }
 
 async function sendEmaktabError(chatId: number, user: BotUser, error: unknown) {
+  if (error instanceof StoredCredentialsError) {
+    await sendMessage(
+      chatId,
+      "🔐 <b>Saqlangan eMaktab parolingizni ochib bo'lmadi.</b>\n\n" +
+        "Bu — shifrlash kaliti (<code>ENCRYPTION_KEY</code>) o'zgargani uchun bo'ladi.\n" +
+        "Xavfsizlik uchun qayta ulanish kerak — eMaktab <b>login</b> va <b>parolingizni</b> qayta yuboring.\n\n" +
+        "⚠️ <i>Eslatma: ENCRYPTION_KEY ni o'zgartirmang — o'zgarsa, saqlangan parollar ochilmaydi.</i>",
+      { replyMarkup: cancelKeyboard() },
+    );
+    await startLoginFlow(user.telegramId, chatId);
+    return;
+  }
   if (error instanceof EmaktabAuthError) {
     await sendMessage(
       chatId,
