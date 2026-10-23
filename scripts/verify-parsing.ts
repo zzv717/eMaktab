@@ -6,6 +6,8 @@ import { readFileSync } from "fs";
 import {
   captchaVisible,
   collectPersonLike,
+  extractAnyState,
+  parseJsonObjectAt,
   extractCaptchaUrl,
   stripCaptchaFields,
   dayStartTs,
@@ -228,6 +230,14 @@ const p2 = personsFromStartState({
 check("person ajratish ishlaydi", p2.length === 1 && p2[0].personId === "42" && p2[0].schoolId === "7", p2);
 const deep = collectPersonLike({ result: { items: [{ person_id: "77" }, { no: 1 }] } });
 check("collectPersonLike chuqur qidiruv", deep.length === 1 && deep[0]["person_id"] === "77", deep);
+
+// extractAnyState — turli markerlar
+const anyHtml = `<script>window.__TEACHER__START__PAGE__INITIAL__STATE__ = {"personId": "9", "school": {"id": "1"}};</script>
+<script>window.__TALK__INITIAL__STATE__ = {"user": {"roles": ["teacher"]}};</script>`;
+const anyStates = extractAnyState(anyHtml);
+check("extractAnyState ikkita state topdi", anyStates.length === 2, anyStates.map((s) => s.marker));
+const parsed = parseJsonObjectAt('x = {"a": {"b": 2}} tail', 4);
+check("parseJsonObjectAt chuqur obyekt", (parsed as { a: { b: number } }).a.b === 2, parsed);
 
 console.log(`\nNatija: ${passed} o'tdi, ${failed} yiqildi`);
 process.exit(failed > 0 ? 1 : 0);
