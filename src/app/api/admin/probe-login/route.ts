@@ -157,11 +157,11 @@ export async function GET(req: NextRequest) {
             const pid = result.session.active.personId;
             const longGid = (check.gid ?? "").split(",")[0] || firstClassId;
             const variants: Array<[string, string]> = [
-              ["s1", `https://schools.emaktab.uz/api/v2/persons/${pid}/groups/${longGid}/schedules?from=${today}&to=${today}`],
-              ["s2", `https://schools.emaktab.uz/api/v2/persons/${pid}/schedules?from=${today}&to=${today}`],
-              ["s3", `https://emaktab.uz/api/userfeed`],
-              ["s4", `https://schools.emaktab.uz/v2/schedule`],
-              ["s5", `https://schools.emaktab.uz/v2/myschedule`],
+              ["t1", `https://emaktab.uz/api/v2/edu-groups/${firstClassId}/timetables`],
+              ["t2", `https://emaktab.uz/api/v2/edu-groups/${longGid}/timetables`],
+              ["t3", `https://schools.emaktab.uz/api/v2/edu-groups/${longGid}/timetables`],
+              ["t4", `https://emaktab.uz/api/v2/edu-groups/${longGid}/timetable`],
+              ["t5", `https://emaktab.uz/api/v2/edu-groups/${firstClassId}/timetables?from=${today}&to=${today}`],
             ];
             const parts: string[] = [];
             for (const [lbl, uu] of variants) {
@@ -176,8 +176,9 @@ export async function GET(req: NextRequest) {
                   redirect: "follow",
                 });
                 const bb = await rr.text();
-                const dd = (bb.match(/"date"|lessons/gi) ?? []).length;
-                parts.push(`${lbl}:${rr.status}x${dd}`);
+                const dd = (bb.match(/subject|lessons|dayOfWeek|lessonNumber/gi) ?? []).length;
+                const sl = rr.status === 200 ? bb.slice(0, 30).replace(/[\s{}"]/g, "") : "";
+                parts.push(`${lbl}:${rr.status}x${dd}${sl}`);
               } catch {
                 parts.push(`${lbl}:x`);
               }
