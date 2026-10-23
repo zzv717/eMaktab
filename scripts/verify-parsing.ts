@@ -4,10 +4,14 @@
 // Ishga tushirish: npx tsx scripts/verify-parsing.ts
 import { readFileSync } from "fs";
 import {
+  captchaVisible,
   dayStartTs,
   dayWeekday,
   extractStartState,
   extractTalkUser,
+  formAction,
+  hasLoginForm,
+  parseHiddenInputs,
   gradesFromDiaryDays,
   newsFromUnknown,
   personsFromStartState,
@@ -152,6 +156,42 @@ const classHtml = `
 </ul>`;
 const anchors = classHtml.match(/<a\b/gi);
 check("sinf sahifasi HTML tayyor", Boolean(anchors && anchors.length === 3));
+
+// ---------------------------------------------------------------------------
+console.log("9) Login sahifasi parserlari (yashirin maydonlar, forma, captcha)");
+// ---------------------------------------------------------------------------
+const loginHtml = `
+<form action="/login" method="post">
+  <input type="hidden" name="exceededAttempts" value="False" />
+  <input type="hidden" name="ReturnUrl" value="" />
+  <input name="FingerprintId" type="hidden" value="abc123" />
+  <input type='hidden' name='__RequestVerificationToken' value='tok-xyz'>
+  <input type="hidden" name="captcha__value" value="">
+  <input type="text" name="login" />
+  <input type="password" name="password" />
+</form>`;
+const hidden = parseHiddenInputs(loginHtml);
+check("hidden maydonlar soni", Object.keys(hidden).length === 5, Object.keys(hidden));
+check("exceededAttempts parse", hidden["exceededAttempts"] === "False", hidden["exceededAttempts"]);
+check("token parse (bir qo'shtirnoq)", hidden["__RequestVerificationToken"] === "tok-xyz", hidden["__RequestVerificationToken"]);
+check("FingerprintId (name type'dan oldin)", hidden["FingerprintId"] === "abc123", hidden["FingerprintId"]);
+check("login maydoni hidden EMAS", !("login" in hidden), hidden);
+check("formAction parse", formAction(loginHtml) === "/login", formAction(loginHtml));
+check("hasLoginForm true", hasLoginForm(loginHtml) === true);
+check("hasLoginForm false", hasLoginForm("<html><body>Dashboard</body></html>") === false);
+check(
+  "captchaVisible false (hidden)",
+  captchaVisible(`<div class="login__body__captcha login__body__captcha_hidden"></div>`) === false,
+);
+check(
+  "captchaVisible true (ochiq)",
+  captchaVisible(`<div class="some login__body__captcha wide"></div>`) === true,
+);
+check("captchaVisible false (yo'q)", captchaVisible(`<div class="other"></div>`) === false);
+check(
+  "value'siz hidden",
+  parseHiddenInputs(`<input type="hidden" name="emptyVal">`)["emptyVal"] === "",
+);
 
 console.log(`\nNatija: ${passed} o'tdi, ${failed} yiqildi`);
 process.exit(failed > 0 ? 1 : 0);

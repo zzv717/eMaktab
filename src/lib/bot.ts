@@ -567,7 +567,9 @@ async function handleMessage(message: TelegramMessage) {
         try {
           classes = await fetchTeacherClasses(session);
         } catch (error) {
-          if (error instanceof EmaktabAuthError) throw error;
+          // Login allaqachon muvaffaqiyatli — sinflar keyinroq ham olinadi.
+          // Bu yerda throw qilsak, bot JIM qoladi (progress xabari yangilanmaydi).
+          console.error("fetchTeacherClasses at login", error);
           classes = [];
         }
       }
@@ -752,7 +754,8 @@ async function sendHomeworkView(chatId: number, user: BotUser) {
 async function sendNewsView(chatId: number, user: BotUser) {
   const progress = await startProgress(chatId, "Yangiliklar yuklanmoqda");
   try {
-    const posts = await withSession(user, (s) => fetchNews(s, 8));
+    // Barcha yangiliklar (sahifalab olinadi) — faqat bir nechtasi emas.
+    const posts = await withSession(user, (s) => fetchNews(s, 50));
     const text = formatNews(posts, user.schoolName ?? undefined);
     await finishProgress(chatId, progress, "Yangiliklar");
     await sendLong(chatId, text, newsKeyboard());
@@ -835,26 +838,11 @@ async function sendClassCabinet(chatId: number, user: BotUser, classId: string) 
       `👨‍🏫 Xodimlar: <b>${info.staff.length}</b> ta\n\n` +
       `Kerakli bo'limni tanlang 👇`;
     await finishProgress(chatId, progress, "Sinf kabineti");
-    await sendLong(chatId, text, cabinetKeyboard(classId));
+    await sendLong(chatId, text, classCabinetKeyboard(classId));
   } catch (error) {
     await failProgress(chatId, progress, "Sinf kabineti");
     await sendEmaktabError(chatId, user, error);
   }
-}
-
-function cabinetKeyboard(classId: string) {
-  return kb([
-    [
-      { text: "👨‍🎓 O'quvchilar ro'yxati", callback_data: `cab:students:${classId}` },
-      { text: "👥 Ota-onalar ro'yxati", callback_data: `cab:parents:${classId}` },
-    ],
-    [
-      { text: "✅ O'quvchilarni faollashtirish", callback_data: `cab:act_students:${classId}` },
-      { text: "✅ Ota-onalarni faollashtirish", callback_data: `cab:act_parents:${classId}` },
-    ],
-    [{ text: "🔄 Ro'yxatni yangilash", callback_data: `cab:refresh:${classId}` }],
-    [{ text: "🏠 Asosiy menyu", callback_data: "menu:home" }],
-  ]);
 }
 
 const classInfoCache = new Map<string, ClassInfo>();
@@ -987,7 +975,7 @@ async function runActivation(chatId: number, user: BotUser, kind: "student" | "p
 
     const report = formatActivationReport(kindLabel, okNames, failLines, credentialsMissing && okNames.length === 0);
     await finishProgress(chatId, progress, `${kindLabel} faollashtirish`);
-    await sendLong(chatId, report, cabinetKeyboard(classId));
+    await sendLong(chatId, report, classCabinetKeyboard(classId));
   } catch (error) {
     await failProgress(chatId, progress, `${kindLabel} faollashtirish`);
     await sendEmaktabError(chatId, user, error);
@@ -1151,7 +1139,7 @@ async function handleCallback(cb: TelegramCallbackQuery) {
       const info = await getClassInfo(fresh, classId);
       const text = formatMemberList("O'quvchilar ro'yxati", info.className, info.students);
       await finishProgress(chatId, progress, "O'quvchilar ro'yxati");
-      await sendLong(chatId, text, cabinetKeyboard(classId));
+      await sendLong(chatId, text, classCabinetKeyboard(classId));
     } catch (error) {
       await failProgress(chatId, progress, "O'quvchilar ro'yxati");
       await sendEmaktabError(chatId, fresh, error);
@@ -1166,7 +1154,7 @@ async function handleCallback(cb: TelegramCallbackQuery) {
       const info = await getClassInfo(fresh, classId);
       const text = formatMemberList("Ota-onalar ro'yxati", info.className, info.parents);
       await finishProgress(chatId, progress, "Ota-onalar ro'yxati");
-      await sendLong(chatId, text, cabinetKeyboard(classId));
+      await sendLong(chatId, text, classCabinetKeyboard(classId));
     } catch (error) {
       await failProgress(chatId, progress, "Ota-onalar ro'yxati");
       await sendEmaktabError(chatId, fresh, error);
