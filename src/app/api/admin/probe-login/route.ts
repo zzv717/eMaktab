@@ -117,6 +117,28 @@ export async function GET(req: NextRequest) {
             check[label] = `xato ${String(error).slice(0, 25)}`;
           }
         }
+        // Jadval API — o'qituvchi sinfi (group) bo'yicha.
+        if (firstClassId && result.session.active.personId) {
+          try {
+            const u = `https://emaktab.uz/api/v2/persons/${result.session.active.personId}/groups/${firstClassId}/schedules?from=${today}&to=${today}&timestamp=${Date.now()}`;
+            const r = await fetch(u, {
+              headers: {
+                "User-Agent": "Mozilla/5.0",
+                Cookie: cookieStr,
+                Accept: "application/json, text/plain, */*",
+                "X-Requested-With": "XMLHttpRequest",
+                Referer: "https://emaktab.uz/userfeed",
+              },
+              redirect: "follow",
+            });
+            const b = await r.text();
+            check.sch = `${r.status} ${b.slice(0, 60).replace(/\s+/g, " ")}`;
+          } catch (error) {
+            check.sch = `xato ${String(error).slice(0, 25)}`;
+          }
+        } else {
+          check.sch = `pid=${result.session.active.personId ? 1 : 0} gid=${firstClassId ? 1 : 0}`;
+        }
         out.check = check;
       }
     } else if (result.status === "captcha_required") {
