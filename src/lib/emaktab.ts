@@ -1,3 +1,5 @@
+import { createHash } from "crypto";
+
 // ============================================================================
 // eMaktab (kundalik.com) klienti
 // ----------------------------------------------------------------------------
@@ -17,6 +19,7 @@
 // ============================================================================
 
 const WEB_BASE = "https://emaktab.uz";
+const LOGIN_BASE = "https://login.emaktab.uz/";
 const LOGIN_URL = "https://login.emaktab.uz/login";
 const USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36";
@@ -217,63 +220,188 @@ function extractLoginErrors(html: string): { hasErrors: boolean; text?: string; 
  * eMaktab'ga kiradi va cookie'larni qaytaradi.
  * Muvaffaqiyat: 302 redirect yoki UZDnevnikAuth_a cookie'si paydo bo'lishi.
  */
-async function performLogin(login: string, password: string): Promise<Record<string, string>> {
-  const jar: Record<string, string> = {};
+// ---------------------------------------------------------------------------
+// Login sahifasi parserlari (jamoaviy ochiq kodga mos: bakhromov-coder/kundalik)
+// ---------------------------------------------------------------------------
 
-  // 1. Login sahifasini olish — sst va boshqa cookie'lar shu yerda beriladi.
-  const getRes = await fetch(LOGIN_URL, {
-    method: "GET",
-    redirect: "manual",
-    headers: {
-      "User-Agent": USER_AGENT,
-      Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-      "Accept-Language": "uz-UZ,uz;q=0.9,en;q=0.8,ru;q=0.7",
-    },
-  });
-  mergeCookies(jar, getRes);
+function attrOf(tag: string, name: string): string | null {
+  const re = new RegExp(`${name}\\s*=\\s*("([^"]*)"|'([^']*)'|([^\\s>]+))`, "i");
+  const m = tag.match(re);
+  if (!m) return null;
+  return m[2] ?? m[3] ?? m[4] ?? "";
+}
 
-  // 2. Formani yuborish (brauzer bilan bir xil).
-  const body = new URLSearchParams({
-    exceededAttempts: "False",
-    ReturnUrl: "",
-    FingerprintId: "",
-    login,
-    password,
-  });
-
-  const postRes = await fetch(LOGIN_URL, {
-    method: "POST",
-    redirect: "manual",
-    headers: {
-      "User-Agent": USER_AGENT,
-      "Content-Type": "application/x-www-form-urlencoded",
-      Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-      "Accept-Language": "uz-UZ,uz;q=0.9,en;q=0.8,ru;q=0.7",
-      Referer: LOGIN_URL,
-      Origin: "https://login.emaktab.uz",
-      Cookie: cookieHeader(jar),
-    },
-    body: body.toString(),
-  });
-  mergeCookies(jar, postRes);
-
-  // 3. Natijani baholash.
-  const redirected = postRes.status >= 300 && postRes.status < 400;
-  const hasAuthCookie = Boolean(jar["UZDnevnikAuth_a"]);
-
-  if (redirected || hasAuthCookie) {
-    return jar;
+/** Formadagi barcha type="hidden" maydonlar (atribut tartibi va qo'shtirnoq turidan mustasno). */
+export function parseHiddenInputs(html: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  const tags = html.match(/<input\b[^>]*>/gi) ?? [];
+  for (const tag of tags) {
+    const type = (attrOf(tag, "type") ?? "").toLowerCase();
+    if (type !== "hidden") continue;
+    const name = attrOf(tag, "name");
+    if (!name) continue;
+    out[name] = attrOf(tag, "value") ?? "";
   }
+  return out;
+}
 
-  const html = await postRes.text();
-  const errors = extractLoginErrors(html);
-  if (errors?.exceededAttempts) {
-    throw new EmaktabAuthError("captcha");
+/** Birinchi <form> elementining action qiymati. */
+export function formAction(html: string): string | null {
+  const m = html.match(/<form\b[^>]*>/i);
+  if (!m) return null;
+  return attrOf(m[0], "action");
+}
+
+/** Sahifada hali kirish formasi turibdimi (input name="password") — ya'ni kirilmadi. */
+export function hasLoginForm(html: string): boolean {
+  const tags = html.match(/<input\b[^>]*>/gi) ?? [];
+  for (const tag of tags) {
+    if ((attrOf(tag, "name") ?? "").toLowerCase() === "password") return true;
   }
-  if (errors?.hasErrors) {
-    throw new EmaktabAuthError(errors.text ?? "Login yoki parol noto'g'ri.");
+  return false;
+}
+
+/** Captcha ochiq ko'rinayotganmi (login__body__captcha, lekin _hidden emas). */
+export function captchaVisible(html: string): boolean {
+  const tags = html.match(/<div\b[^>]*>/gi) ?? [];
+  for (const tag of tags) {
+    const cls = (attrOf(tag, "class") ?? "").split(/\s+/);
+    if (cls.includes("login__body__captcha") && !cls.includes("login__body__captcha_hidden")) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Barqaror FingerprintId (brauzerda JS to'ldiradi; biz hisob uchun bir xil qiymat beramiz). */
+function deviceFingerprint(login: string): string {
+  return createHash("sha256").update(`${login}|emaktab-telegram-bot`).digest("hex").slice(0, 32);
+}
+
+type FollowedResponse = { status: number; body: string; finalUrl: string };
+
+/**
+ * So'rov yuboradi va redirect'larni QO'LDA kuzatadi — chunki undici fetch
+ * avtomatik redirect'da Set-Cookie'larni yo'qotadi (cookie jar yo'q).
+ * Har bir qadamda cookie'lar yig'iladi.
+ */
+async function fetchFollowing(
+  url: string,
+  init: { method?: string; body?: string; headers?: Record<string, string> },
+  jar: Record<string, string>,
+  maxHops = 5,
+): Promise<FollowedResponse> {
+  let currentUrl = url;
+  let method = init.method ?? "GET";
+  let body = init.body;
+  for (let hop = 0; hop <= maxHops; hop++) {
+    const res = await fetch(currentUrl, {
+      method,
+      body,
+      redirect: "manual",
+      headers: {
+        "User-Agent": USER_AGENT,
+        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "uz-UZ,uz;q=0.9,en;q=0.8,ru;q=0.7",
+        ...init.headers,
+        Cookie: cookieHeader(jar),
+      },
+    });
+    mergeCookies(jar, res);
+    if (res.status >= 300 && res.status < 400) {
+      const loc = res.headers.get("location");
+      if (!loc) break;
+      currentUrl = new URL(loc, currentUrl).toString();
+      method = "GET";
+      body = undefined;
+      continue;
+    }
+    return { status: res.status, body: await res.text(), finalUrl: currentUrl };
   }
   throw new EmaktabAuthError("unknown");
+}
+
+/**
+ * eMaktab'ga kiradi va cookie'larni qaytaradi.
+ *
+ * Muvaffaqiyat belgilari (birortasi):
+ *  - javob sahifasida login formasi yo'qoldi (dashboard/redirect)
+ *  - UZDnevnikAuth_a autentifikatsiya cookie'si paydo bo'ldi
+ *
+ * Aks holda xato turi aniqlanadi: captcha / noto'g'ri parol / texnik.
+ * Kerakli yashirin maydonlar (__RequestVerificationToken, captcha__value,
+ * exceededAttempts, ...) formadan O'QILIB yuboriladi — qattiq kod emas.
+ */
+async function performLogin(login: string, password: string): Promise<Record<string, string>> {
+  let diag = "";
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const jar: Record<string, string> = {};
+
+    // 1. Login sahifasi (root'dan boshlaymiz, kerak bo'lsa /login).
+    let page = await fetchFollowing(
+      LOGIN_BASE,
+      { headers: { Referer: LOGIN_BASE } },
+      jar,
+    );
+    if (!hasLoginForm(page.body)) {
+      const alt = await fetchFollowing(LOGIN_URL, { headers: { Referer: LOGIN_URL } }, jar);
+      if (hasLoginForm(alt.body)) page = alt;
+    }
+    if (!hasLoginForm(page.body)) {
+      diag = `login formasi topilmadi (status ${page.status}, ${page.finalUrl})`;
+      console.error("performLogin:", diag, page.body.slice(0, 300));
+      continue;
+    }
+    if (captchaVisible(page.body)) {
+      throw new EmaktabAuthError("captcha");
+    }
+
+    // 2. Yashirin maydonlar + login/parol + FingerprintId.
+    const hidden = parseHiddenInputs(page.body);
+    const action = formAction(page.body);
+    const postUrl = action ? new URL(action, page.finalUrl).toString() : page.finalUrl;
+    const form = new URLSearchParams({ ...hidden, login, password });
+    if (!form.get("FingerprintId")) form.set("FingerprintId", deviceFingerprint(login));
+
+    // 3. Formani yuborish (brauzer bilan bir xil).
+    const result = await fetchFollowing(
+      postUrl,
+      {
+        method: "POST",
+        body: form.toString(),
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          Referer: page.finalUrl,
+          Origin: "https://login.emaktab.uz",
+        },
+      },
+      jar,
+    );
+
+    // 4. Baholash.
+    const authCookie = Boolean(jar["UZDnevnikAuth_a"] ?? jar["UZDnevnikAuth_s"]);
+    if (!hasLoginForm(result.body) || authCookie) {
+      return jar; // muvaffaqiyat
+    }
+
+    if (captchaVisible(result.body)) {
+      throw new EmaktabAuthError("captcha");
+    }
+    const errors = extractLoginErrors(result.body);
+    if (errors?.exceededAttempts) {
+      throw new EmaktabAuthError("captcha");
+    }
+    if (errors?.hasErrors) {
+      throw new EmaktabAuthError(errors.text ?? "Login yoki parol noto'g'ri.");
+    }
+
+    // Xatosiz qayta forma — texnik sabab (token eskirgan bo'lishi mumkin): bir marta qayta urinamiz.
+    diag = `forma xatosiz qaytdi (status ${result.status}, ${result.finalUrl})`;
+    console.error("performLogin:", diag);
+  }
+
+  throw new EmaktabAuthError(`unknown:${diag}`);
 }
 
 /**
@@ -293,7 +421,7 @@ export async function loginEmaktab(login: string, password: string): Promise<Ema
             "Urinishlar soni ko'p bo'lgani uchun eMaktab rasmiy saytida (login.emaktab.uz) rasmli kodni kiritish talab qilinmoqda. Birozdan so'ng qayta urinib ko'ring.",
         };
       }
-      if (error.message === "unknown") {
+      if (error.message === "unknown" || error.message.startsWith("unknown:")) {
         return {
           status: "error",
           message: "eMaktab serveridan kutilmagan javob keldi. Birozdan so'ng qayta urinib ko'ring.",
@@ -1117,37 +1245,43 @@ export function newsFromUnknown(data: unknown): NewsPost[] {
   return posts;
 }
 
-/** Maktab/sinf yangiliklarini (e'lonlarini) oladi. */
-export async function fetchNews(session: EmaktabSession, limit = 8): Promise<NewsPost[]> {
-  const attempts: Array<() => Promise<unknown>> = [
-    async () => {
-      const res = await apiGet(session.cookies, "/api/userfeed/posts", { count: limit, offset: 0 });
-      return res.status === 200 ? parseJson(res.text) : null;
-    },
-    async () => {
-      const res = await apiGet(session.cookies, "/api/userfeed/posts");
-      return res.status === 200 ? parseJson(res.text) : null;
-    },
-    async () => {
-      const res = await apiGet(session.cookies, "/api/posts", { count: limit, offset: 0 });
-      return res.status === 200 ? parseJson(res.text) : null;
-    },
-    async () => {
-      const res = await apiGet(session.cookies, "/api/posts");
-      return res.status === 200 ? parseJson(res.text) : null;
-    },
-  ];
+/** Maktab/sinf yangiliklarini (e'lonlarini) oladi — sahifalab, imkon boricha HAMMASINI. */
+export async function fetchNews(session: EmaktabSession, limit = 50): Promise<NewsPost[]> {
+  const endpoints = ["/api/userfeed/posts", "/api/posts"];
 
-  for (const attempt of attempts) {
-    try {
-      const data = await attempt();
+  for (const base of endpoints) {
+    const all: NewsPost[] = [];
+    const seen = new Set<string>();
+
+    for (let page = 0; page < 8; page++) {
+      let data: unknown;
+      try {
+        const res = await apiGet(session.cookies, base, { count: 20, offset: page * 20 });
+        if (res.status !== 200) break;
+        data = parseJson(res.text);
+      } catch (error) {
+        if (error instanceof EmaktabAuthError) throw error;
+        break;
+      }
+
       const posts = newsFromUnknown(data);
-      if (posts.length > 0) return posts.slice(0, limit);
-    } catch (error) {
-      if (error instanceof EmaktabAuthError) throw error;
-      // keyingi urinishga o'tamiz
+      if (posts.length === 0) break;
+
+      let added = 0;
+      for (const p of posts) {
+        const key = p.id || `${p.title}|${p.date}|${p.text.slice(0, 40)}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        all.push(p);
+        added++;
+      }
+      if (added === 0) break; // takroriy sahifa
+      if (all.length >= limit) break;
     }
+
+    if (all.length > 0) return all.slice(0, limit);
   }
+
   return [];
 }
 

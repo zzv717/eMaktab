@@ -228,17 +228,17 @@ export function newsKeyboard() {
 }
 
 /** Sinf kabineti (sinf rahbari uchun). */
-export function classCabinetKeyboard() {
+export function classCabinetKeyboard(classId: string) {
   return kb([
     [
-      { text: "👨‍🎓 O'quvchilar ro'yxati", callback_data: "cab:students" },
-      { text: "👥 Ota-onalar ro'yxati", callback_data: "cab:parents" },
+      { text: "👨‍🎓 O'quvchilar ro'yxati", callback_data: `cab:students:${classId}` },
+      { text: "👥 Ota-onalar ro'yxati", callback_data: `cab:parents:${classId}` },
     ],
     [
-      { text: "✅ O'quvchilarni faollashtirish", callback_data: "cab:act_students" },
-      { text: "✅ Ota-onalarni faollashtirish", callback_data: "cab:act_parents" },
+      { text: "✅ O'quvchilarni faollashtirish", callback_data: `cab:act_students:${classId}` },
+      { text: "✅ Ota-onalarni faollashtirish", callback_data: `cab:act_parents:${classId}` },
     ],
-    [{ text: "🔄 Ro'yxatni yangilash", callback_data: "cab:refresh" }],
+    [{ text: "🔄 Ro'yxatni yangilash", callback_data: `cab:refresh:${classId}` }],
     [{ text: "🏠 Asosiy menyu", callback_data: "menu:home" }],
   ]);
 }
