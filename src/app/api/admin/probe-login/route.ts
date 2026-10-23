@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
-  extractAnyState,
-  extractTalkUser,
   fetchClassMembers,
   fetchNews,
   fetchSchedule,
@@ -76,32 +74,14 @@ export async function GET(req: NextRequest) {
           check.news = `xato ${(error instanceof Error ? error.message : String(error)).slice(0, 30)}`;
         }
 
-        // Landing state shakli (o'qituvchi portali) — schedule qayerdaligini bilish uchun.
-        try {
-          const res = await fetch("https://emaktab.uz/teachers", {
-            headers: {
-              "User-Agent": "Mozilla/5.0",
-              Cookie: Object.entries(result.session.cookies)
-                .map(([k, v]) => `${k}=${v}`)
-                .join("; "),
-            },
-            redirect: "follow",
-          });
-          const body = await res.text();
-          const states = extractAnyState(body);
-          check.shape = `${res.status} ${states.map((s) => s.marker.replace(/__/g, "")).join(",").slice(0, 280)}`;
-          check.talk = extractTalkUser(body) ? "bor" : "yo'q";
-        } catch (error) {
-          check.shape = `xato ${(error instanceof Error ? error.message : String(error)).slice(0, 30)}`;
-        }
-        // Sinf sahifasi va myclasses — dars jadvali tarkibi keywordlar bilan.
+        // Sinf sahifasi va myclasses — havola naqshlari.
         const cookieStr = Object.entries(result.session.cookies)
           .map(([k, v]) => `${k}=${v}`)
           .join("; ");
         for (const [label, url] of [
           ["cls", "https://schools.emaktab.uz/v2/class?class=" + firstClassId],
           ["myc", "https://schools.emaktab.uz/v2/myclasses"],
-          ["jrn", "https://emaktab.uz/journal"],
+          ["tea", "https://emaktab.uz/teachers"],
         ] as const) {
           try {
             const r = await fetch(url, {
@@ -109,15 +89,22 @@ export async function GET(req: NextRequest) {
               redirect: "follow",
             });
             const b = await r.text();
-            const lessons = (b.match(/"lessons"/g) ?? []).length;
-            const subj = (b.match(/"subject"/g) ?? []).length;
-            const mk = extractAnyState(b);
-            // Havola naqshlari — saytning haqiqiy tuzilmasi (jadal sahifalari shu yerda).
-            const hrefs = [...new Set((b.match(/href="\/[^"]{2,60}"/g) ?? []).map((h) => h.slice(6, -1).split("?")[0]))]
-              .filter((h) => !h.includes("static") && !h.includes("logout"))
-              .slice(0, 8)
-              .join(",");
-            check[label] = `${r.status} les=${lessons} hrefs=${hrefs.slice(0, 100)}`;
+            // Havola naqshlari — saytning haqiqiy tuzilmasi.
+            const paths = [
+              ...new Set(
+                (b.match(/(?:href|action)="([^"]{4,120})"/g) ?? [])
+                  .map((h) => h.replace(/^(?:href|action)="/, "").slice(0, -1))
+                  .map((h) => {
+                    try {
+                      return h.startsWith("http") ? new URL(h).pathname : h.split("?")[0];
+                    } catch {
+                      return h.split("?")[0];
+                    }
+                  })
+                  .filter((h) => /^\/[a-z]/i.test(h) && !h.includes("static")),
+              ),
+            ];
+            check[label] = `${r.status} ${paths.slice(0, 10).join(" ").slice(0, 110)}`;
           } catch (error) {
             check[label] = `xato ${String(error).slice(0, 25)}`;
           }
