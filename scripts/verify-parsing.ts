@@ -5,6 +5,7 @@
 import { readFileSync } from "fs";
 import {
   captchaVisible,
+  collectPersonLike,
   extractCaptchaUrl,
   stripCaptchaFields,
   dayStartTs,
@@ -214,6 +215,19 @@ const stripped = stripCaptchaFields({
 });
 check("captcha maydonlar olib tashlandi", !("Captcha.Id" in stripped) && !("captcha__value" in stripped), stripped);
 check("boshqa maydonlar qoldi", stripped["exceededAttempts"] === "False" && stripped["login"] === "x", stripped);
+
+// contextPersons massiv bo'lmasa — TypeError bermasligi kerak
+const p1 = personsFromStartState({
+  userContext: { contextPersons: { not: "array" } as unknown as [] },
+  userSchedule: { children: { x: 1 } as unknown as [] },
+} as never);
+check("xavfsiz ro'yxat (massiv emas) — TypeError yo'q", p1.length === 0, p1);
+const p2 = personsFromStartState({
+  userContext: { contextPersons: [{ personId: "42", school: { id: "7", name: "S" }, group: { id: "9", name: "9-A" } }] },
+} as never);
+check("person ajratish ishlaydi", p2.length === 1 && p2[0].personId === "42" && p2[0].schoolId === "7", p2);
+const deep = collectPersonLike({ result: { items: [{ person_id: "77" }, { no: 1 }] } });
+check("collectPersonLike chuqur qidiruv", deep.length === 1 && deep[0]["person_id"] === "77", deep);
 
 console.log(`\nNatija: ${passed} o'tdi, ${failed} yiqildi`);
 process.exit(failed > 0 ? 1 : 0);

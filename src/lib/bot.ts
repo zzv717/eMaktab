@@ -614,6 +614,7 @@ async function handleMessage(message: TelegramMessage) {
     user = await getOrCreateUser(message, from);
   } catch (error) {
     console.error("DB error", error);
+    await logError("get_or_create_user", error, from.id);
     await sendMessage(
       chatId,
       "⚠️ <b>Bazada xatolik yuz berdi.</b>\n\n" +
@@ -1199,6 +1200,7 @@ async function handleCallback(cb: TelegramCallbackQuery) {
     user = await getOrCreateUser(cb.message, cb.from);
   } catch (error) {
     console.error("DB error", error);
+    await logError("get_or_create_user", error, cb.from.id);
     await sendMessage(
       chatId,
       "⚠️ <b>Bazada xatolik yuz berdi.</b>\n\n" +
