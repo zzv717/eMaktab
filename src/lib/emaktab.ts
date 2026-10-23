@@ -1732,17 +1732,35 @@ export async function fetchOverview(session: EmaktabSession, fromDay: string, to
 }
 
 /** Berilgan sana oralig'idagi dars jadvalini oladi. */
+/**
+ * Klass sahifasidan uzun group id topadi (joni: 25249429 → 2524942980748797372).
+ * schedules API qisqa id bilan 404 beradi, uzun id bilan ishlaydi!
+ */
+async function resolveLongGroupId(cookies: Record<string, string>, shortGid: string): Promise<string> {
+  if (!shortGid) return "";
+  try {
+    const html = await pageGet(cookies, `${SCHOOLS_BASE}/v2/class?class=${encodeURIComponent(shortGid)}`);
+    const m = html.match(new RegExp(`\\b${shortGid}\\d{6,}\\b`));
+    return m?.[0] ?? "";
+  } catch {
+    return "";
+  }
+}
+
 export async function fetchSchedule(
   session: EmaktabSession,
   fromDay: string,
   toDay: string,
 ): Promise<DaySchedule[]> {
-  // 1-urinish: maxsus schedules endpointi (o'qituvchi nomlari bilan).
+  // 1-urinish: schedules endpointi — UZUN gid bilan (qisqa id 404 beradi!).
   if (session.active.groupId) {
     try {
+      const longGid =
+        (await resolveLongGroupId(session.cookies, session.active.groupId)) ||
+        session.active.groupId;
       const res = await apiGet(
         session.cookies,
-        `/api/v2/persons/${session.active.personId}/groups/${session.active.groupId}/schedules`,
+        `/api/v2/persons/${session.active.personId}/groups/${longGid}/schedules`,
         { from: fromDay, to: toDay },
       );
       if (res.status === 200) {
