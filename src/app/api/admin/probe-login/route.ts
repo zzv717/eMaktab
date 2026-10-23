@@ -155,21 +155,34 @@ export async function GET(req: NextRequest) {
         if (firstClassId && result.session.active.personId) {
           try {
             const longGid = (check.gid ?? "").split(",")[0] || firstClassId;
-            const u = `https://emaktab.uz/api/v2/persons/${result.session.active.personId}/groups/${longGid}/schedules?from=${today}&to=${today}&timestamp=${Date.now()}`;
-            const r = await fetch(u, {
-              headers: {
-                "User-Agent": "Mozilla/5.0",
-                Cookie: cookieStr,
-                Accept: "application/json, text/plain, */*",
-                "X-Requested-With": "XMLHttpRequest",
-                Referer: "https://emaktab.uz/userfeed",
-              },
-              redirect: "follow",
-            });
-            const b = await r.text();
-            const daysN2 = (b.match(/"date"/g) ?? []).length;
-            const lesN2 = (b.match(/"lessons"/g) ?? []).length;
-            check.sch = `${r.status} d=${daysN2} l=${lesN2} ${b.slice(0, 45).replace(/\s+/g, " ")}`;
+            // 3 ta variant: guruhsiz / schedules?personId / schedule (yakka)
+            const longGid2 = (check.gid ?? "").split(",")[0] || firstClassId;
+            const urls = [
+              `https://emaktab.uz/api/v2/persons/${result.session.active.personId}/schedules?from=${today}&to=${today}&timestamp=${Date.now()}`,
+              `https://emaktab.uz/api/v2/schedules?personId=${result.session.active.personId}&from=${today}&to=${today}&timestamp=${Date.now()}`,
+              `https://emaktab.uz/api/v2/persons/${result.session.active.personId}/groups/${longGid2}/schedule?from=${today}&to=${today}&timestamp=${Date.now()}`,
+            ];
+            const parts: string[] = [];
+            for (let i = 0; i < urls.length; i++) {
+              try {
+                const r = await fetch(urls[i], {
+                  headers: {
+                    "User-Agent": "Mozilla/5.0",
+                    Cookie: cookieStr,
+                    Accept: "application/json, text/plain, */*",
+                    "X-Requested-With": "XMLHttpRequest",
+                    Referer: "https://emaktab.uz/userfeed",
+                  },
+                  redirect: "follow",
+                });
+                const b = await r.text();
+                const d = (b.match(/"date"/g) ?? []).length;
+                parts.push(`${i}:${r.status}d${d}${b.slice(0, 20).replace(/[\s"{]/g, "").slice(0, 12)}`);
+              } catch (e) {
+                parts.push(`${i}:x`);
+              }
+            }
+            check.sch = parts.join(" ");
           } catch (error) {
             check.sch = `xato ${String(error).slice(0, 25)}`;
           }
@@ -192,7 +205,11 @@ export async function GET(req: NextRequest) {
           const b = await r.text();
           const dayCount = (b.match(/"date"/g) ?? []).length;
           const lessonCount = (b.match(/"lessons"/g) ?? []).length;
-          check.dia = `${r.status} days=${dayCount} les=${lessonCount}`;
+          let keys = "";
+          try {
+            keys = Object.keys(JSON.parse(b) as Record<string, unknown>).join(",").slice(0, 60);
+          } catch {}
+          check.dia = `${r.status} d=${dayCount} l=${lessonCount} k:${keys}`;
         } catch (error) {
           check.dia = `xato ${String(error).slice(0, 25)}`;
         }
@@ -215,7 +232,7 @@ export async function GET(req: NextRequest) {
             const b = await r.text();
             const lessons = (b.match(/lessons|lesson|urok|урок/gi) ?? []).length;
             const subj = (b.match(/subject|predmet|предмет|тема|theme/gi) ?? []).length;
-            const dates = (b.match(/"date"|dayDate|lessonDate/gi) ?? []).length;
+            const dates = (b.match(/subjectName|teacherName|lessonTime|roomNumber|hours|theme/gi) ?? []).length;
             const marks = (b.match(/ratingsMarks|workMark|journal/gi) ?? []).length;
             const paths = [
               ...new Set(
