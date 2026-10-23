@@ -219,10 +219,13 @@ type LoginErrorState = {
 };
 
 function extractLoginErrors(html: string): LoginErrorState | null {
-  const jsonMatch = html.match(/JSON\.parse\('([^']*)'\)/);
-  if (jsonMatch) {
+  // BARCHA JSON.parse bloblarini ko'rib chiqamiz — login modeli birinchisi bo'lmasligi mumkin.
+  const blobRe = /JSON\.parse\('([^']*)'\)/g;
+  let best: LoginErrorState | null = null;
+  let m: RegExpExecArray | null;
+  while ((m = blobRe.exec(html)) !== null) {
     try {
-      const decoded = jsonMatch[1].replace(/\\x([0-9a-fA-F]{2})/g, (_, hex) =>
+      const decoded = m[1].replace(/\\x([0-9a-fA-F]{2})/g, (_, hex) =>
         String.fromCharCode(parseInt(hex, 16)),
       );
       const data = JSON.parse(decoded) as {
@@ -231,15 +234,32 @@ function extractLoginErrors(html: string): LoginErrorState | null {
         exceededAttempts?: boolean;
         isWrongCaptcha?: boolean;
       };
-      return {
+      const looksLikeLoginModel =
+        "hasErrors" in data || "firstErrorText" in data || "exceededAttempts" in data || "isWrongCaptcha" in data;
+      if (!looksLikeLoginModel) continue;
+      const state: LoginErrorState = {
         hasErrors: Boolean(data.hasErrors),
         text: data.firstErrorText ? ERROR_MESSAGES[data.firstErrorText] : undefined,
         exceededAttempts: Boolean(data.exceededAttempts),
         isWrongCaptcha: Boolean(data.isWrongCaptcha),
       };
+      if (state.hasErrors || state.exceededAttempts || state.isWrongCaptcha || state.text) return state;
+      best = best ?? state;
     } catch {
-      /* JSON buzilgan bo'lsa — HTML fallbackga o'tamiz */
+      /* JSON buzilgan bo'lsa — keyingi blobga o'tamiz */
     }
+  }
+  if (best) return best;
+
+  // Raw fallback: model ochiq matnda ko'rinsa ham tanimaymiz.
+  if (/"hasErrors"\s*:\s*true/i.test(html) || /exceededAttempts\s*[:=]\s*true/i.test(html) || /isWrongCaptcha\s*[:=]\s*true/i.test(html)) {
+    const rawText = html.match(/"firstErrorText"\s*:\s*"([^"]{2,80})"/i)?.[1];
+    return {
+      hasErrors: /"hasErrors"\s*:\s*true/i.test(html),
+      text: rawText ? ERROR_MESSAGES[rawText] ?? rawText : undefined,
+      exceededAttempts: /exceededAttempts\s*[:=]\s*true/i.test(html),
+      isWrongCaptcha: /isWrongCaptcha\s*[:=]\s*true/i.test(html),
+    };
   }
 
   // HTML fallback: eMaktab xatoni JSON blob emas, oddiy HTML'da ham ko'rsatadi.
@@ -255,12 +275,20 @@ function extractLoginErrors(html: string): LoginErrorState | null {
   return null;
 }
 
+/** hasErrors atrofidagi xom matn (diagnostika — model qanday ekanini ko'rish uchun). */
+export function ctxOf(body: string): string {
+  const i = body.search(/hasErrors|firstErrorText|exceededAttempts/i);
+  if (i < 0) return body.slice(0, 70).replace(/\s+/g, " ");
+  return body.slice(Math.max(0, i - 30), i + 60).replace(/\s+/g, " ");
+}
+
 /** Javob tarkibidagi qisqa belgilar (diagnostika uchun). */
 function bodyMarkers(body: string): string {
   const bits: string[] = [];
   if (/JSON\.parse\(/.test(body)) bits.push("json");
   if (captchaVisible(body)) bits.push("captchaImg");
   if (hasLoginForm(body)) bits.push("form");
+  if (extractCaptchaUrl(body, "https://login.emaktab.uz/")) bits.push("captchaUrl");
   const err = extractLoginErrors(body);
   if (err) bits.push(`err=${err.text ? err.text.slice(0, 30) : err.hasErrors ? "1" : "0"}`);
   return bits.join("|").slice(0, 60);
@@ -382,7 +410,7 @@ type LoginAttempt =
   | { status: "ok"; cookies: Record<string, string> }
   | { status: "captcha"; form: LoginFormState }
   | { status: "invalid_credentials"; message: string }
-  | { status: "error"; message: string; markers?: string };
+  | { status: "error"; message: string; markers?: string; body?: string };
 
 function formStateFrom(page: FollowedResponse, jar: Record<string, string>): LoginFormState {
   const action = formAction(page.body);
@@ -417,6 +445,7 @@ function classifyFormResult(result: FollowedResponse, jar: Record<string, string
     status: "error",
     message: `eMaktab formani qaytardi (status ${result.status}, ${result.finalUrl}) [${bodyMarkers(result.body)}]`,
     markers: bodyMarkers(result.body),
+    body: result.body,
   };
 }
 
@@ -710,9 +739,8 @@ export interface CompactProbe {
     hidden: string;
     act: string;
   };
-  strategies: Array<{ mode: string; r: string; m?: string; mk?: string }>;
+  strategies: Array<{ mode: string; r: string; m?: string; mk?: string; ctx?: string }>;
   oauth: string;
-  note: string;
 }
 
 /** OAuth "API kalit" yo'lini sinaydi (connect/token). Faqat diagnostika uchun. */
@@ -772,8 +800,9 @@ export async function probeLogin(): Promise<CompactProbe> {
         strategies.push({
           mode,
           r: outcome.status,
-          m: message.slice(0, 70),
+          m: message.slice(0, 40),
           mk: outcome.status === "error" ? outcome.markers ?? "" : "",
+          ctx: ctxOf(outcome.status === "error" ? outcome.body ?? "" : "").slice(0, 70),
         });
         if (outcome.status !== "error") break;
       } catch (error) {
@@ -782,17 +811,7 @@ export async function probeLogin(): Promise<CompactProbe> {
     }
   }
 
-  const first = strategies[0]?.r ?? "?";
-  const note =
-    first === "invalid_credentials"
-      ? "GATE OK — dummy notogri deb qaytdi (captcha bloklamayapti!)"
-      : first === "captcha"
-        ? "captcha talab qilindi"
-        : first === "ok"
-          ? "kutilmagan OK"
-          : "POST o'tmadi";
-
-  return { get, strategies, oauth: await probeOauth(), note };
+  return { get, strategies, oauth: await probeOauth() };
 }
 
 // ---------------------------------------------------------------------------
