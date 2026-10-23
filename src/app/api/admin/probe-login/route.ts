@@ -137,7 +137,7 @@ export async function GET(req: NextRequest) {
         }
         try {
           const dayTs = Math.floor(new Date(`${today}T00:00:00+05:00`).getTime() / 1000);
-          const u = `https://emaktab.uz/api/v2/marks/diary?personId=${result.session.active.personId}&schoolId=${result.session.active.schoolId}&startDate=${dayTs}&finishDate=${dayTs + 24 * 3600 - 1}&timestamp=${Date.now()}`;
+          const u = `https://emaktab.uz/api/v2/marks/diary?personId=${result.session.active.personId}&schoolId=${result.session.active.schoolId}&startDate=${dayTs - 7 * 24 * 3600}&finishDate=${dayTs + 24 * 3600 - 1}&timestamp=${Date.now()}`;
           const r = await fetch(u, {
             headers: {
               "User-Agent": "Mozilla/5.0",
@@ -149,7 +149,9 @@ export async function GET(req: NextRequest) {
             redirect: "follow",
           });
           const b = await r.text();
-          check.dia = `${r.status} ${b.slice(0, 50).replace(/\s+/g, " ")}`;
+          const dayCount = (b.match(/"date"/g) ?? []).length;
+          const lessonCount = (b.match(/"lessons"/g) ?? []).length;
+          check.dia = `${r.status} days=${dayCount} les=${lessonCount}`;
         } catch (error) {
           check.dia = `xato ${String(error).slice(0, 25)}`;
         }
@@ -172,6 +174,8 @@ export async function GET(req: NextRequest) {
             const b = await r.text();
             const lessons = (b.match(/lessons|lesson|urok|урок/gi) ?? []).length;
             const subj = (b.match(/subject|predmet|предмет|тема|theme/gi) ?? []).length;
+            const dates = (b.match(/"date"|dayDate|lessonDate/gi) ?? []).length;
+            const marks = (b.match(/ratingsMarks|workMark|journal/gi) ?? []).length;
             const paths = [
               ...new Set(
                 (b.match(/(?:href|action)="([^"]{4,120})"/g) ?? [])
@@ -186,7 +190,7 @@ export async function GET(req: NextRequest) {
                   .filter((h) => /^\/[a-z]/i.test(h) && !h.includes("static")),
               ),
             ];
-            check[label] = `${r.status} les=${lessons} subj=${subj} ${paths.slice(0, 6).join(" ").slice(0, 70)}`;
+            check[label] = `${r.status} l=${lessons} s=${subj} d=${dates} m=${marks}`;
           } catch (error) {
             check[label] = `xato ${String(error).slice(0, 25)}`;
           }
