@@ -200,35 +200,62 @@ export async function GET(req: NextRequest) {
                 (out as Record<string, unknown>).jh = pick("journalType") + " | " + pick("journalHeader");
                 (out as Record<string, unknown>).jkeys = Object.keys(st).slice(20).join(",").slice(0, 100);
 
-                // 1) Jadval API — TO'LIQ gid bilan (cookie, YYYY-MM-DD)
+                // 1) JOURNAL state — BARCHA kalitlar + URL qiymatlar
                 {
-                  const lg1 = "2524942980748797372";
-                  const lg2 = "30030826200645631";
-                  const pid = "1000007887895";
-                  const hdrs = {
-                    "User-Agent": "Mozilla/5.0",
-                    Cookie: cookieStr,
-                    Accept: "application/json, text/plain, */*",
-                    "X-Requested-With": "XMLHttpRequest",
-                    Referer: "https://emaktab.uz/userfeed",
-                  };
-                  const tries4: Array<[string, string]> = [
-                    ["sch1", `https://emaktab.uz/api/v2/persons/${pid}/groups/${lg1}/schedules?from=2026-10-19&to=2026-10-31`],
-                    ["sch2", `https://emaktab.uz/api/v2/persons/${pid}/groups/${lg2}/schedules?from=2026-10-19&to=2026-10-31`],
-                    ["tt1", `https://emaktab.uz/api/v2/edu-groups/${lg1}/timetables`],
-                    ["tt2", `https://emaktab.uz/api/v2/edu-groups/${lg2}/timetables`],
-                    ["ctx", `https://emaktab.uz/api/v2/users/me/context`],
-                    ["rol", `https://emaktab.uz/api/v2/users/me/roles`],
-                  ];
-                  for (const [lbl, uu] of tries4) {
+                  try {
+                    const jj = Object.entries(st as Record<string, unknown>);
+                    (out as Record<string, unknown>).jstate = jj
+                      .map(([k]) => k)
+                      .join(",")
+                      .slice(0, 160);
+                    const urls = jj
+                      .filter(([k, v]) => /url|api/i.test(k) && typeof v === "string" && v.length > 0)
+                      .map(([k, v]) => `${k}=${(v as string).slice(0, 45)}`)
+                      .join(" ;; ")
+                      .slice(0, 170);
+                    (out as Record<string, unknown>).jurls = urls || "-";
+                  } catch {
+                    (out as Record<string, unknown>).jstate = "xato";
+                  }
+                }
+                // 2) OpenAPI/swagger kashfiyoti (token kerak emas bo'lishi mumkin)
+                {
+                  const opens: string[] = [];
+                  for (const pth of ["/openapi.json", "/v2/openapi.json", "/swagger", "/swagger/index.html"]) {
                     try {
-                      const rr = await fetch(uu, { headers: hdrs, redirect: "follow" });
+                      const rr = await fetch(`https://api.emaktab.uz${pth}`, {
+                        headers: { "User-Agent": "Mozilla/5.0", Accept: "application/json, text/html" },
+                        redirect: "follow",
+                      });
                       const bb = await rr.text();
-                      const dd2 = (bb.match(/"date"|"dayOfWeek"|"subject"|"lessonNumber"|"personId"|"groupId"/gi) ?? []).length;
-                      parts.push(`${lbl}:${rr.status}x${dd2}`);
-                      if (!sampled && (dd2 > 0 || (rr.status === 200 && bb.length > 20))) {
-                        sampled = true;
-                        (out as Record<string, unknown>).sample = bb.slice(0, 120).replace(/\s+/g, " ");
+                      opens.push(`${pth.slice(1, 5)}:${rr.status}${rr.status === 200 ? ":" + bb.slice(0, 25) : ""}`);
+                    } catch {
+                      opens.push(`${pth.slice(1, 5)}:x`);
+                    }
+                  }
+                  (out as Record<string, unknown>).open = opens.join(" ").slice(0, 150);
+                }
+                // 3) Sinf rahbari — userfeed + /teachers
+                {
+                  for (const [lbl, uu] of [
+                    ["uf", "https://emaktab.uz/userfeed"],
+                    ["tea", "https://emaktab.uz/teachers"],
+                  ] as Array<[string, string]>) {
+                    try {
+                      const rr = await fetch(uu, {
+                        headers: { "User-Agent": "Mozilla/5.0", Cookie: cookieStr, Accept: "text/html" },
+                        redirect: "follow",
+                      });
+                      const bb = await rr.text();
+                      const rc = (bb.match(/rahbar/gi) ?? []).length;
+                      parts.push(`${lbl}:${rr.status}r${rc}`);
+                      if (rc > 0 && !(out as Record<string, unknown>).rahbar) {
+                        const ix = bb.toLowerCase().indexOf("rahbar");
+                        (out as Record<string, unknown>).rahbar = bb
+                          .slice(Math.max(0, ix - 60), ix + 80)
+                          .replace(/<[^>]*>/g, " ")
+                          .replace(/\s+/g, " ")
+                          .slice(0, 120);
                       }
                     } catch {
                       parts.push(`${lbl}:x`);
