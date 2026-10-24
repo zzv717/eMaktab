@@ -195,25 +195,32 @@ export async function GET(req: NextRequest) {
                 (out as Record<string, unknown>).jh = pick("journalType") + " | " + pick("journalHeader");
                 (out as Record<string, unknown>).jkeys = Object.keys(st).slice(20).join(",").slice(0, 100);
 
-                // /accounts/login/ — javobda token bormi?
+                // login sahifasi JS'i — token/oauth naqshlari
                 {
                   try {
-                    const rr = await fetch("https://emaktab.uz/accounts/login/", {
-                      method: "POST",
-                      headers: {
-                        "User-Agent": "Mozilla/5.0",
-                        "Content-Type": "application/x-www-form-urlencoded",
-                        Accept: "application/json, text/html",
-                      },
-                      body: `login=${encodeURIComponent(login)}&password=${encodeURIComponent(password)}`,
+                    const rl = await fetch("https://login.emaktab.uz/", {
+                      headers: { "User-Agent": "Mozilla/5.0", Accept: "text/html" },
                       redirect: "follow",
                     });
-                    const bb = await rr.text();
-                    const hasTok = /access_token|"token"|authToken/i.test(bb) ? 1 : 0;
-                    const setck = rr.headers.getSetCookie?.().length ?? 0;
-                    parts.push(`al:${rr.status}t${hasTok}c${setck}`);
+                    const hl = await rl.text();
+                    const srcs = [...new Set([...hl.matchAll(/<script[^>]+src="([^"]+)"/gi)].map((m) => m[1]))].slice(0, 5);
+                    const found = new Set<string>();
+                    const scanL = (txt: string) => {
+                      for (const m of txt.matchAll(/["'`]([a-zA-Z0-9_/{}.:.-]{3,50}(?:token|oauth|authorize|grant)[a-zA-Z0-9_/{}.:.-]{0,25})/gi)) {
+                        found.add(m[1].slice(0, 40));
+                      }
+                    };
+                    scanL(hl);
+                    for (const s of srcs) {
+                      try {
+                        const abs = s.startsWith("http") ? s : `https://login.emaktab.uz${s.startsWith("/") ? "" : "/"}${s}`;
+                        const rs = await fetch(abs, { headers: { "User-Agent": "Mozilla/5.0" }, redirect: "follow" });
+                        scanL(await rs.text());
+                      } catch { /* keyin */ }
+                    }
+                    parts.push("lj:" + [...found].slice(0, 4).join(" ").slice(0, 55) || "lj:-");
                   } catch {
-                    parts.push("al:x");
+                    parts.push("lj:x");
                   }
                 }
               } catch {
