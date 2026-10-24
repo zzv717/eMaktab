@@ -282,38 +282,69 @@ export async function GET(req: NextRequest) {
                               (out as Record<string, unknown>).tv2k2 = allKeys.slice(13).join(",").slice(0, 120);
                               const purl = slice.match(/"planningUrl":"([^"]{0,120})/);
                               if (purl) (out as Record<string, unknown>).purl = purl[1];
-                              // lesson-log-entries — DATED darslar (jadval manbai!)
-                              const sid = (slice.match(/"subjectId":"(\d{10,})/) ?? [])[1] ?? "1856018561884296245";
-                              const pidT = "1000007887895";
-                              const lgT = "2524942980748797372";
-                              const secAgo = Math.floor((Date.now() - 7 * 86400000) / 1000);
-                              const secAhead = Math.floor((Date.now() + 3 * 86400000) / 1000);
-                              const q = `startDate=${secAgo}&finishDate=${secAhead}&timestamp=${Date.now()}`;
-                              const leTries: Array<[string, string]> = [
-                                ["le1", `https://emaktab.uz/api/v2/lesson-log-entries/person/${pidT}/subject/${sid}?${q}`],
-                                ["le2", `https://emaktab.uz/api/v2/lesson-log-entries?personId=${pidT}&subjectId=${sid}&groupId=${lgT}&${q}`],
-                                ["le3", `https://emaktab.uz/api/v2/lesson-log-entries/person/${pidT}/subject/${sid}/groups/${lgT}?${q}`],
-                                ["le4", `https://emaktab.uz/api/v2/lesson-log-entries/groups/${lgT}/subjects/${sid}?${q}`],
-                              ];
-                              for (const [lbl, uu] of leTries) {
-                                try {
-                                  const rl2 = await fetch(uu, {
-                                    headers: {
-                                      "User-Agent": "Mozilla/5.0",
-                                      Cookie: cookieStr,
-                                      Accept: "application/json, text/plain, */*",
-                                      Referer: "https://emaktab.uz/journal",
-                                    },
-                                    redirect: "manual",
-                                  });
-                                  const bl2 = await rl2.text();
-                                  const dc2 = (bl2.match(/"date"|"lessonDate"|"theme"|"hours"/g) ?? []).length;
-                                  parts.push(`${lbl}:${rl2.status}x${dc2}`);
-                                  if (dc2 > 0 && !(out as Record<string, unknown>).les) {
-                                    (out as Record<string, unknown>).les = bl2.slice(0, 190).replace(/\s+/g, " ");
+                              // 1) Fan jurnal sahifasi JOURNAL__INITIAL__STATE + skript API yo'llari
+                              try {
+                                const jurl = slice.match(/"journalUrl":"([^"]+)/);
+                                if (jurl) {
+                                  const hj = await pageGet(result.session.cookies, jurl[1]);
+                                  const jm = hj.match(/JOURNAL__INITIAL__STATE__?\s*=\s*/);
+                                  if (jm && jm.index !== undefined) {
+                                    const sIdx2 = hj.indexOf("{", jm.index);
+                                    const seg = hj.slice(sIdx2, sIdx2 + 2600).replace(/\s+/g, " ");
+                                    const keys2 = [...new Set([...seg.matchAll(/["']?([A-Za-z_][A-Za-z0-9_]{2,25})["']?\s*:/g)].map((m) => m[1]))].slice(0, 16);
+                                    (out as Record<string, unknown>).jkeys = keys2.join(",").slice(0, 150);
+                                    const lix = seg.search(/"lessons"|"days"|"works"|"entries"/);
+                                    (out as Record<string, unknown>).jsamp =
+                                      (lix >= 0 ? seg.slice(Math.max(0, lix - 12), lix + 130) : "(yoq) " + seg.slice(0, 60)).slice(0, 150);
                                   }
-                                } catch {
-                                  parts.push(`${lbl}:x`);
+                                  // skriptlardagi API yollari
+                                  const srcs2 = [...new Set([...hj.matchAll(/<script[^>]+src="([^"]+)"/gi)].map((m) => m[1]))].slice(0, 4);
+                                  const found2 = new Set<string>();
+                                  const scan2 = (txt: string) => {
+                                    for (const m of txt.matchAll(/["'`]([a-z0-9/_-]{3,45}(?:marks|lesson|schedule|diary|timetable)[a-z0-9/_-]{0,20})/gi)) {
+                                      found2.add(m[1].slice(0, 35));
+                                    }
+                                  };
+                                  scan2(hj);
+                                  for (const s2 of srcs2) {
+                                    try {
+                                      const abs2 = s2.startsWith("http") ? s2 : `https://emaktab.uz${s2.startsWith("/") ? "" : "/"}${s2}`;
+                                      const rs2 = await fetch(abs2, { headers: { "User-Agent": "Mozilla/5.0" }, redirect: "manual" });
+                                      scan2(await rs2.text());
+                                    } catch { /* keyin */ }
+                                  }
+                                  (out as Record<string, unknown>).japi = [...found2].slice(0, 6).join(" ").slice(0, 140) || "-";
+                                }
+                              } catch (e3) {
+                                (out as Record<string, unknown>).jkeys = "xato " + String(e3).slice(0, 25);
+                              }
+                              // 2) diary variantlari
+                              {
+                                const secAgo = Math.floor((Date.now() - 7 * 86400000) / 1000);
+                                const secAhead = Math.floor((Date.now() + 3 * 86400000) / 1000);
+                                const base3 = `https://emaktab.uz/api/v2/marks/diary?personId=1000007887895&schoolId=${encodeURIComponent(result.session.active.schoolId)}&startDate=${secAgo}&finishDate=${secAhead}&timestamp=${Date.now()}`;
+                                const dvTries: Array<[string, string]> = [
+                                  ["dP", `${base3}&periodId=2525707862884565213`],
+                                  ["dG", `${base3}&groupId=2524942980748797372`],
+                                  ["dS", `${base3}&subjectId=1856018561884296245`],
+                                  ["dO", `${base3}&isOo=true`],
+                                ];
+                                for (const [lbl, uu] of dvTries) {
+                                  try {
+                                    const rd3 = await fetch(uu, {
+                                      headers: { "User-Agent": "Mozilla/5.0", Cookie: cookieStr, Accept: "application/json", Referer: "https://emaktab.uz/v2/" },
+                                      redirect: "manual",
+                                    });
+                                    const bd3 = await rd3.text();
+                                    const dd3 = (bd3.match(/"date"/g) ?? []).length;
+                                    const ll3 = (bd3.match(/"lessonNumber"|"subject"/g) ?? []).length;
+                                    parts.push(`${lbl}:${rd3.status}d${dd3}l${ll3}`);
+                                    if (dd3 > 0 && !(out as Record<string, unknown>).les) {
+                                      (out as Record<string, unknown>).les = bd3.slice(Math.max(0, bd3.indexOf('"date"') - 12), bd3.indexOf('"date"') + 140).replace(/\s+/g, " ").slice(0, 150);
+                                    }
+                                  } catch {
+                                    parts.push(`${lbl}:x`);
+                                  }
                                 }
                               }
                             }
