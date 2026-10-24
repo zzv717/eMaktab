@@ -28,7 +28,10 @@ import {
   fetchSchedule,
   fetchTeacherSchedule,
   fetchTeacherClasses,
+  fetchTeacherGroups,
+  fetchDiaryDays,
   loginEmaktab,
+  scheduleFromDiaryDays,
   sessionFromCookies,
   submitCaptchaLogin,
   type LoginFormState,
@@ -36,6 +39,7 @@ import {
   tashkentDayKey,
   type ClassInfo,
   type ClassLink,
+  type DaySchedule,
   type EmaktabSession,
 } from "@/lib/emaktab";
 import {
@@ -50,11 +54,18 @@ import {
   formatPersonList,
   formatProfile,
   formatTeacherDay,
+  formatTeacherWeek,
   formatWeek,
 } from "@/lib/format";
 import {
   answerCallbackQuery,
+  beginFlow,
+  type ReplyMarkup,
   cancelKeyboard,
+  cleanupPreviousFlow,
+  MENU_TEXT,
+  mainReplyKeyboard,
+  teacherReplyKeyboard,
   classCabinetKeyboard,
   classSelectKeyboard,
   deleteMessage,
@@ -122,11 +133,15 @@ function isTeacher(user: BotUser): boolean {
 }
 
 function isClassTeacher(user: BotUser): boolean {
-  return user.role === "teacher" && Boolean(user.classesJson);
+  // Faqat haqiqiy sinf rahbari (TEACHERV2: isClassTeacher=true) —
+  // dars o'tadigan sinflar hisobga olinmaydi.
+  return user.role === "teacher" && parseClasses(user).some((c) => c.isClassTeacher === true);
 }
 
 function menuFor(user: BotUser) {
-  return isTeacher(user) ? teacherMenuKeyboard(true, isClassTeacher(user)) : mainMenuKeyboard(true);
+  return isTeacher(user)
+    ? teacherReplyKeyboard(isClassTeacher(user))
+    : mainReplyKeyboard();
 }
 
 function parseChildren(user: BotUser): ChildContext[] {
@@ -163,7 +178,7 @@ function splitMessage(text: string, limit = 4000): string[] {
   return parts;
 }
 
-async function sendLong(chatId: number, text: string, replyMarkup?: ReturnType<typeof kb>) {
+async function sendLong(chatId: number, text: string, replyMarkup?: ReplyMarkup) {
   const parts = splitMessage(text);
   for (let i = 0; i < parts.length; i++) {
     await sendMessage(chatId, parts[i], {
@@ -176,7 +191,7 @@ async function sendLong(chatId: number, text: string, replyMarkup?: ReturnType<t
 async function showView(
   cb: TelegramCallbackQuery,
   text: string,
-  replyMarkup?: ReturnType<typeof kb>,
+  replyMarkup?: ReplyMarkup,
 ) {
   const chatId = cb.message?.chat.id;
   const messageId = cb.message?.message_id;
@@ -213,7 +228,7 @@ async function startProgress(chatId: number, label: string): Promise<ProgressMsg
   }
 }
 
-async function updateProgress(chatId: number, msg: ProgressMsg, text: string, replyMarkup?: ReturnType<typeof kb>) {
+async function updateProgress(chatId: number, msg: ProgressMsg, text: string, replyMarkup?: ReplyMarkup) {
   if (!msg) return;
   try {
     await editMessageText(chatId, msg.message_id, text, { replyMarkup });
@@ -316,15 +331,40 @@ async function withSession<T>(user: BotUser, fn: (session: EmaktabSession) => Pr
   }
 }
 
+// Sinflar ro'yxati: isClassTeacher/subjects maydonlari to'liq bo'lsa — kesh ishlatiladi;
+// aks holda TEACHERV2'dan (emaktab.uz/teachers) yangilanadi.
+function classesComplete(list: ClassLink[] | null | undefined): boolean {
+  return Boolean(list && list.length > 0 && list.every((c) => c.isClassTeacher !== undefined));
+}
+
 async function getTeacherClasses(user: BotUser, session: EmaktabSession): Promise<ClassLink[]> {
   const cached = sessionCache.get(user.telegramId);
-  if (cached?.classes) return cached.classes;
+  if (classesComplete(cached?.classes)) return cached!.classes!;
   const fromDb = parseClasses(user);
-  if (fromDb.length > 0) {
+  if (classesComplete(fromDb)) {
     if (cached) cached.classes = fromDb;
     return fromDb;
   }
-  const classes = await fetchTeacherClasses(session);
+
+  // 1-usul (asosiy): TEACHERV2 state — isClassTeacher + fanlar bilan.
+  let classes: ClassLink[] = [];
+  const groups = await fetchTeacherGroups(session);
+  if (groups.length > 0) {
+    classes = groups.map((g) => ({
+      classId: g.classId,
+      className: g.className,
+      isClassTeacher: g.isClassTeacher,
+      subjects: g.subjects,
+    }));
+  } else {
+    // 2-usul (fallback): "Mening sinflarim" havolalari.
+    classes = await fetchTeacherClasses(session);
+    const cts = new Set(session.classTeacherGroupIds ?? []);
+    const has = (id: string) =>
+      cts.has(id) || [...cts].some((x) => x.includes(id) || id.includes(x));
+    classes = classes.map((c) => ({ ...c, isClassTeacher: has(c.classId) }));
+  }
+
   cacheSession(user.telegramId, session, classes);
   await db
     .update(botUsers)
@@ -577,6 +617,16 @@ Buyruqlar: /start · /grades · /schedule · /news · /status · /logout · /can
 
 export async function handleTelegramUpdate(update: TelegramUpdate) {
   const chatId = update.message?.chat.id ?? update.callback_query?.message?.chat.id;
+
+  // Har bir yangi so'rov — yangi oqim: faqat oldingi so'rov xabarlari o'chadi.
+  if (chatId) {
+    const keep: number[] = [];
+    const cbMsgId = update.callback_query?.message?.message_id;
+    if (cbMsgId) keep.push(cbMsgId);
+    beginFlow(update.update_id ?? Date.now(), keep);
+    await cleanupPreviousFlow(chatId);
+  }
+
   try {
     if (update.message) {
       await handleMessage(update.message);
@@ -952,19 +1002,75 @@ async function handleMessage(message: TelegramMessage) {
     return;
   }
 
-  // --- Qisqa buyruq variantlari (faqat ulangan foydalanuvchilar uchun) ---
+  // --- Menyu tugmalari va qisqa buyruqlar (faqat ulanganlar uchun) ---
   if (isAuthenticated(user)) {
-    if (text === "/grades" || text === "📊 Baholar") {
+    if (text === "/grades" || text === MENU_TEXT.grades) {
       await sendGradesView(chatId, user, 14);
       return;
     }
-    if (text === "/schedule" || text === "📚 Dars jadvali") {
+    if (text === "/schedule" || text === MENU_TEXT.schedule || text === MENU_TEXT.today) {
       if (isTeacher(user)) await sendTeacherDayView(chatId, user, 0);
       else await sendDayView(chatId, user, 0);
       return;
     }
-    if (text === "/news" || text === "📰 Yangiliklar") {
+    if (text === "/news" || text === MENU_TEXT.news) {
       await sendNewsView(chatId, user);
+      return;
+    }
+    if (text === MENU_TEXT.week) {
+      if (isTeacher(user)) await sendTeacherWeekView(chatId, user);
+      else await sendWeekView(chatId, user);
+      return;
+    }
+    if (text === MENU_TEXT.profile) {
+      await sendProfileView(chatId, user);
+      return;
+    }
+    if (text === MENU_TEXT.myClass) {
+      await openClassCabinet(chatId, user);
+      return;
+    }
+    if (text === MENU_TEXT.parents) {
+      const homeroom = await homeroomClass(user);
+      if (!homeroom) {
+        await sendMessage(chatId, "🏫 Sizga biriktirilgan sinf topilmadi (sinf rahbari emassiz).", {
+          replyMarkup: menuFor(user),
+        });
+        return;
+      }
+      const progress = await startProgress(chatId, "Ota-onalar ro'yxati yuklanmoqda");
+      try {
+        const info = await getClassInfo(user, homeroom.classId);
+        const text2 = formatMemberList("Ota-onalar faolligi", info.className, info.parents);
+        await finishProgress(chatId, progress, "Ota-onalar ro'yxati");
+        await sendLong(chatId, text2, classCabinetKeyboard(homeroom.classId));
+      } catch (error) {
+        await failProgress(chatId, progress, "Ota-onalar ro'yxati");
+        await sendEmaktabError(chatId, user, error);
+      }
+      return;
+    }
+    if (text === MENU_TEXT.checkAll) {
+      const homeroom = await homeroomClass(user);
+      if (!homeroom) {
+        await sendMessage(chatId, "🏫 Sizga biriktirilgan sinf topilmadi (sinf rahbari emassiz).", {
+          replyMarkup: menuFor(user),
+        });
+        return;
+      }
+      await runActivation(chatId, user, "student", homeroom.classId);
+      await runActivation(chatId, user, "parent", homeroom.classId);
+      return;
+    }
+    if (text === "/settings" || text === MENU_TEXT.settings) {
+      const children = parseChildren(user);
+      const rows: Array<Array<{ text: string; callback_data: string }>> = [];
+      if (children.length > 1) {
+        rows.push([{ text: "👶 Farzandni almashtirish", callback_data: "settings:children" }]);
+      }
+      rows.push([{ text: "🔄 Login/parolni yangilash", callback_data: "settings:relogin" }]);
+      rows.push([{ text: "🚪 Chiqish (Logout)", callback_data: "settings:logout" }]);
+      await sendLong(chatId, formatAccount(user), kb(rows));
       return;
     }
     await sendMessage(chatId, "Quyidagi menyudan tanlang 👇", { replyMarkup: menuFor(user) });
@@ -1012,27 +1118,184 @@ async function sendDayView(chatId: number, user: BotUser, dayShift: number) {
   }
 }
 
+/** Sinf rahbari bo'lgan sinf (haqiqiy sinf rahbarligi — TEACHERV2 isClassTeacher). */
+async function homeroomClass(user: BotUser): Promise<ClassLink | null> {
+  const classes = await withSession(user, (s) => getTeacherClasses(user, s)).catch(() => [] as ClassLink[]);
+  return classes.find((c) => c.isClassTeacher === true) ?? null;
+}
+
+/** Sinf kabinetini ochadi — faqat sinf rahbari sinflari uchun. */
+async function openClassCabinet(chatId: number, user: BotUser) {
+  const all = await withSession(user, (s) => getTeacherClasses(user, s)).catch(() => [] as ClassLink[]);
+  const classes = all.filter((c) => c.isClassTeacher === true);
+  if (classes.length === 0) {
+    const taught = all.map((c) => escapeHtml(c.className)).join(", ") || "—";
+    await sendMessage(
+      chatId,
+      `🏫 <b>Sinf kabineti topilmadi.</b>\n\n` +
+        `Siz hozircha hech bir sinfning rahbari emassiz.\n` +
+        `Dars o'tadigan sinflaringiz: ${taught}\n\n` +
+        `<i>Sinf kabineti faqat sinf rahbariga biriktirilgan sinf uchun ochiladi.</i>`,
+      { replyMarkup: menuFor(user) },
+    );
+    return;
+  }
+  if (classes.length === 1) {
+    await sendClassCabinet(chatId, user, classes[0].classId);
+    return;
+  }
+  await sendMessage(
+    chatId,
+    `🏫 <b>Sinfni tanlang:</b>`,
+    {
+      replyMarkup: kb([
+        ...classes.map((c) => [{ text: `🏫 ${c.className}`, callback_data: `cabsel:${c.classId}` }]),
+        [{ text: "🏠 Asosiy menyu", callback_data: "menu:home" }],
+      ]),
+    },
+  );
+}
+
+// Sinf IDlari qisqa/uzun formatda bo'lishi mumkin — bir-birining ichida bo'lsa mos.
+function classIdMatch(a: string | null | undefined, b: string): boolean {
+  if (!a) return true;
+  return a === b || a.includes(b) || b.includes(a);
+}
+
+function teacherNameMatches(teacher: string | null | undefined, teacherName: string): boolean {
+  const t = (teacher ?? "").toLowerCase().replace(/['\u2019\u2018\u02BB\u02BC]/g, "");
+  if (!t.trim()) return true;
+  const tokens = teacherName
+    .toLowerCase()
+    .replace(/['\u2019\u2018\u02BB\u02BC]/g, "")
+    .split(/\s+/)
+    .filter((x) => x.length >= 4);
+  return tokens.some((tok) => t.includes(tok));
+}
+
+interface TeacherWeekResult {
+  days: DaySchedule[];
+  missing: string[];
+}
+
+/**
+ * Haqiqiy dars jadvalini yig'adi.
+ * Manba: sinf a'zolarining (biriktirilgan login/parol) eMaktab diary'si —
+ * u yerda darslar SOAT va FAN bilan keladi. Har bir sinf uchun o'qituvchining
+ * o'sha sinfdagi fanlari bo'yicha saralanadi.
+ */
+async function buildTeacherWeek(user: BotUser, fromDay: string, toDay: string): Promise<TeacherWeekResult> {
+  const classes = await withSession(user, (s) => getTeacherClasses(user, s)).catch(() => [] as ClassLink[]);
+  const merged = new Map<string, DaySchedule>();
+  const missing: string[] = [];
+  const norm = (s: string) =>
+    s
+      .toLowerCase()
+      .replace(/['\u2019\u2018\u02BB\u02BC]/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+
+  const saved = await db
+    .select()
+    .from(memberAccounts)
+    .where(eq(memberAccounts.teacherTelegramId, user.telegramId));
+
+  for (const cl of classes) {
+    const subNames = new Set((cl.subjects ?? []).map(norm).filter(Boolean));
+    const candidates = saved
+      .filter((s) => classIdMatch(s.classId, cl.classId) && s.emaktabLogin && s.emaktabPasswordEnc)
+      .sort((a, b) => (a.kind === "student" ? 0 : 1) - (b.kind === "student" ? 0 : 1));
+
+    let gotData = false;
+    for (const acc of candidates) {
+      try {
+        const password = decryptSecret(acc.emaktabPasswordEnc!);
+        const res = await loginEmaktab(acc.emaktabLogin!, password);
+        if (res.status !== "ok") continue;
+        const diaryDays = await fetchDiaryDays(res.session, fromDay, toDay);
+        const sched = scheduleFromDiaryDays(diaryDays);
+        if (sched.length === 0) {
+          gotData = true; // kirildi, lekin kunlar bo'sh — sinf bo'sh emas
+          continue;
+        }
+        gotData = true;
+        for (const day of sched) {
+          for (const l of day.lessons) {
+            const subject = norm(l.subject ?? "");
+            if (subNames.size > 0) {
+              if (!subNames.has(subject)) continue;
+            } else if (!teacherNameMatches(l.teacher, user.fullName ?? "")) {
+              continue;
+            }
+            const existing = merged.get(day.date);
+            if (existing) {
+              existing.lessons.push({ ...l, groupName: cl.className });
+            } else {
+              merged.set(day.date, {
+                date: day.date,
+                weekday: day.weekday,
+                lessons: [{ ...l, groupName: cl.className }],
+              });
+            }
+          }
+        }
+        break; // bitta ishlaydigan a'zo yetarli
+      } catch {
+        // keyingi a'zo bilan davom
+      }
+    }
+    if (!gotData) missing.push(cl.className);
+  }
+
+  // Zaxira manba (kelajakda API ochilsa): o'qituvchi diary'si.
+  if (merged.size === 0) {
+    try {
+      const fallback = await withSession(user, (s) =>
+        fetchTeacherSchedule(s, fromDay, toDay, user.fullName),
+      );
+      for (const day of fallback) {
+        if (day.lessons.length > 0) merged.set(day.date, day);
+      }
+    } catch {
+      /* e'tiborsiz */
+    }
+  }
+
+  return { days: [...merged.values()], missing };
+}
+
+async function sendTeacherWeekView(chatId: number, user: BotUser) {
+  const progress = await startProgress(chatId, "Haftalik jadval yuklanmoqda");
+  try {
+    const today = tashkentDayKey();
+    const dow = (new Date(today + "T12:00:00Z").getUTCDay() + 6) % 7; // 0 = Dushanba
+    const fromDay = shiftDayKey(today, -dow);
+    const toDay = shiftDayKey(fromDay, 6);
+    const { days, missing } = await buildTeacherWeek(user, fromDay, toDay);
+    const text = formatTeacherWeek(days, fromDay, toDay, personLabel(user), missing);
+    await finishProgress(chatId, progress, "Haftalik jadval");
+    await sendLong(chatId, text, teacherDayKeyboard());
+  } catch (error) {
+    await failProgress(chatId, progress, "Haftalik jadval");
+    await sendEmaktabError(chatId, user, error);
+  }
+}
+
 async function sendTeacherDayView(chatId: number, user: BotUser, dayShift: number) {
   const progress = await startProgress(chatId, "Darslar yuklanmoqda");
   try {
     const dayKey = shiftDayKey(tashkentDayKey(), dayShift);
     const nextKey = shiftDayKey(dayKey, 1);
-    const schedule = await withSession(user, (s) =>
-      fetchTeacherSchedule(s, dayKey, nextKey, user.fullName),
-    );
-    // Bitta sinf bo'lsa — darslarga sinf nomini qo'shamiz.
-    const classes = await withSession(user, (s) => getTeacherClasses(user, s)).catch(() => [] as ClassLink[]);
-    const day = schedule.find((d) => d.date === dayKey);
-    const lessons = (day?.lessons ?? []).map((l) =>
-      l.groupName || classes.length !== 1 ? l : { ...l, groupName: classes[0].className },
-    );
+    const { days, missing } = await buildTeacherWeek(user, dayKey, nextKey);
+    const day = days.find((d) => d.date === dayKey);
+    const lessons = day?.lessons ?? [];
     const title = dayShift === 0 ? "Bugungi darslaringiz" : "Ertangi darslaringiz";
-    const text = formatTeacherDay(
-      lessons,
-      dayKey,
-      title,
-      personLabel(user),
-    );
+    let text = formatTeacherDay(lessons, dayKey, title, personLabel(user));
+    if (lessons.length === 0 && missing.length > 0) {
+      text +=
+        `\n\n💡 <i>${missing.map((c) => escapeHtml(c)).join(", ")} uchun ma'lumot olinmadi — ` +
+        `“⚡ Barchani tekshirish” orqali sinf a'zolarini faollashtirsangiz, darslar avtomatik chiqadi.</i>`;
+    }
     await finishProgress(chatId, progress, "Darslar");
     await sendLong(chatId, text, teacherDayKeyboard());
   } catch (error) {
@@ -1472,29 +1735,17 @@ async function handleCallback(cb: TelegramCallbackQuery) {
     await sendTeacherDayView(chatId, fresh, 1);
     return;
   }
+  if (data === "t:week") {
+    await sendTeacherWeekView(chatId, fresh);
+    return;
+  }
   if (data === "profile") {
     await sendProfileView(chatId, fresh);
     return;
   }
 
   if (data === "cab:open") {
-    const classes = await withSession(fresh, (s) => getTeacherClasses(fresh, s)).catch(() => [] as ClassLink[]);
-    if (classes.length === 0) {
-      await sendMessage(chatId, "🏫 Sinf topilmadi.", { replyMarkup: menuFor(fresh) });
-      return;
-    }
-    if (classes.length === 1) {
-      await sendClassCabinet(chatId, fresh, classes[0].classId);
-      return;
-    }
-    await showView(
-      cb,
-      `🏫 <b>Sinfni tanlang:</b>`,
-      kb([
-        ...classes.map((c) => [{ text: `🏫 ${c.className}`, callback_data: `cabsel:${c.classId}` }]),
-        [{ text: "🏠 Asosiy menyu", callback_data: "menu:home" }],
-      ]),
-    );
+    await openClassCabinet(chatId, fresh);
     return;
   }
 

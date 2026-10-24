@@ -303,14 +303,7 @@ export function formatTeacherDay(
   const dateLine = dayKey ? `🗓 ${escapeHtml(formatDayTitle(dayKey))}\n` : "";
 
   if (lessons.length === 0) {
-    return (
-      header +
-      dateLine +
-      `\nBu kunda darslar topilmadi. 🏖\n\n` +
-      `ℹ️ eMaktabning ochiq API'si o'qituvchi dars jadvalini hozircha bermayapti ` +
-      `(jadval faqat eMaktab veb-jurnalida ko'rinadi). Bot har safar qayta urinib ko'radi — ` +
-      `ma'lumot ochilishi bilan avtomatik chiqadi.`
-    );
+    return header + dateLine + `\nBu kunda darslar topilmadi. 🏖`;
   }
 
   let text = header + dateLine;
@@ -323,6 +316,61 @@ export function formatTeacherDay(
     if (l.theme) text += `\n   🎯 ${escapeHtml(l.theme)}`;
     if (l.room) text += `\n   🚪 ${escapeHtml(l.room)}`;
     text += `\n`;
+  }
+  return text;
+}
+
+const WEEKDAY_LABELS = ["Dushanba", "Seshanba", "Chorshanba", "Payshanba", "Juma", "Shanba", "Yakshanba"];
+
+/** Haftalik dars jadvali — kunlar bo'yicha (haqiqiy eMaktab ma'lumotidan). */
+export function formatTeacherWeek(
+  days: Array<{ date: string; lessons: Array<{ number: number; subject: string; groupName: string | null; startTime: string | null; endTime: string | null; room: string | null; isCanceled: boolean; theme: string | null; teacher?: string | null }> }>,
+  fromDay: string,
+  toDay: string,
+  teacherName?: string,
+  missingClasses: string[] = [],
+): string {
+  const head = teacherName
+    ? `📆 <b>Haftalik jadval</b> — ${escapeHtml(teacherName)}\n`
+    : `📆 <b>Haftalik jadval</b>\n`;
+  const fmt = (k: string) => {
+    const [y, m, d] = k.split("-");
+    return `${d}.${m}`;
+  };
+  let text = head + `🗓 ${fmt(fromDay)} – ${fmt(toDay)}\n`;
+
+  // fromDay sanasidan 6 kun
+  const daysByDate = new Map(days.map((d) => [d.date, d.lessons]));
+  let any = false;
+  const startDate = new Date(fromDay + "T12:00:00Z");
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(startDate.getTime() + i * 86400000);
+    const key = d.toISOString().slice(0, 10);
+    const wd = (d.getUTCDay() + 6) % 7;
+    const lessons = (daysByDate.get(key) ?? []).slice().sort((a, b) => (a.number || 99) - (b.number || 99));
+    text += `\n<b>${WEEKDAY_LABELS[wd]}</b> (${key.slice(8)}.${key.slice(5, 7)})\n`;
+    if (lessons.length === 0) {
+      text += `   —\n`;
+      continue;
+    }
+    any = true;
+    for (const l of lessons) {
+      const time = l.startTime ? `🕘 ${l.startTime}${l.endTime ? `–${l.endTime}` : ""}` : `🕘 —`;
+      const group = l.groupName ? ` — <b>${escapeHtml(l.groupName)}</b>` : "";
+      text += `   ${time}  📖 ${escapeHtml(l.subject)}${group}`;
+      if (l.isCanceled) text += `  ❌`;
+      if (l.room) text += `  🚪 ${escapeHtml(l.room)}`;
+      text += `\n`;
+    }
+  }
+
+  if (missingClasses.length > 0) {
+    text +=
+      `\n⚠️ <i>${missingClasses.map((c) => escapeHtml(c)).join(", ")} uchun dars ma'lumoti olinmadi — ` +
+      `“⚡ Barchani tekshirish” orqali sinf a'zolarini faollashtirsangiz, jadval to'liq chiqadi.</i>`;
+  }
+  if (!any && missingClasses.length === 0) {
+    text += `\nBu hafta uchun darslar topilmadi.`;
   }
   return text;
 }

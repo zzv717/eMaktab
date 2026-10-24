@@ -76,6 +76,16 @@ export const memberAccounts = pgTable("member_accounts", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+// Bot yuborgan xabarlar — yangi so'rov boshlanganda oldingi so'rov xabarlarini
+// avtomatik o'chirish uchun kuzatiladi (har bir xabar o'z "flow" tegiga ega).
+export const botMessages = pgTable("bot_messages", {
+  id: serial("id").primaryKey(),
+  chatId: bigint("chat_id", { mode: "number" }).notNull(),
+  messageId: bigint("message_id", { mode: "number" }).notNull(),
+  flow: varchar("flow", { length: 40 }).notNull().default("0"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 // Xato va muhim hodisalar jurnali — masofadan diagnostika uchun (user xato yubormasa ham ko'ramiz).
 export const errorLogs = pgTable("error_log", {
   id: serial("id").primaryKey(),

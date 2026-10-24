@@ -43,6 +43,17 @@ const STATEMENTS: { name: string; run: string }[] = [
       updated_at timestamptz NOT NULL DEFAULT now()
     )`,
   },
+  {
+    name: "create bot_messages",
+    run: `CREATE TABLE IF NOT EXISTS bot_messages (
+      id serial PRIMARY KEY,
+      chat_id bigint NOT NULL,
+      message_id bigint NOT NULL,
+      flow varchar(40) NOT NULL DEFAULT '0',
+      created_at timestamptz NOT NULL DEFAULT now()
+    )`,
+  },
+  { name: "bot_messages.flow", run: `ALTER TABLE bot_messages ADD COLUMN IF NOT EXISTS flow varchar(40) NOT NULL DEFAULT '0'` },
   // Eski jadval bo'lsa — yetishmayotgan ustunlar qo'shiladi (hammasi IF NOT EXISTS):
   { name: "bot_users.state", run: `ALTER TABLE bot_users ADD COLUMN IF NOT EXISTS state varchar(32) NOT NULL DEFAULT 'idle'` },
   { name: "bot_users.username", run: `ALTER TABLE bot_users ADD COLUMN IF NOT EXISTS username varchar(255)` },
