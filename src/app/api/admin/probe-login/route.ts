@@ -151,58 +151,49 @@ export async function GET(req: NextRequest) {
             check[label] = `xato ${String(error).slice(0, 25)}`;
           }
         }
-        // schoolMemberships qayerda? /marks (xom) va /teachers state'idan qidiramiz
+        // timestamp birliklari (soniya vs millisoniya) + /teachers personId atrofi
         {
           const parts: string[] = [];
-          for (const [lbl, pageUrl] of [["mk", "https://emaktab.uz/marks"], ["tc", "https://emaktab.uz/teachers"]] as const) {
+          const dayTs3 = Math.floor(new Date(`${today}T00:00:00+05:00`).getTime() / 1000);
+          const pidT = result.session.active.personId;
+          const sidT = result.session.active.schoolId;
+          for (const [lbl, sTs, fTs] of [
+            ["sec", dayTs3 - 7 * 24 * 3600, dayTs3 + 24 * 3600 - 1],
+            ["msec", (dayTs3 - 7 * 24 * 3600) * 1000, (dayTs3 + 24 * 3600 - 1) * 1000],
+          ] as const) {
             try {
-              const res0 = await fetch(pageUrl, {
+              const u = `https://emaktab.uz/api/v2/marks/diary?personId=${encodeURIComponent(pidT)}&schoolId=${encodeURIComponent(sidT)}&startDate=${sTs}&finishDate=${fTs}&timestamp=${Date.now()}`;
+              const r = await fetch(u, {
                 headers: {
                   "User-Agent": "Mozilla/5.0",
                   Cookie: cookieStr,
-                  Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                  Accept: "application/json, text/plain, */*",
+                  "X-Requested-With": "XMLHttpRequest",
+                  Referer: "https://emaktab.uz/marks",
                 },
                 redirect: "follow",
               });
-              const html = await res0.text();
-              const res = { status: res0.status, body: html };
-              const hasMem = html.includes("schoolMemberships") ? 1 : 0;
-              const hasSch = html.includes("userSchedule") ? 1 : 0;
-              const hasPid = (html.match(/"personId"/g) ?? []).length;
-              let pair = "";
-              const marker = html.match(/"schoolMemberships"\s*:\s*/);
-              if (marker && marker.index !== undefined) {
-                const startIdx = html.indexOf("[", marker.index);
-                if (startIdx > 0) {
-                  let depth = 0, inStr = false, esc = false, endIdx = -1;
-                  for (let i = startIdx; i < html.length && i < startIdx + 300000; i++) {
-                    const ch = html[i];
-                    if (inStr) {
-                      if (esc) esc = false;
-                      else if (ch === "\\") esc = true;
-                      else if (ch === '"') inStr = false;
-                      continue;
-                    }
-                    if (ch === '"') inStr = true;
-                    else if (ch === "[") depth++;
-                    else if (ch === "]") {
-                      depth--;
-                      if (depth === 0) { endIdx = i; break; }
-                    }
-                  }
-                  try {
-                    const decoded = JSON.parse(html.slice(startIdx, endIdx + 1)) as Array<Record<string, unknown>>;
-                    const first = decoded.find((x) => x && x.personId && x.schoolId);
-                    if (first) pair = `${first.personId}:${first.schoolId}${first.isOo ? "*" : ""}`;
-                  } catch { pair = "json-xato"; }
-                }
-              }
-              parts.push(`${lbl}:${res.status}mem${hasMem}sch${hasSch}pid${hasPid}${pair}`);
-            } catch (error) {
-              parts.push(`${lbl}:x ${String(error).slice(0, 18)}`);
+              const b = await r.text();
+              const d = (b.match(/"date"/g) ?? []).length;
+              const l = (b.match(/"lessons"/g) ?? []).length;
+              parts.push(`${lbl}:${r.status}d${d}l${l}`);
+            } catch {
+              parts.push(`${lbl}:x`);
             }
           }
-          check.sch = parts.join("|").slice(0, 120);
+          // /teachers ichidagi "personId" atrofidagi matn (ID tuzilishini ko'rish)
+          try {
+            const res0 = await fetch("https://emaktab.uz/teachers", {
+              headers: { "User-Agent": "Mozilla/5.0", Cookie: cookieStr, Accept: "text/html" },
+              redirect: "follow",
+            });
+            const html = await res0.text();
+            const idxs = [...html.matchAll(/"personId"/g)].map((m) => m.index ?? 0).slice(0, 2);
+            for (const ix of idxs) {
+              parts.push("ctx:" + html.slice(Math.max(0, ix - 10), ix + 45).replace(/[\s\n]/g, ""));
+            }
+          } catch { parts.push("ctx:x"); }
+          check.sch = parts.join("|").slice(0, 130);
         }
         try {
           const dayTs = Math.floor(new Date(`${today}T00:00:00+05:00`).getTime() / 1000);
