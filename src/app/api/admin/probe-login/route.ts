@@ -151,25 +151,36 @@ export async function GET(req: NextRequest) {
             check[label] = `xato ${String(error).slice(0, 25)}`;
           }
         }
-        // Klass sahifasi view parametrlari: lessons/journal/schedule/marks
+        // 401 javobining to'liq matni + UZDnevnikAuth_l Bearer
         {
           const parts: string[] = [];
-          for (const view of ["lessons", "journal", "schedule", "marks", "timetable"]) {
+          const cookieVal = (k: string) => cookieStr.split("; ").find((p) => p.startsWith(k + "="))?.slice(k.length + 1) ?? "";
+          try {
+            const r = await fetch("https://api.emaktab.uz/v2/users/me", {
+              headers: { "User-Agent": "Mozilla/5.0", Accept: "application/json" },
+              redirect: "follow",
+            });
+            parts.push("raw:" + r.status + " " + (await r.text()).slice(0, 60).replace(/[\s\n]/g, ""));
+          } catch {
+            parts.push("raw:x");
+          }
+          for (const [lbl, hdr] of [
+            ["L", `Bearer ${cookieVal("UZDnevnikAuth_l")}`],
+            ["D", `Dnevnik ${cookieVal("sst")}`],
+            ["S", `${cookieVal("sst")}`],
+          ] as const) {
             try {
-              const u = `https://schools.emaktab.uz/v2/class?class=${encodeURIComponent(firstClassId)}&view=${view}`;
-              const r = await fetch(u, {
-                headers: { "User-Agent": "Mozilla/5.0", Cookie: cookieStr, Accept: "text/html" },
+              const r = await fetch("https://api.emaktab.uz/v2/users/me", {
+                headers: { "User-Agent": "Mozilla/5.0", Accept: "application/json", Authorization: hdr },
                 redirect: "follow",
               });
               const b = await r.text();
-              const l = (b.match(/lesson|dars|urok|тема/gi) ?? []).length;
-              const s = (b.match(/subject|predmet|предмет/gi) ?? []).length;
-              parts.push(`${view}:${r.status}l${l}s${s}`);
+              parts.push(`${lbl}:${r.status}${b.slice(0, 14).replace(/[\s{}"]|[\\]/g, "")}`);
             } catch {
-              parts.push(`${view}:x`);
+              parts.push(`${lbl}:x`);
             }
           }
-          check.sch = parts.join(" ").slice(0, 90);
+          check.sch = parts.join("|").slice(0, 130);
         }
         try {
           const dayTs = Math.floor(new Date(`${today}T00:00:00+05:00`).getTime() / 1000);
