@@ -185,11 +185,13 @@ export async function GET(req: NextRequest) {
               }
               try {
                 const st = JSON.parse(html.slice(startIdx, endIdx + 1)) as Record<string, unknown>;
-                (out as Record<string, unknown>).jkeys = Object.keys(st).slice(0, 12).join(",").slice(0, 120);
-                // agar ichida massiv bo'lsa — birinchisining uzunligi
-                for (const [k, v] of Object.entries(st)) {
-                  if (Array.isArray(v)) parts.push(`arr:${k}=${v.length}`);
-                }
+                const pick = (k: string) => {
+                  const v = (st as Record<string, unknown>)[k];
+                  return typeof v === "string" ? v.slice(0, 60) : "";
+                };
+                (out as Record<string, unknown>).api = pick("apiUrl") + " | " + pick("smartApiUrl");
+                (out as Record<string, unknown>).urls = pick("domianUrl") + " | " + pick("journalMemoUrl") + " | " + pick("exportUrl");
+                (out as Record<string, unknown>).jkeys = Object.keys(st).slice(10).join(",").slice(0, 100);
               } catch {
                 parts.push("json-xato");
               }
