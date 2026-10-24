@@ -151,73 +151,58 @@ export async function GET(req: NextRequest) {
             check[label] = `xato ${String(error).slice(0, 25)}`;
           }
         }
-        // /marks sahifasidan schoolMemberships (HAQIQIY personId+schoolId) + diary
+        // schoolMemberships qayerda? /marks (xom) va /teachers state'idan qidiramiz
         {
-          try {
-            const marksHtml = await pageGet(result.session.cookies, "https://emaktab.uz/marks");
-            const marker = marksHtml.match(/"schoolMemberships"\s*:\s*/);
-            let pairs = "";
-            let realPid = "";
-            let realSid = "";
-            if (marker && marker.index !== undefined) {
-              try {
-                // balanslashgan JSON massivini topamiz (HTML qoldig'i bilan parse bo'lmaydi)
-                const startIdx = marksHtml.indexOf("[", marker.index);
-                let depth = 0, inStr = false, esc = false, endIdx = -1;
-                for (let i = startIdx; i < marksHtml.length && i < startIdx + 300000; i++) {
-                  const ch = marksHtml[i];
-                  if (inStr) {
-                    if (esc) esc = false;
-                    else if (ch === "\\") esc = true;
-                    else if (ch === '"') inStr = false;
-                    continue;
-                  }
-                  if (ch === '"') inStr = true;
-                  else if (ch === "[") depth++;
-                  else if (ch === "]") {
-                    depth--;
-                    if (depth === 0) { endIdx = i; break; }
-                  }
-                }
-                const decoded = JSON.parse(
-                  marksHtml.slice(startIdx, endIdx + 1),
-                ) as Array<Record<string, unknown>>;
-                const items = decoded
-                  .filter((x) => x && x.personId && x.schoolId)
-                  .slice(0, 4)
-                  .map((x) => `${x.personId}:${x.schoolId}${x.isOo ? "*" : ""}`);
-                pairs = items.join(",");
-                const first = decoded.find((x) => x && x.personId && x.schoolId);
-                if (first) {
-                  realPid = String(first.personId);
-                  realSid = String(first.schoolId);
-                }
-              } catch {
-                pairs = "json-xato";
-              }
-            }
-            check.sch = `M:${pairs.slice(0, 70)} S:${marker ? 1 : 0}`;
-            if (realPid) {
-              const dayTs3 = Math.floor(new Date(`${today}T00:00:00+05:00`).getTime() / 1000);
-              const u3 = `https://emaktab.uz/api/v2/marks/diary?personId=${encodeURIComponent(realPid)}&schoolId=${encodeURIComponent(realSid)}&startDate=${dayTs3 - 7 * 24 * 3600}&finishDate=${dayTs3 + 24 * 3600 - 1}&timestamp=${Date.now()}`;
-              const r3 = await fetch(u3, {
+          const parts: string[] = [];
+          for (const [lbl, pageUrl] of [["mk", "https://emaktab.uz/marks"], ["tc", "https://emaktab.uz/teachers"]] as const) {
+            try {
+              const res0 = await fetch(pageUrl, {
                 headers: {
                   "User-Agent": "Mozilla/5.0",
                   Cookie: cookieStr,
-                  Accept: "application/json, text/plain, */*",
-                  "X-Requested-With": "XMLHttpRequest",
-                  Referer: "https://emaktab.uz/marks",
+                  Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
                 },
                 redirect: "follow",
               });
-              const b3 = await r3.text();
-              const d3 = (b3.match(/"date"/g) ?? []).length;
-              const l3 = (b3.match(/"lessons"/g) ?? []).length;
-              check.sch += ` D:${r3.status}d${d3}l${l3}`;
+              const html = await res0.text();
+              const res = { status: res0.status, body: html };
+              const hasMem = html.includes("schoolMemberships") ? 1 : 0;
+              const hasSch = html.includes("userSchedule") ? 1 : 0;
+              const hasPid = (html.match(/"personId"/g) ?? []).length;
+              let pair = "";
+              const marker = html.match(/"schoolMemberships"\s*:\s*/);
+              if (marker && marker.index !== undefined) {
+                const startIdx = html.indexOf("[", marker.index);
+                if (startIdx > 0) {
+                  let depth = 0, inStr = false, esc = false, endIdx = -1;
+                  for (let i = startIdx; i < html.length && i < startIdx + 300000; i++) {
+                    const ch = html[i];
+                    if (inStr) {
+                      if (esc) esc = false;
+                      else if (ch === "\\") esc = true;
+                      else if (ch === '"') inStr = false;
+                      continue;
+                    }
+                    if (ch === '"') inStr = true;
+                    else if (ch === "[") depth++;
+                    else if (ch === "]") {
+                      depth--;
+                      if (depth === 0) { endIdx = i; break; }
+                    }
+                  }
+                  try {
+                    const decoded = JSON.parse(html.slice(startIdx, endIdx + 1)) as Array<Record<string, unknown>>;
+                    const first = decoded.find((x) => x && x.personId && x.schoolId);
+                    if (first) pair = `${first.personId}:${first.schoolId}${first.isOo ? "*" : ""}`;
+                  } catch { pair = "json-xato"; }
+                }
+              }
+              parts.push(`${lbl}:${res.status}mem${hasMem}sch${hasSch}pid${hasPid}${pair}`);
+            } catch (error) {
+              parts.push(`${lbl}:x ${String(error).slice(0, 18)}`);
             }
-          } catch (error) {
-            check.sch = `xato ${String(error).slice(0, 25)}`;
           }
+          check.sch = parts.join("|").slice(0, 120);
         }
         try {
           const dayTs = Math.floor(new Date(`${today}T00:00:00+05:00`).getTime() / 1000);
