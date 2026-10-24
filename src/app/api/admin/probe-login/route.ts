@@ -238,6 +238,13 @@ export async function GET(req: NextRequest) {
                       if (found.length >= 3) break;
                     }
                     (out as Record<string, unknown>).cura = found.join(" ||| ").slice(0, 170) || "-";
+                    // "classTeacher" JSON atrofi — kengaytirilgan
+                    const cix = hm.indexOf('"classTeacher"');
+                    (out as Record<string, unknown>).ct2 =
+                      (cix >= 0
+                        ? hm.slice(Math.max(0, cix - 110), cix + 110).replace(/\s+/g, " ")
+                        : "-"
+                      ).slice(0, 210);
                     const hrefs = [...new Set([...hm.matchAll(/href="([^"]*\/v2\/class[^"]*)"/gi)].map((m) => m[1]))].slice(0, 3);
                     (out as Record<string, unknown>).mhref = hrefs.map((h) => h.slice(0, 50)).join(" | ").slice(0, 150) || "-";
                   } catch {
@@ -247,7 +254,7 @@ export async function GET(req: NextRequest) {
                 // 3) members xom satr (pageGet bilan) + personId → diary
                 {
                   try {
-                    const hv = await pageGet(result.session.cookies, "https://schools.emaktab.uz/v2/class?class=25249429&view=members&group=students");
+                    const hv = await pageGet(result.session.cookies, "https://schools.emaktab.uz/v2/class?class=25249429");
                     const ix2 = hv.search(/user\?user=[0-9]+/);
                     (out as Record<string, unknown>).mrow = (ix2 >= 0 ? hv.slice(Math.max(0, ix2 - 130), ix2 + 50) : "-").replace(/\s+/g, " ").slice(0, 170);
                     const pm = (ix2 >= 0 ? hv.slice(Math.max(0, ix2 - 250), ix2 + 250) : "").match(/(?:pid|person|child|member|user)=(\d{7,})/i);
