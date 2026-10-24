@@ -151,48 +151,52 @@ export async function GET(req: NextRequest) {
             check[label] = `xato ${String(error).slice(0, 25)}`;
           }
         }
-        // timestamp birliklari (soniya vs millisoniya) + /teachers personId atrofi
+        // /teachers memberships (personId+schoolId juftliklari) + ular bilan diary
         {
           const parts: string[] = [];
-          const dayTs3 = Math.floor(new Date(`${today}T00:00:00+05:00`).getTime() / 1000);
-          const pidT = result.session.active.personId;
-          const sidT = result.session.active.schoolId;
-          for (const [lbl, sTs, fTs] of [
-            ["sec", dayTs3 - 7 * 24 * 3600, dayTs3 + 24 * 3600 - 1],
-            ["msec", (dayTs3 - 7 * 24 * 3600) * 1000, (dayTs3 + 24 * 3600 - 1) * 1000],
-          ] as const) {
-            try {
-              const u = `https://emaktab.uz/api/v2/marks/diary?personId=${encodeURIComponent(pidT)}&schoolId=${encodeURIComponent(sidT)}&startDate=${sTs}&finishDate=${fTs}&timestamp=${Date.now()}`;
-              const r = await fetch(u, {
-                headers: {
-                  "User-Agent": "Mozilla/5.0",
-                  Cookie: cookieStr,
-                  Accept: "application/json, text/plain, */*",
-                  "X-Requested-With": "XMLHttpRequest",
-                  Referer: "https://emaktab.uz/marks",
-                },
-                redirect: "follow",
-              });
-              const b = await r.text();
-              const d = (b.match(/"date"/g) ?? []).length;
-              const l = (b.match(/"lessons"/g) ?? []).length;
-              parts.push(`${lbl}:${r.status}d${d}l${l}`);
-            } catch {
-              parts.push(`${lbl}:x`);
-            }
-          }
-          // /teachers ichidagi "personId" atrofidagi matn (ID tuzilishini ko'rish)
           try {
             const res0 = await fetch("https://emaktab.uz/teachers", {
               headers: { "User-Agent": "Mozilla/5.0", Cookie: cookieStr, Accept: "text/html" },
               redirect: "follow",
             });
             const html = await res0.text();
-            const idxs = [...html.matchAll(/"personId"/g)].map((m) => m.index ?? 0).slice(0, 2);
-            for (const ix of idxs) {
-              parts.push("ctx:" + html.slice(Math.max(0, ix - 10), ix + 45).replace(/[\s\n]/g, ""));
+            // {"...schoolId":"<id>","personId":"<pid>" — barcha juftliklar
+            const pairs: Array<[string, string]> = [];
+            for (const m of html.matchAll(/"([A-Za-z]*[Ii]d)"\s*:\s*"(\d{6,})"\s*,\s*"personId"\s*:\s*"(\d{6,})"/g)) {
+              pairs.push([m[3], m[2]]);
             }
-          } catch { parts.push("ctx:x"); }
+            // qo'shimcha: personId'dan keyin kelgan id lar
+            for (const m of html.matchAll(/"personId"\s*:\s*"(\d{6,})"[^}]{0,120}?"([A-Za-z]*[Ii]d)"\s*:\s*"(\d{8,})"/g)) {
+              pairs.push([m[1], m[3]]);
+            }
+            const uniq = [...new Map(pairs.map((p) => [p.join(":"), p])).values()].slice(0, 4);
+            parts.push("P:" + uniq.map((p) => p.join("/")).join(",").slice(0, 60));
+
+            const dayTs3 = Math.floor(new Date(`${today}T00:00:00+05:00`).getTime() / 1000);
+            for (const [pidX, sidX] of uniq.slice(0, 3)) {
+              try {
+                const u = `https://emaktab.uz/api/v2/marks/diary?personId=${encodeURIComponent(pidX)}&schoolId=${encodeURIComponent(sidX)}&startDate=${dayTs3 - 7 * 24 * 3600}&finishDate=${dayTs3 + 24 * 3600 - 1}&timestamp=${Date.now()}`;
+                const r = await fetch(u, {
+                  headers: {
+                    "User-Agent": "Mozilla/5.0",
+                    Cookie: cookieStr,
+                    Accept: "application/json, text/plain, */*",
+                    "X-Requested-With": "XMLHttpRequest",
+                    Referer: "https://emaktab.uz/marks",
+                  },
+                  redirect: "follow",
+                });
+                const b = await r.text();
+                const d = (b.match(/"date"/g) ?? []).length;
+                const l = (b.match(/"lessons"/g) ?? []).length;
+                parts.push(`${pidX.slice(-4)}:${r.status}d${d}l${l}`);
+              } catch {
+                parts.push(`${pidX.slice(-4)}:x`);
+              }
+            }
+          } catch (error) {
+            parts.push(`xato ${String(error).slice(0, 20)}`);
+          }
           check.sch = parts.join("|").slice(0, 130);
         }
         try {
