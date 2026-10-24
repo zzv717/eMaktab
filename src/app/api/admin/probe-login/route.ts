@@ -195,33 +195,21 @@ export async function GET(req: NextRequest) {
                 (out as Record<string, unknown>).jh = pick("journalType") + " | " + pick("journalHeader");
                 (out as Record<string, unknown>).jkeys = Object.keys(st).slice(20).join(",").slice(0, 100);
 
-                // login sahifasi JS'i — token/oauth naqshlari
+                // jurnaldagi "subject/тема/predmet" hitlari atrofi
                 {
-                  try {
-                    const rl = await fetch("https://login.emaktab.uz/", {
-                      headers: { "User-Agent": "Mozilla/5.0", Accept: "text/html" },
-                      redirect: "follow",
-                    });
-                    const hl = await rl.text();
-                    const srcs = [...new Set([...hl.matchAll(/<script[^>]+src="([^"]+)"/gi)].map((m) => m[1]))].slice(0, 5);
-                    const found = new Set<string>();
-                    const scanL = (txt: string) => {
-                      for (const m of txt.matchAll(/["'`]([a-zA-Z0-9_/{}.:.-]{3,50}(?:token|oauth|authorize|grant)[a-zA-Z0-9_/{}.:.-]{0,25})/gi)) {
-                        found.add(m[1].slice(0, 40));
-                      }
-                    };
-                    scanL(hl);
-                    for (const s of srcs) {
-                      try {
-                        const abs = s.startsWith("http") ? s : `https://login.emaktab.uz${s.startsWith("/") ? "" : "/"}${s}`;
-                        const rs = await fetch(abs, { headers: { "User-Agent": "Mozilla/5.0" }, redirect: "follow" });
-                        scanL(await rs.text());
-                      } catch { /* keyin */ }
-                    }
-                    parts.push("lj:" + [...found].slice(0, 4).join(" ").slice(0, 55) || "lj:-");
-                  } catch {
-                    parts.push("lj:x");
-                  }
+                  const pad2b = (n: number) => String(n).padStart(2, "0");
+                  const now2 = new Date(Date.now() + 5 * 3600 * 1000);
+                  const jrUrl2 = `https://emaktab.uz/journal/school/${result.session.active.schoolId}/group/${firstClassId}/week/${pad2b(now2.getUTCDate())}/${now2.getUTCMonth() + 1}`;
+                  const rr = await fetch(jrUrl2, {
+                    headers: { "User-Agent": "Mozilla/5.0", Cookie: cookieStr, Accept: "text/html" },
+                    redirect: "follow",
+                  });
+                  const raw2 = (await rr.text()).replace(/\s+/g, " ");
+                  const hits = [...raw2.matchAll(/subject|тема|predmet/gi)].map((m) => m.index ?? 0);
+                  const s1 = hits[0] ?? -1;
+                  const s2 = hits[3] ?? -1;
+                  (out as Record<string, unknown>).sample =
+                    (s1 >= 0 ? raw2.slice(Math.max(0, s1 - 25), s1 + 55) + " ||| " + (s2 >= 0 ? raw2.slice(Math.max(0, s2 - 15), s2 + 45) : "") : "-").slice(0, 150);
                 }
               } catch {
                 parts.push("json-xato");
