@@ -274,7 +274,10 @@ export async function GET(req: NextRequest) {
                             const keys = [...new Set([...slice.matchAll(/["']?([A-Za-z_][A-Za-z0-9_]{2,25})["']?\s*:/g)].map((m) => m[1]))].slice(0, 14);
                             kparts.push(`${name.slice(0, 10)}:{${keys.join(",").slice(0, 70)}}`);
                             if (name.startsWith("TEACHER") && !(out as Record<string, unknown>).tv2) {
-                              (out as Record<string, unknown>).tv2 = slice.replace(/\s+/g, " ").slice(0, 200);
+                              const allKeys = [...new Set([...slice.matchAll(/["']?([A-Za-z_][A-Za-z0-9_]{2,25})["']?\s*:/g)].map((m) => m[1]))];
+                              (out as Record<string, unknown>).tv2 = slice.replace(/\s+/g, " ").slice(0, 190);
+                              (out as Record<string, unknown>).tv2k = allKeys.join(",").slice(0, 190);
+                              (out as Record<string, unknown>).tv2b = slice.replace(/\s+/g, " ").slice(150, 380);
                             }
                           }
                         }
