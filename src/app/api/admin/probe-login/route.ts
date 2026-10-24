@@ -195,29 +195,25 @@ export async function GET(req: NextRequest) {
                 (out as Record<string, unknown>).jh = pick("journalType") + " | " + pick("journalHeader");
                 (out as Record<string, unknown>).jkeys = Object.keys(st).slice(20).join(",").slice(0, 100);
 
-                // api/v2 ichida jurnal endpointlari
-                const tries2: Array<[string, string]> = [
-                  ["mj", `https://emaktab.uz/api/v2/marks/journal?personId=${encodeURIComponent(result.session.active.personId)}&schoolId=${encodeURIComponent(result.session.active.schoolId)}&groupId=${encodeURIComponent(firstClassId)}&startDate=${Date.now() - 7 * 86400000}&finishDate=${Date.now()}`],
-                  ["lle", `https://emaktab.uz/api/v2/lesson-log-entries?groupId=${encodeURIComponent(firstClassId)}`],
-                  ["wv", `https://emaktab.uz/api/v2/week-views?groupId=${encodeURIComponent(firstClassId)}`],
-                ];
-                for (const [lbl, uu] of tries2) {
+                // /accounts/login/ — javobda token bormi?
+                {
                   try {
-                    const rr = await fetch(uu, {
+                    const rr = await fetch("https://emaktab.uz/accounts/login/", {
+                      method: "POST",
                       headers: {
                         "User-Agent": "Mozilla/5.0",
-                        Cookie: cookieStr,
-                        Accept: "application/json, text/plain, */*",
-                        "X-Requested-With": "XMLHttpRequest",
-                        Referer: "https://emaktab.uz/journal",
+                        "Content-Type": "application/x-www-form-urlencoded",
+                        Accept: "application/json, text/html",
                       },
+                      body: `login=${encodeURIComponent(login)}&password=${encodeURIComponent(password)}`,
                       redirect: "follow",
                     });
                     const bb = await rr.text();
-                    const dd2 = (bb.match(/"date"|lessons|subject/gi) ?? []).length;
-                    parts.push(`${lbl}:${rr.status}x${dd2}`);
+                    const hasTok = /access_token|"token"|authToken/i.test(bb) ? 1 : 0;
+                    const setck = rr.headers.getSetCookie?.().length ?? 0;
+                    parts.push(`al:${rr.status}t${hasTok}c${setck}`);
                   } catch {
-                    parts.push(`${lbl}:x`);
+                    parts.push("al:x");
                   }
                 }
               } catch {
