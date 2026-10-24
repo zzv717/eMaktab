@@ -238,13 +238,20 @@ export async function GET(req: NextRequest) {
                       if (found.length >= 3) break;
                     }
                     (out as Record<string, unknown>).cura = found.join(" ||| ").slice(0, 170) || "-";
-                    // "classTeacher" JSON atrofi — kengaytirilgan
-                    const cix = hm.indexOf('"classTeacher"');
-                    (out as Record<string, unknown>).ct2 =
-                      (cix >= 0
-                        ? hm.slice(Math.max(0, cix - 110), cix + 110).replace(/\s+/g, " ")
-                        : "-"
-                      ).slice(0, 210);
+                    // class sahifasi (pageGet!) — "rahbar" + heading kontekst
+                    try {
+                      const hc = await pageGet(result.session.cookies, "https://schools.emaktab.uz/v2/class?class=25249429");
+                      const rc2 = (hc.match(/rahbar/gi) ?? []).length;
+                      const rix = hc.toLowerCase().indexOf("rahbar");
+                      (out as Record<string, unknown>).ct2 =
+                        `r${rc2} ` +
+                        (rix >= 0
+                          ? hc.slice(Math.max(0, rix - 120), rix + 100).replace(/<[^>]*>/g, " ").replace(/\s+/g, " ")
+                          : "(yoq) " + hc.slice(0, 60).replace(/<[^>]*>/g, " ").replace(/\s+/g, " ")
+                        ).slice(0, 180);
+                    } catch (e2) {
+                      (out as Record<string, unknown>).ct2 = "cls-xato " + String(e2).slice(0, 30);
+                    }
                     const hrefs = [...new Set([...hm.matchAll(/href="([^"]*\/v2\/class[^"]*)"/gi)].map((m) => m[1]))].slice(0, 3);
                     (out as Record<string, unknown>).mhref = hrefs.map((h) => h.slice(0, 50)).join(" | ").slice(0, 150) || "-";
                   } catch {
