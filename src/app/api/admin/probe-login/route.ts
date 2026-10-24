@@ -277,7 +277,9 @@ export async function GET(req: NextRequest) {
                               const allKeys = [...new Set([...slice.matchAll(/["']?([A-Za-z_][A-Za-z0-9_]{2,25})["']?\s*:/g)].map((m) => m[1]))];
                               (out as Record<string, unknown>).tv2 = slice.replace(/\s+/g, " ").slice(0, 190);
                               (out as Record<string, unknown>).tv2k = allKeys.join(",").slice(0, 190);
-                              (out as Record<string, unknown>).tv2b = slice.replace(/\s+/g, " ").slice(150, 380);
+                              (out as Record<string, unknown>).tv2b = slice.replace(/\s+/g, " ").slice(150, 370);
+                              (out as Record<string, unknown>).tv2c = slice.replace(/\s+/g, " ").slice(370, 640);
+                              (out as Record<string, unknown>).tv2k2 = allKeys.slice(13).join(",").slice(0, 180);
                             }
                           }
                         }
