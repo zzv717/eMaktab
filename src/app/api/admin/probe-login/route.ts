@@ -163,13 +163,39 @@ export async function GET(req: NextRequest) {
               redirect: "follow",
             });
             const html = await r0.text();
-            const markers = [...new Set([...html.matchAll(/window\.__([A-Z0-9_]{3,40})__/g)].map((m) => m[1]))];
-            parts.push("mk:" + markers.slice(0, 6).join(",").slice(0, 55));
-            const raw = html.replace(/\s+/g, " ");
-            const keyCount = (raw.match(/"works"|"cells"|"events"|"entries"|"lessons"|"days"|"rows"|"grid"/g) ?? []).length;
-            parts.push("k" + keyCount);
-            const ix = raw.search(/"works"|"cells"|"events"|"entries"|"lessons"|"days"/);
-            (out as Record<string, unknown>).sample = (ix >= 0 ? raw.slice(Math.max(0, ix - 15), ix + 85) : "-").slice(0, 100);
+            // JOURNAL__INITIAL__STATE top-level kalitlari
+            const m = html.match(/JOURNAL__INITIAL__STATE__?\s*=\s*/);
+            if (m && m.index !== undefined) {
+              const startIdx = html.indexOf("{", m.index);
+              let depth = 0, inStr = false, esc = false, endIdx = -1;
+              for (let i = startIdx; i < html.length && i < startIdx + 500000; i++) {
+                const ch = html[i];
+                if (inStr) {
+                  if (esc) esc = false;
+                  else if (ch === "\\") esc = true;
+                  else if (ch === '"') inStr = false;
+                  continue;
+                }
+                if (ch === '"') inStr = true;
+                else if (ch === "{") depth++;
+                else if (ch === "}") {
+                  depth--;
+                  if (depth === 0) { endIdx = i; break; }
+                }
+              }
+              try {
+                const st = JSON.parse(html.slice(startIdx, endIdx + 1)) as Record<string, unknown>;
+                (out as Record<string, unknown>).jkeys = Object.keys(st).slice(0, 12).join(",").slice(0, 120);
+                // agar ichida massiv bo'lsa — birinchisining uzunligi
+                for (const [k, v] of Object.entries(st)) {
+                  if (Array.isArray(v)) parts.push(`arr:${k}=${v.length}`);
+                }
+              } catch {
+                parts.push("json-xato");
+              }
+            } else {
+              parts.push("marker-yok");
+            }
           } catch (error) {
             parts.push(`xato ${String(error).slice(0, 18)}`);
           }
