@@ -151,42 +151,43 @@ export async function GET(req: NextRequest) {
             check[label] = `xato ${String(error).slice(0, 25)}`;
           }
         }
-        // Jurnal: XHR ko'rinishidagi javob + HTML ichidagi matn namunasi
+        // O'quvchi user sahifasidan uning personId'si + diary
         {
-          const parts: string[] = [];
           try {
-            const pad2 = (n: number) => String(n).padStart(2, "0");
-            const now = new Date(Date.now() + 5 * 3600 * 1000);
-            const jrUrl = `https://emaktab.uz/journal/school/${result.session.active.schoolId}/group/${firstClassId}/week/${pad2(now.getUTCDate())}/${now.getUTCMonth() + 1}`;
-            // 1) XHR ko'rinishida
-            const rx = await fetch(jrUrl, {
-              headers: {
-                "User-Agent": "Mozilla/5.0",
-                Cookie: cookieStr,
-                Accept: "application/json, text/javascript, */*; q=0.01",
-                "X-Requested-With": "XMLHttpRequest",
-                Referer: jrUrl,
-              },
-              redirect: "follow",
-            });
-            const bx = await rx.text();
-            parts.push(`x:${rx.status}c${(rx.headers.get("content-type") ?? "").includes("json") ? 1 : 0} ${bx.slice(0, 30).replace(/[\s{}"]/g, "")}`);
-            // 2) HTML matni — "lesson|dars|тема|predmet" atrofi
-            const r0 = await fetch(jrUrl, {
-              headers: { "User-Agent": "Mozilla/5.0", Cookie: cookieStr, Accept: "text/html" },
-              redirect: "follow",
-            });
-            const html = await r0.text();
-            // xom HTML (script'lar ichida) bo'yicha namuna
-            const raw = html.replace(/\s+/g, " ");
-            const hits = [...raw.matchAll(/lessons|lessonDate|"marks"|workMark|lessonTime|journal/gi)].map((m) => m.index ?? 0);
-            (out as Record<string, unknown>).sl = hits.length;
-            const ix = hits[2] ?? hits[0] ?? -1;
-            (out as Record<string, unknown>).sample = (ix >= 0 ? raw.slice(Math.max(0, ix - 40), ix + 80) : raw.slice(0, 110)).slice(0, 110);
+            const stidForDiag = check.stid && check.stid !== "yok" ? check.stid : "";
+            const uHtml = await pageGet(
+              result.session.cookies,
+              `https://schools.emaktab.uz/v2/user?user=${encodeURIComponent(stidForDiag)}`,
+            );
+            const pids = [...new Set([...uHtml.matchAll(/"personId"\s*:\s*"(\d{6,})"/g)].map((m) => m[1]))].slice(0, 3);
+            (out as Record<string, unknown>).sp = pids.join(",").slice(0, 45);
+            const dayTs3 = Math.floor(new Date(`${today}T00:00:00+05:00`).getTime() / 1000);
+            const parts: string[] = [];
+            for (const pidX of pids.slice(0, 2)) {
+              try {
+                const u = `https://emaktab.uz/api/v2/marks/diary?personId=${encodeURIComponent(pidX)}&schoolId=${encodeURIComponent(result.session.active.schoolId)}&startDate=${dayTs3 - 7 * 24 * 3600}&finishDate=${dayTs3 + 24 * 3600 - 1}&timestamp=${Date.now()}`;
+                const r = await fetch(u, {
+                  headers: {
+                    "User-Agent": "Mozilla/5.0",
+                    Cookie: cookieStr,
+                    Accept: "application/json, text/plain, */*",
+                    "X-Requested-With": "XMLHttpRequest",
+                    Referer: "https://emaktab.uz/marks",
+                  },
+                  redirect: "follow",
+                });
+                const b = await r.text();
+                const d = (b.match(/"date"/g) ?? []).length;
+                const l = (b.match(/"lessons"/g) ?? []).length;
+                parts.push(`${pidX.slice(-4)}:${r.status}d${d}l${l}`);
+              } catch {
+                parts.push(`${pidX.slice(-4)}:x`);
+              }
+            }
+            check.sch = parts.join("|").slice(0, 30) || "pid-yok";
           } catch (error) {
-            parts.push(`xato ${String(error).slice(0, 20)}`);
+            check.sch = `xato ${String(error).slice(0, 20)}`;
           }
-          check.sch = parts.join("|").slice(0, 12);
         }
         try {
           const dayTs = Math.floor(new Date(`${today}T00:00:00+05:00`).getTime() / 1000);
