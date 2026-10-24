@@ -151,41 +151,25 @@ export async function GET(req: NextRequest) {
             check[label] = `xato ${String(error).slice(0, 25)}`;
           }
         }
-        // JS/HTML ichidagi yo'l naqshlari (api/ prefiksisiz) + ratingsMarks atrofi
+        // Klass sahifasi view parametrlari: lessons/journal/schedule/marks
         {
           const parts: string[] = [];
-          try {
-            const pad2 = (n: number) => String(n).padStart(2, "0");
-            const now = new Date(Date.now() + 5 * 3600 * 1000);
-            const jrUrl = `https://emaktab.uz/journal/school/${result.session.active.schoolId}/group/${firstClassId}/week/${pad2(now.getUTCDate())}/${now.getUTCMonth() + 1}`;
-            const r0 = await fetch(jrUrl, {
-              headers: { "User-Agent": "Mozilla/5.0", Cookie: cookieStr, Accept: "text/html" },
-              redirect: "follow",
-            });
-            const html = await r0.text();
-            const srcs = [...new Set([...html.matchAll(/<script[^>]+src="([^"]+)"/gi)].map((m) => m[1]))].slice(0, 6);
-            const paths = new Set<string>();
-            const scan = (txt: string) => {
-              for (const m of txt.matchAll(/["'`]([a-zA-Z0-9_/{}.-]{3,45}(?:marks|journal|schedule|timetable|userfeed|lessons|diary)[a-zA-Z0-9_/{}.-]{0,25})/gi)) {
-                paths.add(m[1]);
-              }
-            };
-            scan(html);
-            for (const s of srcs) {
-              try {
-                const abs = s.startsWith("http") ? s : `https://emaktab.uz${s.startsWith("/") ? "" : "/"}${s}`;
-                const rj = await fetch(abs, { headers: { "User-Agent": "Mozilla/5.0", Cookie: cookieStr }, redirect: "follow" });
-                scan(await rj.text());
-              } catch { /* keyin */ }
+          for (const view of ["lessons", "journal", "schedule", "marks", "timetable"]) {
+            try {
+              const u = `https://schools.emaktab.uz/v2/class?class=${encodeURIComponent(firstClassId)}&view=${view}`;
+              const r = await fetch(u, {
+                headers: { "User-Agent": "Mozilla/5.0", Cookie: cookieStr, Accept: "text/html" },
+                redirect: "follow",
+              });
+              const b = await r.text();
+              const l = (b.match(/lesson|dars|urok|тема/gi) ?? []).length;
+              const s = (b.match(/subject|predmet|предмет/gi) ?? []).length;
+              parts.push(`${view}:${r.status}l${l}s${s}`);
+            } catch {
+              parts.push(`${view}:x`);
             }
-            parts.push("p:" + [...paths].slice(0, 7).join(" ").slice(0, 75));
-            const raw = html.replace(/\s+/g, " ");
-            const ix = raw.search(/ratingsMarks|workMark/);
-            (out as Record<string, unknown>).sample = (ix >= 0 ? raw.slice(Math.max(0, ix - 35), ix + 75) : "-").slice(0, 105);
-          } catch (error) {
-            parts.push(`xato ${String(error).slice(0, 18)}`);
           }
-          check.sch = parts.join("|").slice(0, 90);
+          check.sch = parts.join(" ").slice(0, 90);
         }
         try {
           const dayTs = Math.floor(new Date(`${today}T00:00:00+05:00`).getTime() / 1000);
