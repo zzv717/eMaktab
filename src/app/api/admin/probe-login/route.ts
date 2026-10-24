@@ -4,6 +4,7 @@ import {
   fetchNews,
   fetchSchedule,
   fetchTeacherClasses,
+  fetchTeacherGroups,
   loginEmaktab,
   pageGet,
   probeLogin,
@@ -462,6 +463,19 @@ export async function GET(req: NextRequest) {
           } catch (error) {
             check[label] = `xato ${String(error).slice(0, 25)}`;
           }
+        }
+        // Yangi TEACHERV2 parser jonli tekshiruvi
+        try {
+          const groups = await fetchTeacherGroups(result.session);
+          (out as Record<string, unknown>).groups =
+            groups.length > 0
+              ? groups
+                  .map((g) => `${g.className}${g.isClassTeacher ? "*" : ""}[${g.subjects.slice(0, 2).join("+")}]`)
+                  .join(" ")
+                  .slice(0, 80)
+              : "yok";
+        } catch (e4) {
+          (out as Record<string, unknown>).groups = "xato " + String(e4).slice(0, 25);
         }
         // O'quvchi kabineti jonli test: klass sahifasidagi ochiq login bilan kirish
         try {
