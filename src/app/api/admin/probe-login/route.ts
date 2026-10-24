@@ -151,49 +151,25 @@ export async function GET(req: NextRequest) {
             check[label] = `xato ${String(error).slice(0, 25)}`;
           }
         }
-        // Token olish urinishlari (api.emaktab.uz uchun Bearer)
+        // Token: cookie nomlari + oauth2 + api ichidagi token endpointlari
         {
           const parts: string[] = [];
           const login = sp.get("login") ?? "";
           const passwordRaw = sp.get("password") ?? "";
-          const cookieVal = (k: string) => cookieStr.split("; ").find((p) => p.startsWith(k + "="))?.slice(k.length + 1) ?? "";
+          // cookie nomlari (token cookie'si bormi?)
+          parts.push("ck:" + cookieStr.split("; ").map((p) => p.split("=")[0]).join(",").slice(0, 55));
           const body = `grant_type=password&username=${encodeURIComponent(login)}&password=${encodeURIComponent(passwordRaw)}`;
-          for (const [lbl, url] of [
-            ["o1", "https://login.emaktab.uz/oauth/token"],
-            ["o2", "https://emaktab.uz/oauth/token"],
-            ["o3", "https://login.emaktab.uz/connect/token"],
-          ] as const) {
+          const tries: Array<[string, string, RequestInit]> = [
+            ["o4", "https://login.emaktab.uz/oauth2/token", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" }, body }],
+            ["o5", "https://api.emaktab.uz/token", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" }, body }],
+            ["o6", "https://api.emaktab.uz/v2/auth/token", { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" }, body: JSON.stringify({ login, password: passwordRaw }) }],
+            ["o7", "https://login.emaktab.uz/oauth2/authorize", { method: "GET", headers: { Accept: "application/json" } }],
+          ];
+          for (const [lbl, url, init] of tries) {
             try {
-              const r = await fetch(url, {
-                method: "POST",
-                headers: {
-                  "User-Agent": "Mozilla/5.0",
-                  "Content-Type": "application/x-www-form-urlencoded",
-                  Accept: "application/json",
-                },
-                body,
-                redirect: "follow",
-              });
+              const r = await fetch(url, { ...init, headers: { "User-Agent": "Mozilla/5.0", ...(init.headers ?? {}) }, redirect: "follow" } as RequestInit);
               const b = await r.text();
-              const hasTok = b.includes("access_token") ? 1 : 0;
-              parts.push(`${lbl}:${r.status}t${hasTok}${b.slice(0, 18).replace(/[\s{}"]|[\\]/g, "")}`);
-            } catch {
-              parts.push(`${lbl}:x`);
-            }
-          }
-          // Cookie qiymatlari Bearer sifatida
-          for (const [lbl, ck] of [["b1", "sst"], ["b2", "UZDnevnikAuth_a"], ["b3", "t0"]] as const) {
-            try {
-              const r = await fetch("https://api.emaktab.uz/v2/users/me", {
-                headers: {
-                  "User-Agent": "Mozilla/5.0",
-                  Accept: "application/json",
-                  Authorization: `Bearer ${cookieVal(ck)}`,
-                },
-                redirect: "follow",
-              });
-              const b = await r.text();
-              parts.push(`${lbl}:${r.status}${b.includes("access") || b.includes("userName") || b.includes("person") ? "y" : "n"}`);
+              parts.push(`${lbl}:${r.status}t${b.includes("access_token") ? 1 : 0}`);
             } catch {
               parts.push(`${lbl}:x`);
             }
