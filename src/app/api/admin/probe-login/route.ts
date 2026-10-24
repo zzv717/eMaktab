@@ -158,6 +158,7 @@ export async function GET(req: NextRequest) {
         // Jurnal sahifasi window.__X__ markerlari + data-kalitlar
         {
           const parts: string[] = [];
+          let sampled = false;
           try {
             const pad2 = (n: number) => String(n).padStart(2, "0");
             const now = new Date(Date.now() + 5 * 3600 * 1000);
@@ -199,61 +200,63 @@ export async function GET(req: NextRequest) {
                 (out as Record<string, unknown>).jh = pick("journalType") + " | " + pick("journalHeader");
                 (out as Record<string, unknown>).jkeys = Object.keys(st).slice(20).join(",").slice(0, 100);
 
-                // A'zo personId (=user id?) bilan diary — darslar bormi?
+                // 1) Jadval API — TO'LIQ gid bilan (cookie, YYYY-MM-DD)
                 {
-                  const weekAgo = Math.floor((Date.now() - 7 * 86400000) / 1000);
-                  const tomorrow = Math.floor((Date.now() + 86400000) / 1000);
-                  try {
-                    const rr = await fetch(
-                      `https://emaktab.uz/api/v2/marks/diary?personId=1000020821210&schoolId=${encodeURIComponent(result.session.active.schoolId)}&startDate=${weekAgo}&finishDate=${tomorrow}&timestamp=${Date.now()}`,
-                      {
-                        headers: {
-                          "User-Agent": "Mozilla/5.0",
-                          Cookie: cookieStr,
-                          Accept: "application/json, text/plain, */*",
-                          Referer: "https://emaktab.uz/v2/user",
-                        },
-                        redirect: "follow",
-                      },
-                    );
-                    const bb = await rr.text();
-                    const dd2 = (bb.match(/"date"/g) ?? []).length;
-                    const ll2 = (bb.match(/"lessonNumber"|"lessonId"|"subject"/g) ?? []).length;
-                    parts.push(`dS:${rr.status}d${dd2}l${ll2}`);
-                    if (dd2 > 0 || ll2 > 0) {
-                      const ix2 = bb.search(/"date"/);
-                      (out as Record<string, unknown>).sample = bb.slice(Math.max(0, ix2 - 20), ix2 + 130).replace(/\s+/g, " ").slice(0, 150);
+                  const lg1 = "2524942980748797372";
+                  const lg2 = "30030826200645631";
+                  const pid = "1000007887895";
+                  const hdrs = {
+                    "User-Agent": "Mozilla/5.0",
+                    Cookie: cookieStr,
+                    Accept: "application/json, text/plain, */*",
+                    "X-Requested-With": "XMLHttpRequest",
+                    Referer: "https://emaktab.uz/userfeed",
+                  };
+                  const tries4: Array<[string, string]> = [
+                    ["sch1", `https://emaktab.uz/api/v2/persons/${pid}/groups/${lg1}/schedules?from=2026-10-19&to=2026-10-31`],
+                    ["sch2", `https://emaktab.uz/api/v2/persons/${pid}/groups/${lg2}/schedules?from=2026-10-19&to=2026-10-31`],
+                    ["tt1", `https://emaktab.uz/api/v2/edu-groups/${lg1}/timetables`],
+                    ["tt2", `https://emaktab.uz/api/v2/edu-groups/${lg2}/timetables`],
+                    ["ctx", `https://emaktab.uz/api/v2/users/me/context`],
+                    ["rol", `https://emaktab.uz/api/v2/users/me/roles`],
+                  ];
+                  for (const [lbl, uu] of tries4) {
+                    try {
+                      const rr = await fetch(uu, { headers: hdrs, redirect: "follow" });
+                      const bb = await rr.text();
+                      const dd2 = (bb.match(/"date"|"dayOfWeek"|"subject"|"lessonNumber"|"personId"|"groupId"/gi) ?? []).length;
+                      parts.push(`${lbl}:${rr.status}x${dd2}`);
+                      if (!sampled && (dd2 > 0 || (rr.status === 200 && bb.length > 20))) {
+                        sampled = true;
+                        (out as Record<string, unknown>).sample = bb.slice(0, 120).replace(/\s+/g, " ");
+                      }
+                    } catch {
+                      parts.push(`${lbl}:x`);
                     }
-                  } catch {
-                    parts.push("dS:x");
                   }
                 }
-                // api/v2 subjects/lessons oilasi (jurnal state'dagi "subjects":null → XHR to'ldiradi!)
+                // 2) Sinf rahbari markerlari — myclasses + class sahifasi
                 {
-                  const lg = "2524942980748797372";
-                  const ts = Date.now();
-                  const tries3: Array<[string, string]> = [
-                    ["su1", `https://emaktab.uz/api/v2/subjects?groupId=${lg}`],
-                    ["su2", `https://emaktab.uz/api/v2/groups/${lg}/subjects`],
-                    ["ls1", `https://emaktab.uz/api/v2/lessons?groupId=${lg}&from=${ts - 7 * 86400000}&to=${ts}`],
-                    ["ls2", `https://emaktab.uz/api/v2/groups/${lg}/lessons`],
-                    ["le1", `https://emaktab.uz/api/v2/lesson-log-entries?personId=${encodeURIComponent(result.session.active.personId)}&groupId=${lg}`],
-                  ];
-                  for (const [lbl, uu] of tries3) {
+                  for (const [lbl, uu] of [
+                    ["myc", "https://schools.emaktab.uz/v2/myclasses"],
+                    ["clz", "https://schools.emaktab.uz/v2/class?class=25249429"],
+                  ] as Array<[string, string]>) {
                     try {
                       const rr = await fetch(uu, {
-                        headers: {
-                          "User-Agent": "Mozilla/5.0",
-                          Cookie: cookieStr,
-                          Accept: "application/json, text/plain, */*",
-                          "X-Requested-With": "XMLHttpRequest",
-                          Referer: "https://emaktab.uz/journal",
-                        },
+                        headers: { "User-Agent": "Mozilla/5.0", Cookie: cookieStr, Accept: "text/html" },
                         redirect: "follow",
                       });
                       const bb = await rr.text();
-                      const dd2 = (bb.match(/"name"|subject|lesson|theme/gi) ?? []).length;
-                      parts.push(`${lbl}:${rr.status}x${dd2}`);
+                      const rc = (bb.match(/rahbar/gi) ?? []).length;
+                      parts.push(`${lbl}:${rr.status}r${rc}`);
+                      if (rc > 0 && !(out as Record<string, unknown>).rahbar) {
+                        const ix = bb.toLowerCase().indexOf("rahbar");
+                        (out as Record<string, unknown>).rahbar = bb
+                          .slice(Math.max(0, ix - 50), ix + 70)
+                          .replace(/<[^>]*>/g, " ")
+                          .replace(/\s+/g, " ")
+                          .slice(0, 110);
+                      }
                     } catch {
                       parts.push(`${lbl}:x`);
                     }
