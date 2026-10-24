@@ -151,31 +151,62 @@ export async function GET(req: NextRequest) {
             check[label] = `xato ${String(error).slice(0, 25)}`;
           }
         }
-        // Klass sahifasidan haqiqiy personIdlar (uzun ID) + ular bilan diary
+        // /marks sahifasidan schoolMemberships (HAQIQIY personId+schoolId) + diary
         {
           try {
-            const classHtml = await pageGet(
-              result.session.cookies,
-              `https://schools.emaktab.uz/v2/class?class=${encodeURIComponent(firstClassId)}`,
-            );
-            // 17-20 xonali ID'lar (personId turlari)
-            const longIds = [...new Set(classHtml.match(/\b\d{17,20}\b/g) ?? [])].slice(0, 6);
-            // JSON personId qiymatlari
-            const personIds = [...new Set([...classHtml.matchAll(/"personId"\s*:\s*"?([0-9]{6,})"?/gi)].map((m) => m[1]))].slice(0, 5);
-            check.sch = `L:${longIds.join(",").slice(0, 50)} P:${personIds.join(",").slice(0, 40)}`;
-
-            // birinchi personId bilan diary (kunlar keladimi?)
-            const tryPid = personIds[0] ?? longIds.find((x) => !x.startsWith(firstClassId)) ?? longIds[0];
-            if (tryPid) {
+            const marksHtml = await pageGet(result.session.cookies, "https://emaktab.uz/marks");
+            const marker = marksHtml.match(/"schoolMemberships"\s*:\s*/);
+            let pairs = "";
+            let realPid = "";
+            let realSid = "";
+            if (marker && marker.index !== undefined) {
+              try {
+                // balanslashgan JSON massivini topamiz (HTML qoldig'i bilan parse bo'lmaydi)
+                const startIdx = marksHtml.indexOf("[", marker.index);
+                let depth = 0, inStr = false, esc = false, endIdx = -1;
+                for (let i = startIdx; i < marksHtml.length && i < startIdx + 300000; i++) {
+                  const ch = marksHtml[i];
+                  if (inStr) {
+                    if (esc) esc = false;
+                    else if (ch === "\\") esc = true;
+                    else if (ch === '"') inStr = false;
+                    continue;
+                  }
+                  if (ch === '"') inStr = true;
+                  else if (ch === "[") depth++;
+                  else if (ch === "]") {
+                    depth--;
+                    if (depth === 0) { endIdx = i; break; }
+                  }
+                }
+                const decoded = JSON.parse(
+                  marksHtml.slice(startIdx, endIdx + 1),
+                ) as Array<Record<string, unknown>>;
+                const items = decoded
+                  .filter((x) => x && x.personId && x.schoolId)
+                  .slice(0, 4)
+                  .map((x) => `${x.personId}:${x.schoolId}${x.isOo ? "*" : ""}`);
+                pairs = items.join(",");
+                const first = decoded.find((x) => x && x.personId && x.schoolId);
+                if (first) {
+                  realPid = String(first.personId);
+                  realSid = String(first.schoolId);
+                }
+              } catch {
+                pairs = "json-xato";
+              }
+            }
+            check.sch = `M:${pairs.slice(0, 70)} S:${marker ? 1 : 0}`;
+            if (realPid) {
               const dayTs3 = Math.floor(new Date(`${today}T00:00:00+05:00`).getTime() / 1000);
-              const u3 = `https://emaktab.uz/api/v2/marks/diary?personId=${encodeURIComponent(tryPid)}&schoolId=${result.session.active.schoolId}&startDate=${dayTs3 - 7 * 24 * 3600}&finishDate=${dayTs3 + 24 * 3600 - 1}&timestamp=${Date.now()}`;
+              const u3 = `https://emaktab.uz/api/v2/marks/diary?personId=${encodeURIComponent(realPid)}&schoolId=${encodeURIComponent(realSid)}&startDate=${dayTs3 - 7 * 24 * 3600}&finishDate=${dayTs3 + 24 * 3600 - 1}&timestamp=${Date.now()}`;
               const r3 = await fetch(u3, {
                 headers: {
                   "User-Agent": "Mozilla/5.0",
                   Cookie: cookieStr,
                   Accept: "application/json, text/plain, */*",
                   "X-Requested-With": "XMLHttpRequest",
-                  Referer: "https://emaktab.uz/userfeed",
+                  Referer: "https://emaktab.uz/marks",
                 },
                 redirect: "follow",
               });
