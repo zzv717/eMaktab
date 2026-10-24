@@ -151,17 +151,16 @@ export async function GET(req: NextRequest) {
             check[label] = `xato ${String(error).slice(0, 25)}`;
           }
         }
-        // Jadval API — 5 ta variant (host muhim)
+        // Jadval API — api.emaktab.uz (to'liq API host!)
         {
           try {
             const pid = result.session.active.personId;
             const longGid = (check.gid ?? "").split(",")[0] || firstClassId;
+            const base = "https://api.emaktab.uz/v2";
             const variants: Array<[string, string]> = [
-              ["t1", `https://emaktab.uz/api/v2/edu-groups/${firstClassId}/timetables`],
-              ["t2", `https://emaktab.uz/api/v2/edu-groups/${longGid}/timetables`],
-              ["t3", `https://schools.emaktab.uz/api/v2/edu-groups/${longGid}/timetables`],
-              ["t4", `https://emaktab.uz/api/v2/edu-groups/${longGid}/timetable`],
-              ["t5", `https://emaktab.uz/api/v2/edu-groups/${firstClassId}/timetables?from=${today}&to=${today}`],
+              ["ctx", `${base}/users/me/context`],
+              ["sch", `${base}/persons/${pid}/groups/${longGid}/schedules?from=${today}&to=${today}`],
+              ["tt", `${base}/edu-groups/${longGid}/timetables`],
             ];
             const parts: string[] = [];
             for (const [lbl, uu] of variants) {
@@ -171,19 +170,20 @@ export async function GET(req: NextRequest) {
                     "User-Agent": "Mozilla/5.0",
                     Cookie: cookieStr,
                     Accept: "application/json, text/plain, */*",
-                    Referer: "https://emaktab.uz/teachers",
+                    "X-Requested-With": "XMLHttpRequest",
+                    Referer: "https://emaktab.uz/userfeed",
                   },
                   redirect: "follow",
                 });
                 const bb = await rr.text();
-                const dd = (bb.match(/subject|lessons|dayOfWeek|lessonNumber/gi) ?? []).length;
-                const sl = rr.status === 200 ? bb.slice(0, 30).replace(/[\s{}"]/g, "") : "";
-                parts.push(`${lbl}:${rr.status}x${dd}${sl}`);
+                const dd = (bb.match(/subject|lessons|dayOfWeek|personId|lessonNumber/gi) ?? []).length;
+                const sl = bb.slice(0, 28).replace(/[\s{}"]/g, "");
+                parts.push(`${lbl}:${rr.status}x${dd} ${sl}`.slice(0, 34));
               } catch {
                 parts.push(`${lbl}:x`);
               }
             }
-            check.sch = parts.join(" ").slice(0, 60);
+            check.sch = parts.join("|").slice(0, 110);
           } catch (error) {
             check.sch = `xato ${String(error).slice(0, 25)}`;
           }

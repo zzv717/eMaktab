@@ -26,6 +26,7 @@ import {
   fetchGrades,
   fetchNews,
   fetchSchedule,
+  fetchTeacherSchedule,
   fetchTeacherClasses,
   loginEmaktab,
   sessionFromCookies,
@@ -693,6 +694,128 @@ async function handleMessage(message: TelegramMessage) {
     return;
   }
 
+  // --- A'zoga login-parol biriktirish (state machine) ---
+  if (user.state === "m_attach_login") {
+    if (!text || text.startsWith("/")) {
+      await sendMessage(chatId, "Iltimos, eMaktab <b>login</b>ini matn sifatida yuboring.", {
+        replyMarkup: cancelKeyboard(),
+      });
+      return;
+    }
+    await deleteMessage(chatId, message.message_id);
+    await db
+      .update(botUsers)
+      .set({ tempLogin: text.trim(), state: "m_attach_password", updatedAt: new Date() })
+      .where(eq(botUsers.telegramId, from.id));
+    await sendMessage(
+      chatId,
+      "🔒 Endi eMaktab <b>parol</b>ini yuboring.\n\n" +
+        "⚠️ <i>Xavfsizlik uchun bu xabar avtomatik o'chiriladi va parol shifrlanib saqlanadi.</i>",
+      { replyMarkup: cancelKeyboard() },
+    );
+    return;
+  }
+
+  if (user.state === "m_attach_password") {
+    const login = user.tempLogin;
+    await deleteMessage(chatId, message.message_id);
+    type AttachCtx = { kind: "student" | "parent"; classId: string; memberId: string; name: string };
+    let ctx: AttachCtx | null = null;
+    try {
+      if (user.tempSessionEnc) ctx = JSON.parse(decryptSecret(user.tempSessionEnc)) as AttachCtx;
+    } catch {
+      ctx = null;
+    }
+    if (!login || !text || !ctx) {
+      await resetState(from.id);
+      await sendMessage(
+        chatId,
+        "⚠️ Xatolik yuz berdi (kod: A0) — jarayon ma'lumotlari topilmadi.\nQaytadan urinib ko'ring.",
+        { replyMarkup: isAuthenticated(user) ? menuFor(user) : mainMenuKeyboard(false) },
+      );
+      return;
+    }
+    const password = text;
+    const progress = await startProgress(chatId, "eMaktab bilan tekshirilmoqda");
+    const result = await loginEmaktab(login, password);
+
+    if (result.status === "ok") {
+      const fullName = result.session.fullName || ctx.name;
+      const existing = await db
+        .select()
+        .from(memberAccounts)
+        .where(
+          and(
+            eq(memberAccounts.teacherTelegramId, from.id),
+            eq(memberAccounts.kind, ctx.kind),
+            eq(memberAccounts.memberId, ctx.memberId),
+          ),
+        );
+      if (existing.length > 0) {
+        await db
+          .update(memberAccounts)
+          .set({
+            emaktabLogin: login,
+            emaktabPasswordEnc: encryptSecret(password),
+            fullName,
+            activatedAt: new Date(),
+            updatedAt: new Date(),
+          })
+          .where(eq(memberAccounts.id, existing[0].id));
+      } else {
+        await db.insert(memberAccounts).values({
+          teacherTelegramId: from.id,
+          classId: ctx.classId,
+          memberId: ctx.memberId,
+          kind: ctx.kind,
+          fullName,
+          emaktabLogin: login,
+          emaktabPasswordEnc: encryptSecret(password),
+          activatedAt: new Date(),
+        });
+      }
+      await resetState(from.id);
+      await finishProgress(chatId, progress, "Login-parol biriktirish");
+      const actCallback = ctx.kind === "parent" ? `cab:act_parents:${ctx.classId}` : `cab:act_students:${ctx.classId}`;
+      await sendLong(
+        chatId,
+        `✅ <b>${escapeHtml(ctx.name)}</b> uchun login-parol <b>saqlandi</b>!\n\n` +
+          `Keyingi safar “Faollashtirish” tugmasi bosilganda shu login orqali avtomatik kiriladi.`,
+        kb([
+          [{ text: "🔁 Faollashtirishni davom ettirish", callback_data: actCallback }],
+          [{ text: "⬅️ Sinf kabineti", callback_data: `cab:refresh:${ctx.classId}` }],
+          [{ text: "🏠 Asosiy menyu", callback_data: "menu:home" }],
+        ]),
+      );
+      return;
+    }
+
+    if (result.status === "captcha_required") {
+      await failProgress(chatId, progress, "Login-parol biriktirish");
+      await resetState(from.id);
+      await sendMessage(
+        chatId,
+        "⚠️ eMaktab captcha so'radi — hozircha avtomatik kira olmadik.\n" +
+          "Keyinroq “Login-parol biriktiring” tugmasi orqali qayta urinib ko'ring.",
+        { replyMarkup: isAuthenticated(user) ? menuFor(user) : mainMenuKeyboard(false) },
+      );
+      return;
+    }
+
+    // Login/parol noto'g'ri — qaytadan login so'raymiz.
+    await failProgress(chatId, progress, "Login-parol biriktirish");
+    await db
+      .update(botUsers)
+      .set({ state: "m_attach_login", tempLogin: null, updatedAt: new Date() })
+      .where(eq(botUsers.telegramId, from.id));
+    await sendMessage(
+      chatId,
+      `❌ ${escapeHtml(result.message)}\n\nQaytadan eMaktab <b>login</b>ini yuboring (yoki /cancel bilan bekor qiling).`,
+      { replyMarkup: cancelKeyboard() },
+    );
+    return;
+  }
+
   // --- Login jarayoni (state machine) ---
   if (user.state === "awaiting_login") {
     if (!text || text.startsWith("/")) {
@@ -894,11 +1017,18 @@ async function sendTeacherDayView(chatId: number, user: BotUser, dayShift: numbe
   try {
     const dayKey = shiftDayKey(tashkentDayKey(), dayShift);
     const nextKey = shiftDayKey(dayKey, 1);
-    const schedule = await withSession(user, (s) => fetchSchedule(s, dayKey, nextKey));
+    const schedule = await withSession(user, (s) =>
+      fetchTeacherSchedule(s, dayKey, nextKey, user.fullName),
+    );
+    // Bitta sinf bo'lsa — darslarga sinf nomini qo'shamiz.
+    const classes = await withSession(user, (s) => getTeacherClasses(user, s)).catch(() => [] as ClassLink[]);
     const day = schedule.find((d) => d.date === dayKey);
+    const lessons = (day?.lessons ?? []).map((l) =>
+      l.groupName || classes.length !== 1 ? l : { ...l, groupName: classes[0].className },
+    );
     const title = dayShift === 0 ? "Bugungi darslaringiz" : "Ertangi darslaringiz";
     const text = formatTeacherDay(
-      day?.lessons ?? [],
+      lessons,
       dayKey,
       title,
       personLabel(user),
@@ -1070,102 +1200,159 @@ async function runActivation(chatId: number, user: BotUser, kind: "student" | "p
     const info = await getClassInfo(user, classId);
     const members = kind === "student" ? info.students : info.parents;
 
-    // 1. Bazada saqlangan login/parollar (oldingi faollashtirishlardan).
-    const saved = await db
+    // 1. Bazada saqlangan (biriktirilgan) login/parollar.
+    const savedAll = await db
       .select()
       .from(memberAccounts)
       .where(and(eq(memberAccounts.teacherTelegramId, user.telegramId), eq(memberAccounts.kind, kind)));
+    const saved = savedAll.filter((s) => !s.classId || s.classId === classId);
+    const savedByMember = new Map(saved.filter((s) => s.memberId).map((s) => [s.memberId as string, s]));
 
     const okNames: string[] = [];
-    const failLines: string[] = [];
+    const failMembers: Array<{ memberId: string; fullName: string; reason: string }> = [];
     const doneMembers = new Set<string>();
+    const triedLogins = new Set<string>();
 
     let processed = 0;
-    const total = Math.max(members.length, saved.length);
+    const total = members.length;
 
-    // 2. Saqlangan akkauntlarni qayta tekshirish (login bo'lib kirib chiqamiz).
-    for (const acc of saved) {
+    const step = async () => {
       processed++;
       await updateProgress(
         chatId,
         progress,
         `⏳ <b>${escapeHtml(kindLabel)} faollashtirilmoqda...</b>\n${processed}/${total}\n\n<i>Iltimos kuting...</i>`,
       );
-      try {
-        const password = decryptSecret(acc.emaktabPasswordEnc!);
-        const res = await loginEmaktab(acc.emaktabLogin!, password);
-        if (res.status === "ok") {
-          okNames.push(acc.fullName || acc.emaktabLogin || acc.memberId || "?");
-          if (acc.memberId) doneMembers.add(acc.memberId);
-          await db
-            .update(memberAccounts)
-            .set({ activatedAt: new Date(), updatedAt: new Date() })
-            .where(eq(memberAccounts.id, acc.id));
-        } else {
-          failLines.push(`${acc.fullName || acc.emaktabLogin}: ${res.status === "invalid_credentials" ? res.message : "kirib bo'lmadi"}`);
+    };
+
+    // 2. Har bir a'zo: avval biriktirilgan login/parol bilan kirib ko'ramiz.
+    for (const m of members) {
+      await step();
+      const acc = savedByMember.get(m.memberId);
+      if (acc?.emaktabLogin && acc.emaktabPasswordEnc) {
+        triedLogins.add(acc.emaktabLogin);
+        try {
+          const password = decryptSecret(acc.emaktabPasswordEnc);
+          const res = await loginEmaktab(acc.emaktabLogin, password);
+          if (res.status === "ok") {
+            okNames.push(m.fullName);
+            doneMembers.add(m.memberId);
+            await db
+              .update(memberAccounts)
+              .set({ activatedAt: new Date(), updatedAt: new Date() })
+              .where(eq(memberAccounts.id, acc.id));
+            continue;
+          }
+          failMembers.push({
+            memberId: m.memberId,
+            fullName: m.fullName,
+            reason: res.status === "invalid_credentials" ? "login/parol ishlamayapti" : "kirib bo'lmadi",
+          });
+        } catch (error) {
+          failMembers.push({
+            memberId: m.memberId,
+            fullName: m.fullName,
+            reason: error instanceof Error ? error.message.slice(0, 40) : "xatolik",
+          });
         }
-      } catch (error) {
-        failLines.push(`${acc.fullName || acc.emaktabLogin}: ${error instanceof Error ? error.message : "xatolik"}`);
+        continue;
       }
+      // Biriktirilgan login yo'q — keyin (3-bosqichda) eMaktab sahifasidagi
+      // ochiq login/parollar bilan urinamiz; bo'lmasa "biriktirish" taklif qilamiz.
     }
 
-    // 3. eMaktab sahifasidagi login/parollar bilan yangi akkauntlarni faollashtirish.
-    //    Har bir login bilan kirib, eMaktabdagi ismni olamiz va shu ism bilan saqlaymiz.
-    const usedLogins = new Set(saved.map((s) => s.emaktabLogin));
-    let credentialsMissing = info.credentials.length === 0;
-
+    // 3. eMaktab sahifasidagi ochiq login/parollar bilan yangi akkauntlar.
     for (const cred of info.credentials) {
-      if (usedLogins.has(cred.login)) continue;
-      processed++;
-      await updateProgress(
-        chatId,
-        progress,
-        `⏳ <b>${escapeHtml(kindLabel)} faollashtirilmoqda...</b>\n${processed}/${total}\n\n<i>Iltimos kuting...</i>`,
-      );
+      if (triedLogins.has(cred.login)) continue;
+      triedLogins.add(cred.login);
+      await step();
       try {
         const res = await loginEmaktab(cred.login, cred.password);
         if (res.status === "ok") {
           const name = res.session.fullName || cred.login;
-          okNames.push(name);
           const matched = members.find((m) => normalizeName(m.fullName) === normalizeName(name));
-          if (matched) doneMembers.add(matched.memberId);
-          await db
-            .insert(memberAccounts)
-            .values({
-              teacherTelegramId: user.telegramId,
-              classId: info.classId,
-              memberId: matched?.memberId ?? null,
-              kind,
-              fullName: name,
-              emaktabLogin: cred.login,
-              emaktabPasswordEnc: encryptSecret(cred.password),
-              activatedAt: new Date(),
-            })
-            .onConflictDoNothing();
-          usedLogins.add(cred.login);
-        } else {
-          failLines.push(
-            `${cred.login}: ${res.status === "invalid_credentials" ? res.message : "kirib bo'lmadi"}`,
-          );
+          if (matched) {
+            okNames.push(matched.fullName);
+            doneMembers.add(matched.memberId);
+          } else {
+            okNames.push(name);
+          }
+          const existing = matched
+            ? await db
+                .select()
+                .from(memberAccounts)
+                .where(
+                  and(
+                    eq(memberAccounts.teacherTelegramId, user.telegramId),
+                    eq(memberAccounts.kind, kind),
+                    eq(memberAccounts.memberId, matched.memberId),
+                  ),
+                )
+            : [];
+          if (existing.length > 0) {
+            await db
+              .update(memberAccounts)
+              .set({
+                emaktabLogin: cred.login,
+                emaktabPasswordEnc: encryptSecret(cred.password),
+                fullName: name,
+                activatedAt: new Date(),
+                updatedAt: new Date(),
+              })
+              .where(eq(memberAccounts.id, existing[0].id));
+          } else {
+            await db
+              .insert(memberAccounts)
+              .values({
+                teacherTelegramId: user.telegramId,
+                classId: info.classId,
+                memberId: matched?.memberId ?? null,
+                kind,
+                fullName: name,
+                emaktabLogin: cred.login,
+                emaktabPasswordEnc: encryptSecret(cred.password),
+                activatedAt: new Date(),
+              })
+              .onConflictDoNothing();
+          }
         }
       } catch (error) {
-        failLines.push(`${cred.login}: ${error instanceof Error ? error.message : "xatolik"}`);
+        // bir xato — davom etamiz
+        void error;
       }
     }
 
-    // 4. Hech qanday parol topilmagan a'zolar haqida halol xabar.
+    // 4. Hali kira olmaganlar: ular uchun "login-parol biriktiring" tugmalari.
     for (const m of members) {
       if (!doneMembers.has(m.memberId)) {
-        failLines.push(`${m.fullName}: login/parol topilmadi`);
+        const already = failMembers.find((f) => f.memberId === m.memberId);
+        if (!already) {
+          failMembers.push({ memberId: m.memberId, fullName: m.fullName, reason: "login/parol topilmadi" });
+        }
       }
     }
-    if (credentialsMissing && saved.length === 0) {
-      failLines.push("eMaktab sinf sahifasida login/parollar ochiq emas");
-    }
 
-    const report = formatActivationReport(kindLabel, okNames, failLines, credentialsMissing && okNames.length === 0);
+    const allDone = members.length > 0 && failMembers.length === 0;
+    const report = formatActivationReport(kindLabel, okNames, failMembers, members.length);
     await finishProgress(chatId, progress, `${kindLabel} faollashtirish`);
-    await sendLong(chatId, report, classCabinetKeyboard(classId));
+
+    // Kirilmaganlar ostida "🔑 Login-parol biriktiring" tugmalari.
+    const kindCode = kind === "parent" ? "p" : "s";
+    const actCallback = kind === "parent" ? `cab:act_parents:${classId}` : `cab:act_students:${classId}`;
+    const rows: Array<Array<{ text: string; callback_data: string }>> = [];
+    for (const f of failMembers.slice(0, 30)) {
+      rows.push([
+        {
+          text: `🔑 ${f.fullName.slice(0, 40)} — Login-parol biriktiring`,
+          callback_data: `ma:${kindCode}:${classId}:${f.memberId}`,
+        },
+      ]);
+    }
+    rows.push([{ text: "🔁 Qaytadan tekshirish", callback_data: actCallback }]);
+    rows.push([{ text: "⬅️ Sinf kabineti", callback_data: `cab:refresh:${classId}` }]);
+    rows.push([{ text: "🏠 Asosiy menyu", callback_data: "menu:home" }]);
+    await sendLong(chatId, report, kb(rows));
+    void allDone;
   } catch (error) {
     await failProgress(chatId, progress, `${kindLabel} faollashtirish`);
     await sendEmaktabError(chatId, user, error);
@@ -1350,6 +1537,38 @@ async function handleCallback(cb: TelegramCallbackQuery) {
       await failProgress(chatId, progress, "Ota-onalar ro'yxati");
       await sendEmaktabError(chatId, fresh, error);
     }
+    return;
+  }
+
+  if (data.startsWith("ma:")) {
+    // Login-parol biriktirish: ma:{s|p}:{classId}:{memberId}
+    const parts = data.split(":");
+    const kind: "student" | "parent" = parts[1] === "p" ? "parent" : "student";
+    const classId = parts[2] ?? "";
+    const memberId = parts[3] ?? "";
+    let memberName = "a'zo";
+    try {
+      const info = await getClassInfo(fresh, classId);
+      const members = kind === "student" ? info.students : info.parents;
+      memberName = members.find((m) => m.memberId === memberId)?.fullName ?? memberName;
+    } catch {
+      // ism topilmasa — umumiy nom bilan davom etamiz
+    }
+    await db
+      .update(botUsers)
+      .set({
+        state: "m_attach_login",
+        tempLogin: null,
+        tempSessionEnc: encryptSecret(JSON.stringify({ kind, classId, memberId, name: memberName })),
+        updatedAt: new Date(),
+      })
+      .where(eq(botUsers.telegramId, fresh.telegramId));
+    await showView(
+      cb,
+      `🔑 <b>${escapeHtml(memberName)}</b> uchun eMaktab <b>login</b>ini yuboring:\n\n` +
+        `<i>Keyin parolni kiritasiz. Ular shifrlanib saqlanadi va keyingi faollashtirishda avtomatik ishlatiladi.</i>`,
+      cancelKeyboard(),
+    );
     return;
   }
 

@@ -834,8 +834,9 @@ async function apiGet(
   cookies: Record<string, string>,
   path: string,
   params?: Record<string, string | number>,
+  base: string = WEB_BASE,
 ): Promise<{ status: number; text: string; contentType: string }> {
-  const url = new URL(WEB_BASE + path);
+  const url = new URL(base + path);
   if (params) {
     for (const [k, v] of Object.entries(params)) url.searchParams.set(k, String(v));
   }
@@ -1539,10 +1540,11 @@ function lessonTime(hours?: DiaryLesson["hours"], fallbackStart?: string | null,
 }
 
 function lessonFromDiary(raw: DiaryLesson): Lesson {
+  const rawRec = raw as unknown as Record<string, unknown>;
   const subject =
     typeof raw.subject === "string"
       ? raw.subject
-      : raw.subject?.name || "Noma'lum fan";
+      : raw.subject?.name || (rawRec.subjectName as string | undefined) || "Noma'lum fan";
 
   let teacher: string | null = null;
   if (typeof raw.teacher === "string" && raw.teacher) teacher = raw.teacher;
@@ -1570,14 +1572,14 @@ function lessonFromDiary(raw: DiaryLesson): Lesson {
   else if (raw.eduGroup && typeof raw.eduGroup === "object") groupName = raw.eduGroup.name || null;
 
   return {
-    number: Number(raw.number) || 0,
+    number: Number(raw.number ?? rawRec.lessonNumber ?? rawRec.period) || 0,
     subject,
     teacher,
     groupName,
     theme: raw.theme || null,
     startTime: time.start,
     endTime: time.end,
-    room: raw.place || null,
+    room: raw.place || (rawRec.room as string | undefined) || (rawRec.cabinet as string | undefined) || (rawRec.roomNumber as string | undefined) || null,
     isCanceled: Boolean(raw.isCanceled),
     homework: raw.homework?.text?.trim() || null,
     homeworkDone: Boolean(raw.homework?.isCompleted),
@@ -1747,42 +1749,159 @@ async function resolveLongGroupId(cookies: Record<string, string>, shortGid: str
   }
 }
 
+/**
+ * Yassi darslar ro'yxati (schedules/timetables API) → DaySchedule[].
+ * Kun: date/lessonDate (ISO yoki timestamp) bo'lmasa — dayOfWeek'dan (0=Dushanba).
+ */
+export function scheduleFromFlatLessons(
+  items: Array<Record<string, unknown>>,
+  fromDay: string,
+  toDay: string,
+): DaySchedule[] {
+  const range: string[] = [];
+  for (let d = fromDay; d <= toDay; d = shiftDayKey(d, 1)) range.push(d);
+  const byDate = new Map<string, Lesson[]>();
+  for (const raw of items) {
+    const lesson = lessonFromDiary(raw as unknown as DiaryLesson);
+    let date = "";
+    const dRaw = raw.date ?? raw.lessonDate ?? raw.dayDate;
+    if (typeof dRaw === "string" && /^\d{4}-\d{2}-\d{2}/.test(dRaw)) date = dRaw.slice(0, 10);
+    else if (dRaw !== undefined && dRaw !== null && dRaw !== "") {
+      const n = Number(dRaw);
+      if (Number.isFinite(n) && n > 1e8) date = tashkentDayKeyFromTs(n > 1e12 ? n / 1000 : n);
+    }
+    if (!date) {
+      const dow = Number(raw.dayOfWeek ?? raw.day_of_week ?? raw.weekDay);
+      if (!Number.isFinite(dow)) continue;
+      // API kundalik kelishuv: 0=Dushanba ... 6=Yakshanba (dayWeekday ham shunday).
+      date = range.find((d) => dayWeekday(d) === dow) ?? "";
+    }
+    if (!date || date < fromDay || date > toDay) continue;
+    if (!byDate.has(date)) byDate.set(date, []);
+    byDate.get(date)!.push(lesson);
+  }
+  return [...byDate.entries()]
+    .map(([date, lessons]) => ({
+      date,
+      weekday: dayWeekday(date),
+      lessons: lessons.sort((a, b) => a.number - b.number),
+    }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+}
+
+/** schedules/timetables API javobini DaySchedule[] ga o'giradi (har xil shakllar). */
+function scheduleFromApiPayload(data: unknown, fromDay: string, toDay: string): DaySchedule[] {
+  if (!data) return [];
+  if (Array.isArray(data)) {
+    if (data.length === 0) return [];
+    if (data[0] && typeof data[0] === "object" && "lessons" in (data[0] as object)) {
+      // kunlar ko'rinishidagi massiv
+      return scheduleFromDiaryDays(data as DiaryDay[]);
+    }
+    return scheduleFromFlatLessons(data as Array<Record<string, unknown>>, fromDay, toDay);
+  }
+  const rec = data as Record<string, unknown>;
+  if (Array.isArray(rec.days) && rec.days.length > 0) {
+    return scheduleFromDiaryDays(rec.days as DiaryDay[]);
+  }
+  for (const key of ["schedules", "lessons", "data"]) {
+    const arr = rec[key];
+    if (Array.isArray(arr) && arr.length > 0) {
+      return scheduleFromFlatLessons(arr as Array<Record<string, unknown>>, fromDay, toDay);
+    }
+  }
+  return [];
+}
+
+const API_HOST = "https://api.emaktab.uz";
+
+/**
+ * O'qituvchi darslari: berilgan kundagi darslar.
+ * 1) api.emaktab.uz/v2 schedules + timetables (to'liq API host — boshqa yo'llar 404 edi)
+ * 2) emaktab.uz/api/v2 (eski urinishlar)
+ * 3) marks/diary
+ * 4) bosh sahifa state
+ */
 export async function fetchSchedule(
   session: EmaktabSession,
   fromDay: string,
   toDay: string,
 ): Promise<DaySchedule[]> {
-  // 1-urinish: schedules endpointi — UZUN gid bilan (qisqa id 404 beradi!).
+  const gids = [session.active.groupId].filter(Boolean) as string[];
   if (session.active.groupId) {
-    try {
-      const longGid =
-        (await resolveLongGroupId(session.cookies, session.active.groupId)) ||
-        session.active.groupId;
-      const res = await apiGet(
-        session.cookies,
-        `/api/v2/persons/${session.active.personId}/groups/${longGid}/schedules`,
-        { from: fromDay, to: toDay },
-      );
-      if (res.status === 200) {
-        const data = parseJson(res.text) as { days?: DiaryDay[] } | DiaryDay[] | null;
-        const days = Array.isArray(data) ? data : data?.days;
-        if (Array.isArray(days) && days.length > 0) {
-          return scheduleFromDiaryDays(days);
+    const longGid = await resolveLongGroupId(session.cookies, session.active.groupId);
+    if (longGid && !gids.includes(longGid)) gids.push(longGid);
+  }
+  const pid = session.active.personId;
+
+  // 1/2-urinish: schedules va timetables — ikkala hostda (api.emaktab.uz to'liq API bo'lishi mumkin).
+  for (const base of [`${API_HOST}/v2`, `${WEB_BASE}/api/v2`]) {
+    for (const gid of gids) {
+      try {
+        if (pid) {
+          const res = await apiGet(
+            session.cookies,
+            `/persons/${pid}/groups/${gid}/schedules`,
+            { from: fromDay, to: toDay },
+            base,
+          );
+          if (res.status === 200) {
+            const schedule = scheduleFromApiPayload(parseJson(res.text), fromDay, toDay);
+            if (schedule.length > 0) return schedule;
+          }
         }
+        // timetables — haftalik shablon (dayOfWeek bo'yicha).
+        const res2 = await apiGet(session.cookies, `/edu-groups/${gid}/timetables`, undefined, base);
+        if (res2.status === 200) {
+          const schedule = scheduleFromApiPayload(parseJson(res2.text), fromDay, toDay);
+          if (schedule.length > 0) return schedule;
+        }
+      } catch {
+        // api.emaktab.uz hali tekshirilmagan — xatoni yutamiz, diary bosqichida
+        // haqiqiy sessiya tugasa EmaktabAuthError baribir tashlanadi.
       }
-    } catch (error) {
-      if (error instanceof EmaktabAuthError) throw error;
     }
   }
 
-  // 2-urinish: diary.
+  // 3-urinish: diary.
   const days = await fetchDiaryDays(session, fromDay, toDay);
   const schedule = scheduleFromDiaryDays(days);
   if (schedule.length > 0) return schedule;
 
-  // 3-urinish: bosh sahifa state.
+  // 4-urinish: bosh sahifa state.
   const state = await fetchStartState(session.cookies);
   return scheduleFromStartState(state, session.active.personId);
+}
+
+/**
+ * O'qituvchining O'Z darslari: boshqa o'qituvchilarning darslarini saralaydi
+ * (ism ma'lum bo'lsa). Ism yozuvlari bo'lmasa — jadval o'zgarishsiz qaytadi.
+ */
+export async function fetchTeacherSchedule(
+  session: EmaktabSession,
+  fromDay: string,
+  toDay: string,
+  teacherName?: string | null,
+): Promise<DaySchedule[]> {
+  const schedule = await fetchSchedule(session, fromDay, toDay);
+  if (!teacherName || schedule.length === 0) return schedule;
+  const tokens = teacherName
+    .toLowerCase()
+    .replace(/['\u2019\u2018\u02BB\u02BC]/g, "")
+    .split(/\s+/)
+    .filter((t) => t.length >= 4);
+  if (tokens.length === 0) return schedule;
+  const hasTeacherInfo = schedule.some((d) => d.lessons.some((l) => (l.teacher ?? "").trim().length > 0));
+  if (!hasTeacherInfo) return schedule;
+  const matches = (t: string | null) => {
+    if (!t) return true; // ism yozilmagan darslar — yashirmaymiz
+    const norm = t.toLowerCase().replace(/['\u2019\u2018\u02BB\u02BC]/g, "");
+    return tokens.some((tok) => norm.includes(tok));
+  };
+  return schedule.map((d) => ({
+    ...d,
+    lessons: d.lessons.filter((l) => matches(l.teacher)),
+  }));
 }
 
 /** So'nggi baholarni oladi (oxirgi `days` kun). */
@@ -2011,35 +2130,68 @@ export async function fetchTeacherClasses(session: EmaktabSession): Promise<Clas
   return out;
 }
 
-function extractMembersByUlClass(html: string, ulClass: string): ClassMember[] {
-  const out: ClassMember[] = [];
-  const seen = new Set<string>();
-  const ulRe = new RegExp(`<ul[^>]*class="[^"]*${ulClass}[^"]*"[^>]*>([\\s\\S]*?)<\\/ul>`, "i");
-  const ulM = html.match(ulRe);
-  if (!ulM) return out;
-  for (const a of extractAnchors(ulM[1])) {
-    const m = a.href.match(/user\?user=([0-9]+)/);
-    if (!m) continue;
-    const fullName = a.title || a.text;
-    if (!fullName || seen.has(m[1])) continue;
-    seen.add(m[1]);
-    out.push({ memberId: m[1], fullName });
-  }
-  return out;
+// "Foydalanuvchi sahifasiga o'ting" kabi amal-havolalar matni — ism EMAS.
+const GENERIC_LINK_TEST =
+  /sahifasiga|foydalanuvchi|ko['\u2019]?rish|kirish|batafsil|tahrirlash|o['\u2019]?chirish|faollash|o['\u2019]?ting|malumot|ma['\u2019]lumot|\u2192|\u203a|\u00ab|\u00bb|\.\.\./i;
+const GENERIC_LINK_GI =
+  /sahifasiga|foydalanuvchi|ko['\u2019]?rish|kirish|batafsil|tahrirlash|o['\u2019]?chirish|faollash|o['\u2019]?ting|malumot|ma['\u2019]lumot|\u2192|\u203a|\u00ab|\u00bb|\.\.\./gi;
+
+export function looksLikeName(s: string | undefined | null): boolean {
+  if (!s) return false;
+  const t = s.trim();
+  if (t.length < 3 || t.length > 90) return false;
+  if (GENERIC_LINK_TEST.test(t)) return false;
+  if (/^[\d\s+()\-.,;/]+$/.test(t)) return false;
+  return /[A-Za-z\u0400-\u04FF\u02BB\u02BC'\u2019]/.test(t);
 }
 
-function extractAllUserLinks(html: string): ClassMember[] {
-  const out: ClassMember[] = [];
-  const seen = new Set<string>();
-  for (const a of extractAnchors(html)) {
-    const m = a.href.match(/user\?user=([0-9]+)/);
-    if (!m) continue;
-    const fullName = a.title || a.text;
-    if (!fullName || seen.has(m[1])) continue;
-    seen.add(m[1]);
-    out.push({ memberId: m[1], fullName });
+function bestName(...candidates: Array<string | undefined | null>): string {
+  for (const c of candidates) {
+    if (looksLikeName(c)) return (c as string).trim();
   }
-  return out;
+  return "";
+}
+
+/** Satr (li/tr) matnidan ismni tiklash: amal-havolalar matnini tashlab qolganidan ism. */
+function rowNameFallback(rowHtml: string): string {
+  const cleaned = stripTags(rowHtml)
+    .replace(/Foydalanuvchi sahifasiga o['\u2019]?ting/gi, " ")
+    .replace(GENERIC_LINK_GI, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return bestName(cleaned);
+}
+
+function memberFromAnchors(html: string): ClassMember[] {
+  const byId = new Map<string, ClassMember>();
+  const rows = html.match(/<li\b[^>]*>[\s\S]*?<\/li>|<tr\b[^>]*>[\s\S]*?<\/tr>/gi) ?? [html];
+  for (const row of rows) {
+    const rowName = rowNameFallback(row);
+    for (const a of extractAnchors(row)) {
+      const m = a.href.match(/user\?user=([0-9]+)/);
+      if (!m) continue;
+      const name = bestName(a.title, a.text, rowName);
+      const prev = byId.get(m[1]);
+      if (prev) {
+        // Dublikat: nomli variant ustunlik qiladi ("Foydalanuvchi sahifasiga o'ting" emas!)
+        if (name && !looksLikeName(prev.fullName)) prev.fullName = name;
+        continue;
+      }
+      byId.set(m[1], { memberId: m[1], fullName: name || `Noma'lum (#${m[1]})` });
+    }
+  }
+  return [...byId.values()];
+}
+
+function extractMembersByUlClass(html: string, ulClass: string): ClassMember[] {
+  const ulRe = new RegExp(`<ul[^>]*class="[^"]*${ulClass}[^"]*"[^>]*>([\\s\\S]*?)<\\/ul>`, "i");
+  const ulM = html.match(ulRe);
+  if (!ulM) return [];
+  return memberFromAnchors(ulM[1]);
+}
+
+export function extractAllUserLinks(html: string): ClassMember[] {
+  return memberFromAnchors(html);
 }
 
 function extractCredentials(html: string): ClassCredentials[] {
@@ -2113,8 +2265,9 @@ export async function fetchClassMembers(
       const html = await pageGet(session.cookies, `${base}&view=members&group=${group}`);
       const members = extractAllUserLinks(html);
       if (group === "parents") {
-        const staffIds = new Set(staff.map((s) => s.memberId));
-        parents = members.filter((m) => !staffIds.has(m.memberId));
+        // O'quvchi va xodimlar havolalari ("Foydalanuvchi sahifasiga o'ting") ota-ona EMAS.
+        const excludeIds = new Set([...students, ...staff].map((s) => s.memberId));
+        parents = members.filter((m) => !excludeIds.has(m.memberId));
       } else if (students.length === 0 && members.length > 0) {
         students = members;
       }
