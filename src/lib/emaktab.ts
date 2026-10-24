@@ -1476,7 +1476,7 @@ async function buildSession(
 // Kunlik kundalik (marks/diary) — baholar + darslar + uy vazifalari
 // ---------------------------------------------------------------------------
 
-type DiaryLesson = {
+export type DiaryLesson = {
   number?: number;
   place?: string | null;
   startTime?: string | null;
@@ -1497,14 +1497,14 @@ type DiaryLesson = {
   comment?: string | null;
 };
 
-type DiaryDay = {
+export type DiaryDay = {
   date?: string | number;
   lessons?: DiaryLesson[];
   marks?: Array<Record<string, unknown>>;
   hasImportantWork?: boolean;
 };
 
-async function fetchDiaryDays(
+export async function fetchDiaryDays(
   session: EmaktabSession,
   fromDay: string,
   toDay: string,
@@ -2023,6 +2023,10 @@ export async function fetchNews(session: EmaktabSession, limit = 50): Promise<Ne
 export interface ClassLink {
   classId: string;
   className: string;
+  /** TEACHERV2 state'dan: aynan shu sinf rahbarimi (dars o'tadigan sinf emas). */
+  isClassTeacher?: boolean;
+  /** O'qituvchi shu sinfda o'tadigan fanlar nomlari (TEACHERV2 journal[]). */
+  subjects?: string[];
 }
 
 export interface ClassMember {
@@ -2108,6 +2112,84 @@ function extractAnchors(html: string): HtmlAnchor[] {
     });
   }
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// TEACHERV2 (emaktab.uz/teachers sahifasi state'i):
+//   { groups: { "groups": [ { id, name, isClassTeacher, journal: [{subjectName}...] } ] } }
+// — sinf rahbari va fanlar haqida haqiqiy ma'lumot.
+// ---------------------------------------------------------------------------
+export interface TeacherGroup {
+  classId: string;
+  className: string;
+  isClassTeacher: boolean;
+  subjects: string[];
+}
+
+export function extractTeacherGroups(html: string): TeacherGroup[] {
+  const out: TeacherGroup[] = [];
+  const marker = html.search(/TEACHERV2__INITIAL/);
+  if (marker < 0) return out;
+  const gStart = html.indexOf('{"groups":[', marker);
+  if (gStart < 0) return out;
+  let depth = 0;
+  let inStr = false;
+  let esc = false;
+  let endIdx = -1;
+  for (let i = gStart; i < html.length && i < gStart + 400000; i++) {
+    const ch = html[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (ch === "\\") esc = true;
+      else if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') inStr = true;
+    else if (ch === "{") depth++;
+    else if (ch === "}") {
+      depth--;
+      if (depth === 0) {
+        endIdx = i;
+        break;
+      }
+    }
+  }
+  if (endIdx <= gStart) return out;
+  try {
+    const parsed = JSON.parse(html.slice(gStart, endIdx + 1)) as {
+      groups?: Array<Record<string, unknown>>;
+    };
+    for (const g of parsed.groups ?? []) {
+      const id = String(g.id ?? "").trim();
+      const name = String(g.name ?? "").trim();
+      if (!id || !name) continue;
+      const subjects: string[] = [];
+      const journal = Array.isArray(g.journal) ? g.journal : [];
+      for (const j of journal) {
+        const rec = j as Record<string, unknown>;
+        const sn = typeof rec?.subjectName === "string" ? rec.subjectName.trim() : "";
+        if (sn && !subjects.includes(sn)) subjects.push(sn);
+      }
+      out.push({
+        classId: id,
+        className: name,
+        isClassTeacher: g.isClassTeacher === true,
+        subjects,
+      });
+    }
+  } catch {
+    // JSON buzilgan — bo'sh qaytamiz
+  }
+  return out;
+}
+
+export async function fetchTeacherGroups(session: EmaktabSession): Promise<TeacherGroup[]> {
+  try {
+    const html = await pageGet(session.cookies, `${WEB_BASE}/teachers`);
+    return extractTeacherGroups(html);
+  } catch {
+    return [];
+  }
 }
 
 /**

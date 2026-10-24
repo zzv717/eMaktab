@@ -24,6 +24,7 @@ import {
   scheduleFromDiaryDays,
   scheduleFromFlatLessons,
   extractAllUserLinks,
+  extractTeacherGroups,
   looksLikeName,
   shiftDayKey,
   tashkentDayKey,
@@ -283,6 +284,23 @@ check("looksLikeName: ko'rish rad", !looksLikeName("Ko'rish"), true);
   check("flat: matematika fan/room", fri?.lessons[0]?.subject === "Matematika" && fri?.lessons[0]?.room === "12", fri?.lessons[0]);
   const wed = days.find((d) => d.date === "2026-10-21");
   check("flat: dayOfWeek=2 → chorshanba (21-oktabr)", wed?.weekday === 2 && wed?.lessons[0]?.subject === "Fizika" && wed?.lessons[0]?.startTime === "08:30", wed);
+}
+
+// TEACHERV2 state — sinf rahbari + fanlar
+{
+  const html = `x <script>window.__TEACHERV2__INITIAL__STATE__ = { groups: {"groups":[
+    {"id":"2524942980748797372","name":"1-A","parallel":1,"isClassTeacher":true,
+     "journal":[{"subjectId":"185","subjectName":"Alifbe"},{"subjectId":"186","subjectName":"Matematika"}]},
+    {"id":"30030826200645631","name":"5-B","parallel":5,"isClassTeacher":false,
+     "journal":[{"subjectId":"187","subjectName":"Alifbe"}]}
+  ]}};</script>`;
+  const groups = extractTeacherGroups(html);
+  check("TEACHERV2: 2 guruh", groups.length === 2, groups.length);
+  check("TEACHERV2: 1-A rahbar", groups[0]?.isClassTeacher === true && groups[0]?.className === "1-A", groups[0]);
+  check("TEACHERV2: 5-B rahbar EMAS", groups[1]?.isClassTeacher === false, groups[1]);
+  check("TEACHERV2: fanlar (Alifbe, Matematika)", groups[0]?.subjects.join(",") === "Alifbe,Matematika", groups[0]?.subjects);
+  check("TEACHERV2: id string (katta son)", groups[0]?.classId === "2524942980748797372", groups[0]?.classId);
+  check("TEACHERV2: marker yo'q → bo'sh", extractTeacherGroups("<html></html>").length === 0);
 }
 
 console.log(`\nNatija: ${passed} o'tdi, ${failed} yiqildi`);

@@ -1,7 +1,67 @@
 // Minimal Telegram Bot API client built on top of global fetch.
 // No external SDK needed – we only use a handful of methods.
 
+import { and, eq, inArray, ne } from "drizzle-orm";
+import { db } from "@/db";
+import { botMessages } from "@/db/schema";
+
 const API_BASE = "https://api.telegram.org";
+
+// ---------------------------------------------------------------------------
+// Xabarni tozalash oqimi: har bir yangi so'rov (update) o'z oqimiga ega;
+// yangi so'rov boshlanganda — faqat OLDINGI so'rovga tegishli xabarlar o'chadi.
+// ---------------------------------------------------------------------------
+let currentFlow = "0";
+const keepIds = new Set<number>();
+
+export function beginFlow(flow: string | number, keep: number[] = []) {
+  currentFlow = String(flow);
+  keepIds.clear();
+  for (const id of keep) keepIds.add(id);
+}
+
+async function trackMessage(chatId: number, messageId: number) {
+  try {
+    if (!Number.isFinite(messageId)) return;
+    const existing = await db
+      .select({ id: botMessages.id })
+      .from(botMessages)
+      .where(and(eq(botMessages.chatId, chatId), eq(botMessages.messageId, messageId)));
+    if (existing.length > 0) {
+      await db
+        .update(botMessages)
+        .set({ flow: currentFlow })
+        .where(eq(botMessages.id, existing[0].id));
+    } else {
+      await db.insert(botMessages).values({ chatId, messageId, flow: currentFlow });
+    }
+  } catch {
+    // tracking xatosi asosiy oqimni buzmasin
+  }
+}
+
+/** Eski oqim xabarlarini o'chiradi; joriy oqimniki va saqlanadiganlar qoladi. */
+export async function cleanupPreviousFlow(chatId: number) {
+  try {
+    const rows = await db.select().from(botMessages).where(eq(botMessages.chatId, chatId));
+    const old = rows.filter((r) => r.flow !== currentFlow && !keepIds.has(Number(r.messageId)));
+    for (const r of old) {
+      try {
+        await callTelegram("deleteMessage", { chat_id: chatId, message_id: Number(r.messageId) });
+      } catch {
+        // 48 soatdan oshgan yoki allaqachon o'chirilgan — e'tiborsiz
+      }
+    }
+    if (old.length > 0) {
+      await db.delete(botMessages).where(inArray(botMessages.id, old.map((r) => r.id)));
+    }
+    for (const kid of keepIds) {
+      await trackMessage(chatId, kid);
+    }
+  } catch {
+    // baza xatosi — tozalash o'tkazib yuboriladi
+  }
+}
 
 function getToken(): string {
   const token = process.env.TELEGRAM_BOT_TOKEN;
@@ -31,7 +91,7 @@ async function callTelegram<T = unknown>(method: string, payload: Record<string,
 export async function sendPhoto(
   chatId: number,
   photo: string,
-  opts?: { caption?: string; replyMarkup?: ReturnType<typeof kb> },
+  opts?: { caption?: string; replyMarkup?: ReplyMarkup | ReturnType<typeof kb> },
 ): Promise<void> {
   await callTelegram("sendPhoto", {
     chat_id: chatId,
@@ -49,7 +109,7 @@ export async function sendPhoto(
 export async function sendPhotoBytes(
   chatId: number,
   data: Uint8Array,
-  opts?: { caption?: string; replyMarkup?: ReturnType<typeof kb> },
+  opts?: { caption?: string; replyMarkup?: ReplyMarkup | ReturnType<typeof kb> },
 ): Promise<void> {
   const token = getToken();
   const form = new FormData();
@@ -83,27 +143,84 @@ export function kb(rows: InlineButton[][]) {
   return { inline_keyboard: rows };
 }
 
+// ---------------------------------------------------------------------------
+// "Menu tugmalar" (reply keyboard) — Telegram xabar yozish joyida doimiy ko'rinadi.
+// ---------------------------------------------------------------------------
+export type ReplyButton = { text: string };
+
+export function replyKb(rows: ReplyButton[][], placeholder = "Xabar yozing...") {
+  return {
+    keyboard: rows,
+    resize_keyboard: true,
+    is_persistent: true,
+    input_field_placeholder: placeholder,
+  };
+}
+
+/** Menyu tugmalari matnlari — bot.ts shu matnlarni qabul qiladi. */
+export const MENU_TEXT = {
+  today: "📅 Bugungi darslar",
+  week: "📆 Haftalik jadval",
+  myClass: "🏫 Sinfim — O'quvchilar",
+  parents: "👪 Ota-onalar faolligi",
+  checkAll: "⚡ Barchani tekshirish",
+  profile: "👤 Profil",
+  news: "📰 Yangiliklar",
+  settings: "⚙️ Sozlamalar",
+  grades: "📊 Baholar",
+  schedule: "📚 Dars jadvali",
+  home: "🏠 Asosiy menyu",
+} as const;
+
+/** O'qituvchi menyusi — reply keyboard (sinf rahbariga qarab). */
+export function teacherReplyKeyboard(isClassTeacher: boolean) {
+  const rows: ReplyButton[][] = [[{ text: MENU_TEXT.today }, { text: MENU_TEXT.week }]];
+  if (isClassTeacher) {
+    rows.push([{ text: MENU_TEXT.myClass }, { text: MENU_TEXT.parents }]);
+    rows.push([{ text: MENU_TEXT.checkAll }, { text: MENU_TEXT.profile }]);
+    rows.push([{ text: MENU_TEXT.news }, { text: MENU_TEXT.settings }]);
+  } else {
+    rows.push([{ text: MENU_TEXT.news }, { text: MENU_TEXT.profile }]);
+    rows.push([{ text: MENU_TEXT.settings }]);
+  }
+  return replyKb(rows);
+}
+
+/** O'quvchi/ota-ona menyusi — reply keyboard. */
+export function mainReplyKeyboard() {
+  return replyKb([
+    [{ text: MENU_TEXT.grades }, { text: MENU_TEXT.schedule }],
+    [{ text: MENU_TEXT.news }, { text: MENU_TEXT.settings }],
+  ]);
+}
+
+export type ReplyMarkup = Record<string, unknown>;
+
 export async function sendMessage(
   chatId: number,
   text: string,
-  options?: { replyMarkup?: ReturnType<typeof kb>; disablePreview?: boolean },
-) {
-  return callTelegram("sendMessage", {
+  options?: { replyMarkup?: ReplyMarkup | ReturnType<typeof kb>; disablePreview?: boolean },
+): Promise<{ message_id?: number } | undefined> {
+  const result = await callTelegram<{ message_id?: number }>("sendMessage", {
     chat_id: chatId,
     text,
     parse_mode: "HTML",
     disable_web_page_preview: options?.disablePreview ?? true,
     reply_markup: options?.replyMarkup,
   });
+  if (result?.message_id !== undefined) {
+    await trackMessage(chatId, result.message_id);
+  }
+  return result;
 }
 
 export async function editMessageText(
   chatId: number,
   messageId: number,
   text: string,
-  options?: { replyMarkup?: ReturnType<typeof kb> },
+  options?: { replyMarkup?: ReplyMarkup | ReturnType<typeof kb> },
 ) {
-  return callTelegram("editMessageText", {
+  const result = await callTelegram("editMessageText", {
     chat_id: chatId,
     message_id: messageId,
     text,
@@ -111,6 +228,9 @@ export async function editMessageText(
     disable_web_page_preview: true,
     reply_markup: options?.replyMarkup,
   });
+  // Tahrirlangan xabar joriy oqimga tegishli — keyingi tozalashda o'chadi.
+  await trackMessage(chatId, messageId);
+  return result;
 }
 
 export async function answerCallbackQuery(callbackQueryId: string, text?: string, showAlert = false) {
@@ -244,7 +364,7 @@ export function teacherDayKeyboard() {
   return kb([
     [
       { text: "📅 Bugun", callback_data: "t:today" },
-      { text: "📆 Ertaga", callback_data: "t:tomorrow" },
+      { text: "📆 Haftalik jadval", callback_data: "t:week" },
     ],
     [
       { text: "🔄 Yangilash", callback_data: "t:today" },
