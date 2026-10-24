@@ -177,13 +177,16 @@ export async function GET(req: NextRequest) {
               redirect: "follow",
             });
             const html = await r0.text();
-            const stripped = html.replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<style[\s\S]*?<\/style>/gi, " ").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
-            const ix = stripped.search(/lesson|dars|тема|predmet|journal|jadval|mark/i);
-            (out as Record<string, unknown>).sample = (ix >= 0 ? stripped.slice(Math.max(0, ix - 30), ix + 90) : stripped.slice(400, 500)).slice(0, 110);
+            // xom HTML (script'lar ichida) bo'yicha namuna
+            const raw = html.replace(/\s+/g, " ");
+            const hits = [...raw.matchAll(/lessons|lessonDate|"marks"|workMark|lessonTime|journal/gi)].map((m) => m.index ?? 0);
+            (out as Record<string, unknown>).sl = hits.length;
+            const ix = hits[2] ?? hits[0] ?? -1;
+            (out as Record<string, unknown>).sample = (ix >= 0 ? raw.slice(Math.max(0, ix - 40), ix + 80) : raw.slice(0, 110)).slice(0, 110);
           } catch (error) {
             parts.push(`xato ${String(error).slice(0, 20)}`);
           }
-          check.sch = parts.join("|").slice(0, 30);
+          check.sch = parts.join("|").slice(0, 12);
         }
         try {
           const dayTs = Math.floor(new Date(`${today}T00:00:00+05:00`).getTime() / 1000);
