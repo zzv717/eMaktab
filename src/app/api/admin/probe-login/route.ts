@@ -218,48 +218,52 @@ export async function GET(req: NextRequest) {
                     (out as Record<string, unknown>).jstate = "xato";
                   }
                 }
-                // 2) OpenAPI/swagger kashfiyoti (token kerak emas bo'lishi mumkin)
+                // 2) myclasses hreflari + members xom satr + personId → diary
                 {
-                  const opens: string[] = [];
-                  for (const pth of ["/openapi.json", "/v2/openapi.json", "/swagger", "/swagger/index.html"]) {
-                    try {
-                      const rr = await fetch(`https://api.emaktab.uz${pth}`, {
-                        headers: { "User-Agent": "Mozilla/5.0", Accept: "application/json, text/html" },
-                        redirect: "follow",
-                      });
-                      const bb = await rr.text();
-                      opens.push(`${pth.slice(1, 5)}:${rr.status}${rr.status === 200 ? ":" + bb.slice(0, 25) : ""}`);
-                    } catch {
-                      opens.push(`${pth.slice(1, 5)}:x`);
-                    }
+                  try {
+                    const rm = await fetch("https://schools.emaktab.uz/v2/myclasses", {
+                      headers: { "User-Agent": "Mozilla/5.0", Cookie: cookieStr, Accept: "text/html" },
+                      redirect: "follow",
+                    });
+                    const hm = await rm.text();
+                    const hrefs = [...new Set([...hm.matchAll(/href="([^"]*class[^"]*)"/gi)].map((m) => m[1]))].slice(0, 4);
+                    (out as Record<string, unknown>).mhref = hrefs.map((h) => h.slice(0, 55)).join(" | ").slice(0, 160) || "-";
+                    const rc = (hm.match(/руководитель|curator|klass_rahbar|classTeacher/gi) ?? []).length;
+                    parts.push(`myc:r${rc}`);
+                  } catch {
+                    parts.push("myc:x");
                   }
-                  (out as Record<string, unknown>).open = opens.join(" ").slice(0, 150);
-                }
-                // 3) Sinf rahbari — userfeed + /teachers
-                {
-                  for (const [lbl, uu] of [
-                    ["uf", "https://emaktab.uz/userfeed"],
-                    ["tea", "https://emaktab.uz/teachers"],
-                  ] as Array<[string, string]>) {
-                    try {
-                      const rr = await fetch(uu, {
-                        headers: { "User-Agent": "Mozilla/5.0", Cookie: cookieStr, Accept: "text/html" },
+                  try {
+                    const rv = await fetch("https://schools.emaktab.uz/v2/class?class=25249429&view=members", {
+                      headers: { "User-Agent": "Mozilla/5.0", Cookie: cookieStr, Accept: "text/html" },
+                      redirect: "follow",
+                    });
+                    const hv = await rv.text();
+                    const ix = hv.search(/user\?user=[0-9]+/);
+                    (out as Record<string, unknown>).mrow = (ix >= 0 ? hv.slice(Math.max(0, ix - 120), ix + 60) : "-")
+                      .replace(/\s+/g, " ")
+                      .slice(0, 170);
+                    // xom satrdan personId nomzodi
+                    const pm = hv.slice(Math.max(0, ix - 200), ix + 200).match(/(?:pid|person|child|member)=(\d{7,})/i);
+                    if (pm) {
+                      parts.push(`pid:${pm[1]}`);
+                      const dUrl = `https://emaktab.uz/api/v2/marks/diary?personId=${pm[1]}&schoolId=${encodeURIComponent(result.session.active.schoolId)}&startDate=${Math.floor((Date.now() - 7 * 86400000) / 1000)}&finishDate=${Math.floor((Date.now() + 86400000) / 1000)}&timestamp=${Date.now()}`;
+                      const rd = await fetch(dUrl, {
+                        headers: { "User-Agent": "Mozilla/5.0", Cookie: cookieStr, Accept: "application/json", Referer: "https://emaktab.uz/v2/" },
                         redirect: "follow",
                       });
-                      const bb = await rr.text();
-                      const rc = (bb.match(/rahbar/gi) ?? []).length;
-                      parts.push(`${lbl}:${rr.status}r${rc}`);
-                      if (rc > 0 && !(out as Record<string, unknown>).rahbar) {
-                        const ix = bb.toLowerCase().indexOf("rahbar");
-                        (out as Record<string, unknown>).rahbar = bb
-                          .slice(Math.max(0, ix - 60), ix + 80)
-                          .replace(/<[^>]*>/g, " ")
-                          .replace(/\s+/g, " ")
-                          .slice(0, 120);
+                      const bd = await rd.text();
+                      const dd2 = (bd.match(/"date"/g) ?? []).length;
+                      const ll2 = (bd.match(/"lessonNumber"|"subject"/g) ?? []).length;
+                      parts.push(`dS:${rd.status}d${dd2}l${ll2}`);
+                      if (dd2 > 0) {
+                        (out as Record<string, unknown>).dsample = bd.slice(bd.indexOf('"date"') - 10, bd.indexOf('"date"') + 140).replace(/\s+/g, " ").slice(0, 160);
                       }
-                    } catch {
-                      parts.push(`${lbl}:x`);
+                    } else {
+                      parts.push("pid:-");
                     }
+                  } catch {
+                    parts.push("mem:x");
                   }
                 }
                 // 2) Sinf rahbari markerlari — myclasses + class sahifasi
