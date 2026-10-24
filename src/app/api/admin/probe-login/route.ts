@@ -269,7 +269,13 @@ export async function GET(req: NextRequest) {
                             const st2 = JSON.parse(ht.slice(sIdx, eIdx + 1)) as Record<string, unknown>;
                             kparts.push(`${name.slice(0, 10)}:{${Object.keys(st2).slice(0, 6).join(",").slice(0, 50)}}`);
                           } catch {
-                            kparts.push(`${name.slice(0, 10)}:?`);
+                            // JSON emas — regex bilan kalitlar + xom namuna
+                            const slice = ht.slice(sIdx, Math.min(eIdx + 1, sIdx + 3000));
+                            const keys = [...new Set([...slice.matchAll(/["']?([A-Za-z_][A-Za-z0-9_]{2,25})["']?\s*:/g)].map((m) => m[1]))].slice(0, 14);
+                            kparts.push(`${name.slice(0, 10)}:{${keys.join(",").slice(0, 70)}}`);
+                            if (name.startsWith("TEACHER") && !(out as Record<string, unknown>).tv2) {
+                              (out as Record<string, unknown>).tv2 = slice.replace(/\s+/g, " ").slice(0, 200);
+                            }
                           }
                         }
                       }
