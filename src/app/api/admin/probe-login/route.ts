@@ -243,8 +243,9 @@ export async function GET(req: NextRequest) {
                       const ht = await pageGet(result.session.cookies, "https://emaktab.uz/teachers");
                       const markers = [...new Set([...ht.matchAll(/window\.__([A-Z0-9_]{3,40})__/g)].map((m) => m[1]))];
                       (out as Record<string, unknown>).markers = markers.join(",").slice(0, 140) || "-";
+                      (out as Record<string, unknown>).mtail = markers.slice(5).join(",").slice(0, 150) || "-";
                       const kparts: string[] = [];
-                      for (const name of markers.slice(0, 5)) {
+                      for (const name of [...markers.slice(0, 4), ...markers.slice(5, 8)]) {
                         const mm2 = ht.match(new RegExp(name + "__?\\s*=\\s*"));
                         if (!mm2 || mm2.index === undefined) continue;
                         const sIdx = ht.indexOf("{", mm2.index);
@@ -461,6 +462,22 @@ export async function GET(req: NextRequest) {
           } catch (error) {
             check[label] = `xato ${String(error).slice(0, 25)}`;
           }
+        }
+        // O'quvchi kabineti jonli test: klass sahifasidagi ochiq login bilan kirish
+        try {
+          const info2 = await fetchClassMembers(result.session, "25249429", "1-A");
+          const cred = info2.credentials[0];
+          if (cred) {
+            const lr = await loginEmaktab(cred.login, cred.password);
+            (out as Record<string, unknown>).stud =
+              lr.status === "ok"
+                ? `ok ${lr.session?.role ?? "?"} ${lr.session?.fullName ?? ""}`.slice(0, 60)
+                : lr.status;
+          } else {
+            (out as Record<string, unknown>).stud = "cred-yok";
+          }
+        } catch (e5) {
+          (out as Record<string, unknown>).stud = "xato " + String(e5).slice(0, 25);
         }
         // Muhimlar birinchi (javob uzunligi cheklangani uchun).
         out.check = {
