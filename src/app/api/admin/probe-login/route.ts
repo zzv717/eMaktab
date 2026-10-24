@@ -195,6 +195,35 @@ export async function GET(req: NextRequest) {
                 (out as Record<string, unknown>).jh = pick("journalType") + " | " + pick("journalHeader");
                 (out as Record<string, unknown>).jkeys = Object.keys(st).slice(20).join(",").slice(0, 100);
 
+                // A'zo personId (=user id?) bilan diary — darslar bormi?
+                {
+                  const weekAgo = Math.floor((Date.now() - 7 * 86400000) / 1000);
+                  const tomorrow = Math.floor((Date.now() + 86400000) / 1000);
+                  try {
+                    const rr = await fetch(
+                      `https://emaktab.uz/api/v2/marks/diary?personId=1000020821210&schoolId=${encodeURIComponent(result.session.active.schoolId)}&startDate=${weekAgo}&finishDate=${tomorrow}&timestamp=${Date.now()}`,
+                      {
+                        headers: {
+                          "User-Agent": "Mozilla/5.0",
+                          Cookie: cookieStr,
+                          Accept: "application/json, text/plain, */*",
+                          Referer: "https://emaktab.uz/v2/user",
+                        },
+                        redirect: "follow",
+                      },
+                    );
+                    const bb = await rr.text();
+                    const dd2 = (bb.match(/"date"/g) ?? []).length;
+                    const ll2 = (bb.match(/"lessonNumber"|"lessonId"|"subject"/g) ?? []).length;
+                    parts.push(`dS:${rr.status}d${dd2}l${ll2}`);
+                    if (dd2 > 0 || ll2 > 0) {
+                      const ix2 = bb.search(/"date"/);
+                      (out as Record<string, unknown>).sample = bb.slice(Math.max(0, ix2 - 20), ix2 + 130).replace(/\s+/g, " ").slice(0, 150);
+                    }
+                  } catch {
+                    parts.push("dS:x");
+                  }
+                }
                 // api/v2 subjects/lessons oilasi (jurnal state'dagi "subjects":null → XHR to'ldiradi!)
                 {
                   const lg = "2524942980748797372";
