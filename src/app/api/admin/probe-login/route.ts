@@ -151,39 +151,39 @@ export async function GET(req: NextRequest) {
             check[label] = `xato ${String(error).slice(0, 25)}`;
           }
         }
-        // Jadval API — api.emaktab.uz (to'liq API host!)
+        // Klass sahifasidan haqiqiy personIdlar (uzun ID) + ular bilan diary
         {
           try {
-            const pid = result.session.active.personId;
-            const longGid = (check.gid ?? "").split(",")[0] || firstClassId;
-            const base = "https://api.emaktab.uz/v2";
-            const variants: Array<[string, string]> = [
-              ["ctx", `${base}/users/me/context`],
-              ["sch", `${base}/persons/${pid}/groups/${longGid}/schedules?from=${today}&to=${today}`],
-              ["tt", `${base}/edu-groups/${longGid}/timetables`],
-            ];
-            const parts: string[] = [];
-            for (const [lbl, uu] of variants) {
-              try {
-                const rr = await fetch(uu, {
-                  headers: {
-                    "User-Agent": "Mozilla/5.0",
-                    Cookie: cookieStr,
-                    Accept: "application/json, text/plain, */*",
-                    "X-Requested-With": "XMLHttpRequest",
-                    Referer: "https://emaktab.uz/userfeed",
-                  },
-                  redirect: "follow",
-                });
-                const bb = await rr.text();
-                const dd = (bb.match(/subject|lessons|dayOfWeek|personId|lessonNumber/gi) ?? []).length;
-                const sl = bb.slice(0, 28).replace(/[\s{}"]/g, "");
-                parts.push(`${lbl}:${rr.status}x${dd} ${sl}`.slice(0, 34));
-              } catch {
-                parts.push(`${lbl}:x`);
-              }
+            const classHtml = await pageGet(
+              result.session.cookies,
+              `https://schools.emaktab.uz/v2/class?class=${encodeURIComponent(firstClassId)}`,
+            );
+            // 17-20 xonali ID'lar (personId turlari)
+            const longIds = [...new Set(classHtml.match(/\b\d{17,20}\b/g) ?? [])].slice(0, 6);
+            // JSON personId qiymatlari
+            const personIds = [...new Set([...classHtml.matchAll(/"personId"\s*:\s*"?([0-9]{6,})"?/gi)].map((m) => m[1]))].slice(0, 5);
+            check.sch = `L:${longIds.join(",").slice(0, 50)} P:${personIds.join(",").slice(0, 40)}`;
+
+            // birinchi personId bilan diary (kunlar keladimi?)
+            const tryPid = personIds[0] ?? longIds.find((x) => !x.startsWith(firstClassId)) ?? longIds[0];
+            if (tryPid) {
+              const dayTs3 = Math.floor(new Date(`${today}T00:00:00+05:00`).getTime() / 1000);
+              const u3 = `https://emaktab.uz/api/v2/marks/diary?personId=${encodeURIComponent(tryPid)}&schoolId=${result.session.active.schoolId}&startDate=${dayTs3 - 7 * 24 * 3600}&finishDate=${dayTs3 + 24 * 3600 - 1}&timestamp=${Date.now()}`;
+              const r3 = await fetch(u3, {
+                headers: {
+                  "User-Agent": "Mozilla/5.0",
+                  Cookie: cookieStr,
+                  Accept: "application/json, text/plain, */*",
+                  "X-Requested-With": "XMLHttpRequest",
+                  Referer: "https://emaktab.uz/userfeed",
+                },
+                redirect: "follow",
+              });
+              const b3 = await r3.text();
+              const d3 = (b3.match(/"date"/g) ?? []).length;
+              const l3 = (b3.match(/"lessons"/g) ?? []).length;
+              check.sch += ` D:${r3.status}d${d3}l${l3}`;
             }
-            check.sch = parts.join("|").slice(0, 110);
           } catch (error) {
             check.sch = `xato ${String(error).slice(0, 25)}`;
           }
