@@ -151,36 +151,29 @@ export async function GET(req: NextRequest) {
             check[label] = `xato ${String(error).slice(0, 25)}`;
           }
         }
-        // 401 javobining to'liq matni + UZDnevnikAuth_l Bearer
+        // Jurnal sahifasi window.__X__ markerlari + data-kalitlar
         {
           const parts: string[] = [];
-          const cookieVal = (k: string) => cookieStr.split("; ").find((p) => p.startsWith(k + "="))?.slice(k.length + 1) ?? "";
           try {
-            const r = await fetch("https://api.emaktab.uz/v2/users/me", {
-              headers: { "User-Agent": "Mozilla/5.0", Accept: "application/json" },
+            const pad2 = (n: number) => String(n).padStart(2, "0");
+            const now = new Date(Date.now() + 5 * 3600 * 1000);
+            const jrUrl = `https://emaktab.uz/journal/school/${result.session.active.schoolId}/group/${firstClassId}/week/${pad2(now.getUTCDate())}/${now.getUTCMonth() + 1}`;
+            const r0 = await fetch(jrUrl, {
+              headers: { "User-Agent": "Mozilla/5.0", Cookie: cookieStr, Accept: "text/html" },
               redirect: "follow",
             });
-            parts.push("raw:" + r.status + " " + (await r.text()).slice(0, 60).replace(/[\s\n]/g, ""));
-          } catch {
-            parts.push("raw:x");
+            const html = await r0.text();
+            const markers = [...new Set([...html.matchAll(/window\.__([A-Z0-9_]{3,40})__/g)].map((m) => m[1]))];
+            parts.push("mk:" + markers.slice(0, 6).join(",").slice(0, 55));
+            const raw = html.replace(/\s+/g, " ");
+            const keyCount = (raw.match(/"works"|"cells"|"events"|"entries"|"lessons"|"days"|"rows"|"grid"/g) ?? []).length;
+            parts.push("k" + keyCount);
+            const ix = raw.search(/"works"|"cells"|"events"|"entries"|"lessons"|"days"/);
+            (out as Record<string, unknown>).sample = (ix >= 0 ? raw.slice(Math.max(0, ix - 15), ix + 85) : "-").slice(0, 100);
+          } catch (error) {
+            parts.push(`xato ${String(error).slice(0, 18)}`);
           }
-          for (const [lbl, hdr] of [
-            ["L", `Bearer ${cookieVal("UZDnevnikAuth_l")}`],
-            ["D", `Dnevnik ${cookieVal("sst")}`],
-            ["S", `${cookieVal("sst")}`],
-          ] as const) {
-            try {
-              const r = await fetch("https://api.emaktab.uz/v2/users/me", {
-                headers: { "User-Agent": "Mozilla/5.0", Accept: "application/json", Authorization: hdr },
-                redirect: "follow",
-              });
-              const b = await r.text();
-              parts.push(`${lbl}:${r.status}${b.slice(0, 14).replace(/[\s{}"]|[\\]/g, "")}`);
-            } catch {
-              parts.push(`${lbl}:x`);
-            }
-          }
-          check.sch = parts.join("|").slice(0, 130);
+          check.sch = parts.join("|").slice(0, 80);
         }
         try {
           const dayTs = Math.floor(new Date(`${today}T00:00:00+05:00`).getTime() / 1000);
