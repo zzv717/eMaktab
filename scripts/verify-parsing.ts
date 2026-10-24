@@ -22,6 +22,9 @@ import {
   newsFromUnknown,
   personsFromStartState,
   scheduleFromDiaryDays,
+  scheduleFromFlatLessons,
+  extractAllUserLinks,
+  looksLikeName,
   shiftDayKey,
   tashkentDayKey,
 } from "../src/lib/emaktab";
@@ -244,6 +247,43 @@ check("parseJsonObjectAt chuqur obyekt", (parsed as { a: { b: number } }).a.b ==
 check("deepFind schoolId", deepFind({ a: { schoolId: "123" } }, /^school_?id$/i) === "123");
 check("deepFind school.id", deepFind({ x: { school: { id: "777" } } }, /^id$/i) === "777" || deepFind({ x: { school: { id: "777" } } }, /^school_?id$/i) === "");
 check("deepFind topmasa bo'sh", deepFind({ nothing: 1 }, /^school_?id$/i) === "");
+
+
+// --- A'zolar ismini aniqlash (Foydalanuvchi sahifasiga o'ting muammosi) ---
+check("looksLikeName: haqiqiy ism", looksLikeName("Aliyev Vali"), true);
+check("looksLikeName: amal matni rad", !looksLikeName("Foydalanuvchi sahifasiga o'ting"), true);
+check("looksLikeName: ko'rish rad", !looksLikeName("Ko'rish"), true);
+{
+  const html = `
+    <li><a href="user?user=111" title="Aliyev Vali">Aliyev Vali</a>
+        <a href="user?user=222">Foydalanuvchi sahifasiga o'ting</a></li>
+    <li><a href="user?user=111">Foydalanuvchi sahifasiga o'ting</a></li>
+    <li><a href="user?user=333"><img src="/img/x.png"></a><span>Karimova Nilufar</span></li>`;
+  const members = extractAllUserLinks(html);
+  const m111 = members.find((m) => m.memberId === "111");
+  const m222 = members.find((m) => m.memberId === "222");
+  const m333 = members.find((m) => m.memberId === "333");
+  check("a'zolar: 111 nomi saqlanadi (dublikatda nomli variant)", m111?.fullName === "Aliyev Vali", m111);
+  check(
+    "a'zolar: 222 da amal matni ko'rinmaydi",
+    Boolean(m222) && !String(m222?.fullName).includes("Foydalanuvchi") && !String(m222?.fullName).includes("o'ting"),
+    m222,
+  );
+  check("a'zolar: 333 satr matnidan ism tiklanadi", m333?.fullName === "Karimova Nilufar", m333);
+}
+{
+  const lessons = [
+    { lessonNumber: 2, subjectName: "Matematika", teacherName: "Sattarova M.", roomNumber: "12", date: "2026-10-23" },
+    { number: 1, subject: { name: "Fizika" }, hours: { startHour: 8, startMinute: 30, endHour: 9, endMinute: 15 }, place: "5", dayOfWeek: 2 },
+  ];
+  const days = scheduleFromFlatLessons(lessons as Array<Record<string, unknown>>, "2026-10-19", "2026-10-25");
+  check("flat: 2 kun (sana bilan + dayOfWeek bilan)", days.length === 2, days.map((d) => d.date));
+  const fri = days.find((d) => d.date === "2026-10-23");
+  check("flat: 23-oktabr juma (weekday=4)", fri?.weekday === 4, fri && { date: fri.date, weekday: fri.weekday });
+  check("flat: matematika fan/room", fri?.lessons[0]?.subject === "Matematika" && fri?.lessons[0]?.room === "12", fri?.lessons[0]);
+  const wed = days.find((d) => d.date === "2026-10-21");
+  check("flat: dayOfWeek=2 → chorshanba (21-oktabr)", wed?.weekday === 2 && wed?.lessons[0]?.subject === "Fizika" && wed?.lessons[0]?.startTime === "08:30", wed);
+}
 
 console.log(`\nNatija: ${passed} o'tdi, ${failed} yiqildi`);
 process.exit(failed > 0 ? 1 : 0);

@@ -372,23 +372,29 @@ export function formatProfile(user: {
 export function formatActivationReport(
   kindLabel: string,
   okNames: string[],
-  failLines: string[],
-  credentialsMissing: boolean,
+  failMembers: Array<{ memberId: string; fullName: string; reason: string }>,
+  total: number,
 ): string {
-  let text = `✅ <b>Muvaffaqiyatli tugadi</b> — ${escapeHtml(kindLabel)} faollashtirish\n\n`;
-  text += `✔️ Faollashtirildi: <b>${okNames.length}</b> ta\n`;
+  const lower = kindLabel.toLowerCase();
+  // Hammasi muvaffaqiyatli bo'lsa — aniq aytiladi.
+  if (total > 0 && failMembers.length === 0) {
+    return (
+      `🎉 <b>Hammasiga kirildi</b>\n\n` +
+      `Barcha ${escapeHtml(lower)} (${total} ta) akkauntiga muvaffaqiyatli kirildi va faollashtirildi. ✅`
+    );
+  }
+  let text = `✅ <b>Faollashtirish jarayoni yakunlandi</b> — ${escapeHtml(kindLabel)}\n\n`;
+  text += `✔️ Kira olindi: <b>${okNames.length}</b> / ${total}\n`;
   if (okNames.length > 0) {
     text += okNames.map((n) => `   • ${escapeHtml(n)}`).join("\n") + "\n";
   }
-  if (failLines.length > 0) {
-    text += `\n❌ Muvaffaqiyatsiz: <b>${failLines.length}</b> ta\n`;
-    text += failLines.map((l) => `   • ${escapeHtml(l)}`).join("\n") + "\n";
-  }
-  if (credentialsMissing) {
-    text +=
-      `\n⚠️ <i>Eslatma:</i> eMaktab sinf sahifasida o'quvchi/ota-onalarning login-paroli ochiq ko'rinmadi. ` +
-      `Ular eMaktabdagi sinf kabinetidan olinadi — agar u yerda parollar ko'rinmasa, ` +
-      `eMaktab ma'muri orqali olinadi va botga qayta yuboriladi.`;
+  if (failMembers.length > 0) {
+    text += `\n❌ Kira olinmaganlar: <b>${failMembers.length}</b> ta\n`;
+    text += failMembers
+      .map((f) => `   • ${escapeHtml(f.fullName)} — <i>${escapeHtml(f.reason)}</i>`)
+      .join("\n");
+    text += `\n\n🔑 Har bir a'zo ostidagi <b>“Login-parol biriktiring”</b> tugmasi bilan unga login-parol kiriting. `;
+    text += `Biriktirilgan login-parol saqlanadi va keyingi safar “Faollashtirish” bosilganda avtomatik ishlatiladi.`;
   }
   return text;
 }
