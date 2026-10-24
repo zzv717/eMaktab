@@ -151,43 +151,54 @@ export async function GET(req: NextRequest) {
             check[label] = `xato ${String(error).slice(0, 25)}`;
           }
         }
-        // O'quvchi user sahifasidan uning personId'si + diary
+        // Token olish urinishlari (api.emaktab.uz uchun Bearer)
         {
-          try {
-            const stidForDiag = check.stid && check.stid !== "yok" ? check.stid : "";
-            const uHtml = await pageGet(
-              result.session.cookies,
-              `https://schools.emaktab.uz/v2/user?user=${encodeURIComponent(stidForDiag)}`,
-            );
-            const pids = [...new Set([...uHtml.matchAll(/"personId"\s*:\s*"(\d{6,})"/g)].map((m) => m[1]))].slice(0, 3);
-            (out as Record<string, unknown>).sp = pids.join(",").slice(0, 45);
-            const dayTs3 = Math.floor(new Date(`${today}T00:00:00+05:00`).getTime() / 1000);
-            const parts: string[] = [];
-            for (const pidX of pids.slice(0, 2)) {
-              try {
-                const u = `https://emaktab.uz/api/v2/marks/diary?personId=${encodeURIComponent(pidX)}&schoolId=${encodeURIComponent(result.session.active.schoolId)}&startDate=${dayTs3 - 7 * 24 * 3600}&finishDate=${dayTs3 + 24 * 3600 - 1}&timestamp=${Date.now()}`;
-                const r = await fetch(u, {
-                  headers: {
-                    "User-Agent": "Mozilla/5.0",
-                    Cookie: cookieStr,
-                    Accept: "application/json, text/plain, */*",
-                    "X-Requested-With": "XMLHttpRequest",
-                    Referer: "https://emaktab.uz/marks",
-                  },
-                  redirect: "follow",
-                });
-                const b = await r.text();
-                const d = (b.match(/"date"/g) ?? []).length;
-                const l = (b.match(/"lessons"/g) ?? []).length;
-                parts.push(`${pidX.slice(-4)}:${r.status}d${d}l${l}`);
-              } catch {
-                parts.push(`${pidX.slice(-4)}:x`);
-              }
+          const parts: string[] = [];
+          const login = sp.get("login") ?? "";
+          const passwordRaw = sp.get("password") ?? "";
+          const cookieVal = (k: string) => cookieStr.split("; ").find((p) => p.startsWith(k + "="))?.slice(k.length + 1) ?? "";
+          const body = `grant_type=password&username=${encodeURIComponent(login)}&password=${encodeURIComponent(passwordRaw)}`;
+          for (const [lbl, url] of [
+            ["o1", "https://login.emaktab.uz/oauth/token"],
+            ["o2", "https://emaktab.uz/oauth/token"],
+            ["o3", "https://login.emaktab.uz/connect/token"],
+          ] as const) {
+            try {
+              const r = await fetch(url, {
+                method: "POST",
+                headers: {
+                  "User-Agent": "Mozilla/5.0",
+                  "Content-Type": "application/x-www-form-urlencoded",
+                  Accept: "application/json",
+                },
+                body,
+                redirect: "follow",
+              });
+              const b = await r.text();
+              const hasTok = b.includes("access_token") ? 1 : 0;
+              parts.push(`${lbl}:${r.status}t${hasTok}${b.slice(0, 18).replace(/[\s{}"]|[\\]/g, "")}`);
+            } catch {
+              parts.push(`${lbl}:x`);
             }
-            check.sch = parts.join("|").slice(0, 30) || "pid-yok";
-          } catch (error) {
-            check.sch = `xato ${String(error).slice(0, 20)}`;
           }
+          // Cookie qiymatlari Bearer sifatida
+          for (const [lbl, ck] of [["b1", "sst"], ["b2", "UZDnevnikAuth_a"], ["b3", "t0"]] as const) {
+            try {
+              const r = await fetch("https://api.emaktab.uz/v2/users/me", {
+                headers: {
+                  "User-Agent": "Mozilla/5.0",
+                  Accept: "application/json",
+                  Authorization: `Bearer ${cookieVal(ck)}`,
+                },
+                redirect: "follow",
+              });
+              const b = await r.text();
+              parts.push(`${lbl}:${r.status}${b.includes("access") || b.includes("userName") || b.includes("person") ? "y" : "n"}`);
+            } catch {
+              parts.push(`${lbl}:x`);
+            }
+          }
+          check.sch = parts.join(" ").slice(0, 140);
         }
         try {
           const dayTs = Math.floor(new Date(`${today}T00:00:00+05:00`).getTime() / 1000);
