@@ -238,19 +238,44 @@ export async function GET(req: NextRequest) {
                       if (found.length >= 3) break;
                     }
                     (out as Record<string, unknown>).cura = found.join(" ||| ").slice(0, 170) || "-";
-                    // class sahifasi (pageGet!) — "rahbar" + heading kontekst
+                    // /teachers barcha markerlar + kalitlar
                     try {
-                      const hc = await pageGet(result.session.cookies, "https://schools.emaktab.uz/v2/class?class=25249429");
-                      const rc2 = (hc.match(/rahbar/gi) ?? []).length;
-                      const rix = hc.toLowerCase().indexOf("rahbar");
-                      (out as Record<string, unknown>).ct2 =
-                        `r${rc2} ` +
-                        (rix >= 0
-                          ? hc.slice(Math.max(0, rix - 120), rix + 100).replace(/<[^>]*>/g, " ").replace(/\s+/g, " ")
-                          : "(yoq) " + hc.slice(0, 60).replace(/<[^>]*>/g, " ").replace(/\s+/g, " ")
-                        ).slice(0, 180);
+                      const ht = await pageGet(result.session.cookies, "https://emaktab.uz/teachers");
+                      const markers = [...new Set([...ht.matchAll(/window\.__([A-Z0-9_]{3,40})__/g)].map((m) => m[1]))];
+                      (out as Record<string, unknown>).markers = markers.join(",").slice(0, 140) || "-";
+                      const kparts: string[] = [];
+                      for (const name of markers.slice(0, 5)) {
+                        const mm2 = ht.match(new RegExp(name + "__?\\s*=\\s*"));
+                        if (!mm2 || mm2.index === undefined) continue;
+                        const sIdx = ht.indexOf("{", mm2.index);
+                        let depth = 0, inStr = false, esc = false, eIdx = -1;
+                        for (let i = sIdx; i < ht.length && i < sIdx + 200000; i++) {
+                          const ch = ht[i];
+                          if (inStr) {
+                            if (esc) esc = false;
+                            else if (ch === "\\") esc = true;
+                            else if (ch === '"') inStr = false;
+                            continue;
+                          }
+                          if (ch === '"') inStr = true;
+                          else if (ch === "{") depth++;
+                          else if (ch === "}") {
+                            depth--;
+                            if (depth === 0) { eIdx = i; break; }
+                          }
+                        }
+                        if (eIdx > sIdx) {
+                          try {
+                            const st2 = JSON.parse(ht.slice(sIdx, eIdx + 1)) as Record<string, unknown>;
+                            kparts.push(`${name.slice(0, 10)}:{${Object.keys(st2).slice(0, 6).join(",").slice(0, 50)}}`);
+                          } catch {
+                            kparts.push(`${name.slice(0, 10)}:?`);
+                          }
+                        }
+                      }
+                      (out as Record<string, unknown>).mkeys = kparts.join(" ").slice(0, 200) || "-";
                     } catch (e2) {
-                      (out as Record<string, unknown>).ct2 = "cls-xato " + String(e2).slice(0, 30);
+                      (out as Record<string, unknown>).markers = "xato " + String(e2).slice(0, 25);
                     }
                     const hrefs = [...new Set([...hm.matchAll(/href="([^"]*\/v2\/class[^"]*)"/gi)].map((m) => m[1]))].slice(0, 3);
                     (out as Record<string, unknown>).mhref = hrefs.map((h) => h.slice(0, 50)).join(" | ").slice(0, 150) || "-";
