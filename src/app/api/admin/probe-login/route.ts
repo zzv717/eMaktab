@@ -151,43 +151,39 @@ export async function GET(req: NextRequest) {
             check[label] = `xato ${String(error).slice(0, 25)}`;
           }
         }
-        // Jurnal sahifasi JS paketidan API yo'llarini kashf qilish
+        // Jurnal: XHR ko'rinishidagi javob + HTML ichidagi matn namunasi
         {
           const parts: string[] = [];
           try {
             const pad2 = (n: number) => String(n).padStart(2, "0");
             const now = new Date(Date.now() + 5 * 3600 * 1000);
             const jrUrl = `https://emaktab.uz/journal/school/${result.session.active.schoolId}/group/${firstClassId}/week/${pad2(now.getUTCDate())}/${now.getUTCMonth() + 1}`;
+            // 1) XHR ko'rinishida
+            const rx = await fetch(jrUrl, {
+              headers: {
+                "User-Agent": "Mozilla/5.0",
+                Cookie: cookieStr,
+                Accept: "application/json, text/javascript, */*; q=0.01",
+                "X-Requested-With": "XMLHttpRequest",
+                Referer: jrUrl,
+              },
+              redirect: "follow",
+            });
+            const bx = await rx.text();
+            parts.push(`x:${rx.status}c${(rx.headers.get("content-type") ?? "").includes("json") ? 1 : 0} ${bx.slice(0, 30).replace(/[\s{}"]/g, "")}`);
+            // 2) HTML matni — "lesson|dars|тема|predmet" atrofi
             const r0 = await fetch(jrUrl, {
               headers: { "User-Agent": "Mozilla/5.0", Cookie: cookieStr, Accept: "text/html" },
               redirect: "follow",
             });
             const html = await r0.text();
-            parts.push(`j:${r0.status}`);
-            // script src lari
-            const srcs = [...new Set([...html.matchAll(/<script[^>]+src="([^"]+)"/gi)].map((m) => m[1]))].slice(0, 5);
-            const apis = new Set<string>();
-            const scan = (txt: string) => {
-              for (const m of txt.matchAll(/["'`](\/api\/[a-zA-Z0-9/_{}\.\-]{2,40})/g)) apis.add(m[1]);
-            };
-            scan(html);
-            for (const s of srcs.slice(0, 4)) {
-              try {
-                const abs = s.startsWith("http") ? s : `https://emaktab.uz${s.startsWith("/") ? "" : "/"}${s}`;
-                const rj = await fetch(abs, {
-                  headers: { "User-Agent": "Mozilla/5.0", Cookie: cookieStr },
-                  redirect: "follow",
-                });
-                const txt = await rj.text();
-                scan(txt);
-                parts.push(`s${rj.status}`);
-              } catch { /* o'tamiz */ }
-            }
-            parts.push("api:" + [...apis].slice(0, 8).join(" ").slice(0, 70));
+            const stripped = html.replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<style[\s\S]*?<\/style>/gi, " ").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+            const ix = stripped.search(/lesson|dars|тема|predmet|journal|jadval/i);
+            parts.push("t:" + (ix >= 0 ? stripped.slice(Math.max(0, ix - 20), ix + 80) : stripped.slice(300, 400)).slice(0, 95));
           } catch (error) {
             parts.push(`xato ${String(error).slice(0, 20)}`);
           }
-          check.sch = parts.join("|").slice(0, 130);
+          check.sch = parts.join("|").slice(0, 160);
         }
         try {
           const dayTs = Math.floor(new Date(`${today}T00:00:00+05:00`).getTime() / 1000);
