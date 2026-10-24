@@ -191,7 +191,35 @@ export async function GET(req: NextRequest) {
                 };
                 (out as Record<string, unknown>).api = pick("apiUrl") + " | " + pick("smartApiUrl");
                 (out as Record<string, unknown>).urls = pick("domianUrl") + " | " + pick("journalMemoUrl") + " | " + pick("exportUrl");
-                (out as Record<string, unknown>).jkeys = Object.keys(st).slice(10).join(",").slice(0, 100);
+                (out as Record<string, unknown>).ctp = pick("ctpApiUrl") + " | " + String((st as Record<string, unknown>).lessonId ?? "");
+                (out as Record<string, unknown>).jh = pick("journalType") + " | " + pick("journalHeader");
+                (out as Record<string, unknown>).jkeys = Object.keys(st).slice(20).join(",").slice(0, 100);
+
+                // api/v2 ichida jurnal endpointlari
+                const tries2: Array<[string, string]> = [
+                  ["mj", `https://emaktab.uz/api/v2/marks/journal?personId=${encodeURIComponent(result.session.active.personId)}&schoolId=${encodeURIComponent(result.session.active.schoolId)}&groupId=${encodeURIComponent(firstClassId)}&startDate=${Date.now() - 7 * 86400000}&finishDate=${Date.now()}`],
+                  ["lle", `https://emaktab.uz/api/v2/lesson-log-entries?groupId=${encodeURIComponent(firstClassId)}`],
+                  ["wv", `https://emaktab.uz/api/v2/week-views?groupId=${encodeURIComponent(firstClassId)}`],
+                ];
+                for (const [lbl, uu] of tries2) {
+                  try {
+                    const rr = await fetch(uu, {
+                      headers: {
+                        "User-Agent": "Mozilla/5.0",
+                        Cookie: cookieStr,
+                        Accept: "application/json, text/plain, */*",
+                        "X-Requested-With": "XMLHttpRequest",
+                        Referer: "https://emaktab.uz/journal",
+                      },
+                      redirect: "follow",
+                    });
+                    const bb = await rr.text();
+                    const dd2 = (bb.match(/"date"|lessons|subject/gi) ?? []).length;
+                    parts.push(`${lbl}:${rr.status}x${dd2}`);
+                  } catch {
+                    parts.push(`${lbl}:x`);
+                  }
+                }
               } catch {
                 parts.push("json-xato");
               }
