@@ -303,7 +303,14 @@ export function formatTeacherDay(
   const dateLine = dayKey ? `🗓 ${escapeHtml(formatDayTitle(dayKey))}\n` : "";
 
   if (lessons.length === 0) {
-    return header + dateLine + `\nBu kunda darslar topilmadi. 🏖`;
+    return (
+      header +
+      dateLine +
+      `\nBu kunda darslar topilmadi. 🏖\n\n` +
+      `ℹ️ eMaktabning ochiq API'si o'qituvchi dars jadvalini hozircha bermayapti ` +
+      `(jadval faqat eMaktab veb-jurnalida ko'rinadi). Bot har safar qayta urinib ko'radi — ` +
+      `ma'lumot ochilishi bilan avtomatik chiqadi.`
+    );
   }
 
   let text = header + dateLine;
