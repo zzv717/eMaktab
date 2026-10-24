@@ -157,9 +157,7 @@ export async function GET(req: NextRequest) {
           try {
             const pad2 = (n: number) => String(n).padStart(2, "0");
             const now = new Date(Date.now() + 5 * 3600 * 1000);
-            const dd = now.getUTCDate();
-            const mm = now.getUTCMonth() + 1;
-            const jrUrl = `https://emaktab.uz/journal/school/10000060/group/25249429/week/${pad2(dd)}/${mm}`;
+            const jrUrl = `https://emaktab.uz/journal/school/${result.session.active.schoolId}/group/${firstClassId}/week/${pad2(now.getUTCDate())}/${now.getUTCMonth() + 1}`;
             const r0 = await fetch(jrUrl, {
               headers: { "User-Agent": "Mozilla/5.0", Cookie: cookieStr, Accept: "text/html" },
               redirect: "follow",
