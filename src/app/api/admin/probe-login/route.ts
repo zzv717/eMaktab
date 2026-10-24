@@ -282,21 +282,39 @@ export async function GET(req: NextRequest) {
                               (out as Record<string, unknown>).tv2k2 = allKeys.slice(13).join(",").slice(0, 120);
                               const purl = slice.match(/"planningUrl":"([^"]{0,120})/);
                               if (purl) (out as Record<string, unknown>).purl = purl[1];
-                              // Jurnal FAN sahifasi — server render + lesson data
-                              try {
-                                const jurl = slice.match(/"journalUrl":"([^"]+)/);
-                                if (jurl) {
-                                  const hj = await pageGet(result.session.cookies, jurl[1]);
-                                  const lc = (hj.match(/"lessonNumber"|"lessons"|"hours"|"theme"|"workMark"/g) ?? []).length;
-                                  const dc = (hj.match(/"date"/g) ?? []).length;
-                                  (out as Record<string, unknown>).jfan = `l${lc}d${dc} len${hj.length}`;
-                                  const jix = hj.search(/"lessons"|"lessonNumber"|"hours"/);
-                                  if (jix >= 0) {
-                                    (out as Record<string, unknown>).jsamp = hj.slice(Math.max(0, jix - 15), jix + 150).replace(/\s+/g, " ").slice(0, 160);
+                              // lesson-log-entries — DATED darslar (jadval manbai!)
+                              const sid = (slice.match(/"subjectId":"(\d{10,})/) ?? [])[1] ?? "1856018561884296245";
+                              const pidT = "1000007887895";
+                              const lgT = "2524942980748797372";
+                              const secAgo = Math.floor((Date.now() - 7 * 86400000) / 1000);
+                              const secAhead = Math.floor((Date.now() + 3 * 86400000) / 1000);
+                              const q = `startDate=${secAgo}&finishDate=${secAhead}&timestamp=${Date.now()}`;
+                              const leTries: Array<[string, string]> = [
+                                ["le1", `https://emaktab.uz/api/v2/lesson-log-entries/person/${pidT}/subject/${sid}?${q}`],
+                                ["le2", `https://emaktab.uz/api/v2/lesson-log-entries?personId=${pidT}&subjectId=${sid}&groupId=${lgT}&${q}`],
+                                ["le3", `https://emaktab.uz/api/v2/lesson-log-entries/person/${pidT}/subject/${sid}/groups/${lgT}?${q}`],
+                                ["le4", `https://emaktab.uz/api/v2/lesson-log-entries/groups/${lgT}/subjects/${sid}?${q}`],
+                              ];
+                              for (const [lbl, uu] of leTries) {
+                                try {
+                                  const rl2 = await fetch(uu, {
+                                    headers: {
+                                      "User-Agent": "Mozilla/5.0",
+                                      Cookie: cookieStr,
+                                      Accept: "application/json, text/plain, */*",
+                                      Referer: "https://emaktab.uz/journal",
+                                    },
+                                    redirect: "manual",
+                                  });
+                                  const bl2 = await rl2.text();
+                                  const dc2 = (bl2.match(/"date"|"lessonDate"|"theme"|"hours"/g) ?? []).length;
+                                  parts.push(`${lbl}:${rl2.status}x${dc2}`);
+                                  if (dc2 > 0 && !(out as Record<string, unknown>).les) {
+                                    (out as Record<string, unknown>).les = bl2.slice(0, 190).replace(/\s+/g, " ");
                                   }
+                                } catch {
+                                  parts.push(`${lbl}:x`);
                                 }
-                              } catch (e3) {
-                                (out as Record<string, unknown>).jfan = "xato " + String(e3).slice(0, 25);
                               }
                             }
                           }
