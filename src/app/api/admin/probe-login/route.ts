@@ -55,6 +55,10 @@ export async function GET(req: NextRequest) {
                 classes[0].className,
               );
               check.members = `${info.students.length}/${info.parents.length}`;
+              (out as Record<string, unknown>).mem =
+                [info.students[0], info.students[1], info.parents[0]]
+                  .map((x) => (x ? x.fullName.slice(0, 28) : "-"))
+                  .join(" | ");
 
               // O'QUVCHI diary — uning darslari = sinf jadvali (teacher ko'ra oladi!)
               const firstStu = info.students[0];
