@@ -278,8 +278,26 @@ export async function GET(req: NextRequest) {
                               (out as Record<string, unknown>).tv2 = slice.replace(/\s+/g, " ").slice(0, 190);
                               (out as Record<string, unknown>).tv2k = allKeys.join(",").slice(0, 190);
                               (out as Record<string, unknown>).tv2b = slice.replace(/\s+/g, " ").slice(150, 370);
-                              (out as Record<string, unknown>).tv2c = slice.replace(/\s+/g, " ").slice(370, 640);
-                              (out as Record<string, unknown>).tv2k2 = allKeys.slice(13).join(",").slice(0, 180);
+                              (out as Record<string, unknown>).tv2c = slice.replace(/\s+/g, " ").slice(370, 560);
+                              (out as Record<string, unknown>).tv2k2 = allKeys.slice(13).join(",").slice(0, 120);
+                              const purl = slice.match(/"planningUrl":"([^"]{0,120})/);
+                              if (purl) (out as Record<string, unknown>).purl = purl[1];
+                              // Jurnal FAN sahifasi — server render + lesson data
+                              try {
+                                const jurl = slice.match(/"journalUrl":"([^"]+)/);
+                                if (jurl) {
+                                  const hj = await pageGet(result.session.cookies, jurl[1]);
+                                  const lc = (hj.match(/"lessonNumber"|"lessons"|"hours"|"theme"|"workMark"/g) ?? []).length;
+                                  const dc = (hj.match(/"date"/g) ?? []).length;
+                                  (out as Record<string, unknown>).jfan = `l${lc}d${dc} len${hj.length}`;
+                                  const jix = hj.search(/"lessons"|"lessonNumber"|"hours"/);
+                                  if (jix >= 0) {
+                                    (out as Record<string, unknown>).jsamp = hj.slice(Math.max(0, jix - 15), jix + 150).replace(/\s+/g, " ").slice(0, 160);
+                                  }
+                                }
+                              } catch (e3) {
+                                (out as Record<string, unknown>).jfan = "xato " + String(e3).slice(0, 25);
+                              }
                             }
                           }
                         }
