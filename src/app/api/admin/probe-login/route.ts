@@ -151,49 +151,41 @@ export async function GET(req: NextRequest) {
             check[label] = `xato ${String(error).slice(0, 25)}`;
           }
         }
-        // /teachers memberships (personId+schoolId juftliklari) + ular bilan diary
+        // Jurnal sahifasi JS paketidan API yo'llarini kashf qilish
         {
           const parts: string[] = [];
           try {
-            const res0 = await fetch("https://emaktab.uz/teachers", {
+            const pad2 = (n: number) => String(n).padStart(2, "0");
+            const now = new Date(Date.now() + 5 * 3600 * 1000);
+            const dd = now.getUTCDate();
+            const mm = now.getUTCMonth() + 1;
+            const jrUrl = `https://emaktab.uz/journal/school/10000060/group/25249429/week/${pad2(dd)}/${mm}`;
+            const r0 = await fetch(jrUrl, {
               headers: { "User-Agent": "Mozilla/5.0", Cookie: cookieStr, Accept: "text/html" },
               redirect: "follow",
             });
-            const html = await res0.text();
-            // {"...schoolId":"<id>","personId":"<pid>" — barcha juftliklar
-            const pairs: Array<[string, string]> = [];
-            for (const m of html.matchAll(/"([A-Za-z]*[Ii]d)"\s*:\s*"(\d{6,})"\s*,\s*"personId"\s*:\s*"(\d{6,})"/g)) {
-              pairs.push([m[3], m[2]]);
-            }
-            // qo'shimcha: personId'dan keyin kelgan id lar
-            for (const m of html.matchAll(/"personId"\s*:\s*"(\d{6,})"[^}]{0,120}?"([A-Za-z]*[Ii]d)"\s*:\s*"(\d{8,})"/g)) {
-              pairs.push([m[1], m[3]]);
-            }
-            const uniq = [...new Map(pairs.map((p) => [p.join(":"), p])).values()].slice(0, 4);
-            parts.push("P:" + uniq.map((p) => p.join("/")).join(",").slice(0, 60));
-
-            const dayTs3 = Math.floor(new Date(`${today}T00:00:00+05:00`).getTime() / 1000);
-            for (const [pidX, sidX] of uniq.slice(0, 3)) {
+            const html = await r0.text();
+            parts.push(`j:${r0.status}`);
+            // script src lari
+            const srcs = [...new Set([...html.matchAll(/<script[^>]+src="([^"]+)"/gi)].map((m) => m[1]))].slice(0, 5);
+            const apis = new Set<string>();
+            const scan = (txt: string) => {
+              for (const m of txt.matchAll(/["'`](\/api\/[a-zA-Z0-9/_{}\.\-]{2,40})/g)) apis.add(m[1]);
+            };
+            scan(html);
+            for (const s of srcs.slice(0, 4)) {
               try {
-                const u = `https://emaktab.uz/api/v2/marks/diary?personId=${encodeURIComponent(pidX)}&schoolId=${encodeURIComponent(sidX)}&startDate=${dayTs3 - 7 * 24 * 3600}&finishDate=${dayTs3 + 24 * 3600 - 1}&timestamp=${Date.now()}`;
-                const r = await fetch(u, {
-                  headers: {
-                    "User-Agent": "Mozilla/5.0",
-                    Cookie: cookieStr,
-                    Accept: "application/json, text/plain, */*",
-                    "X-Requested-With": "XMLHttpRequest",
-                    Referer: "https://emaktab.uz/marks",
-                  },
+                const abs = s.startsWith("http") ? s : `https://emaktab.uz${s.startsWith("/") ? "" : "/"}${s}`;
+                const rj = await fetch(abs, {
+                  headers: { "User-Agent": "Mozilla/5.0", Cookie: cookieStr },
                   redirect: "follow",
                 });
-                const b = await r.text();
-                const d = (b.match(/"date"/g) ?? []).length;
-                const l = (b.match(/"lessons"/g) ?? []).length;
-                parts.push(`${pidX.slice(-4)}:${r.status}d${d}l${l}`);
-              } catch {
-                parts.push(`${pidX.slice(-4)}:x`);
-              }
+                const txt = await rj.text();
+                scan(txt);
+                parts.push(`s${rj.status}`);
+              } catch { /* o'tamiz */ }
             }
+            parts.push("api:" + [...apis].slice(0, 8).join(" ").slice(0, 70));
           } catch (error) {
             parts.push(`xato ${String(error).slice(0, 20)}`);
           }
