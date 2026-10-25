@@ -356,6 +356,36 @@ export async function GET(req: NextRequest) {
         }
         return NextResponse.json(out);
       }
+      // ?jday=1 — kunlik jurnal (darslar, o'tkazildi, CTP) + haftalik sahifa oxiri
+      if (sp.get("jday")) {
+        try {
+          const today = tashkentDayKey();
+          const [yy, mm2, dd2] = today.split("-");
+          const dayUrl = `https://emaktab.uz/journal/school/${encodeURIComponent(result.session.active.schoolId)}/group/2524942980748797372/day/${Number(dd2)}/${Number(mm2)}/${yy}`;
+          const html = await pageGet(result.session.cookies, dayUrl);
+          const counts = {
+            len: html.length,
+            table: (html.match(/<table/gi) ?? []).length,
+            dataMark: (html.match(/data-mark/gi) ?? []).length,
+            odo: (html.match(/odo\//gi) ?? []).length,
+            otkaz: (html.match(/tkazildi/gi) ?? []).length,
+            ctp: (html.match(/ctp/gi) ?? []).length,
+          };
+          const kws4 = /editmark|editlesson|conducted|tkazildi|visitlog|data-work|data-school|journallesson|\bctp\b|CtpPopup|workplan/gi;
+          const acc4: string[] = [];
+          for (const mm of html.matchAll(kws4)) {
+            const i = mm.index ?? 0;
+            acc4.push(html.slice(Math.max(0, i - 40), i + 150).replace(/\s+/g, " "));
+            if (acc4.length >= 3) break;
+          }
+          (out as Record<string, unknown>).jday = JSON.stringify(counts);
+          (out as Record<string, unknown>).jdayk = acc4.join(" ~~ ").slice(0, 800) || "-";
+        } catch (e22) {
+          (out as Record<string, unknown>).jday = "xato " + String(e22).slice(0, 40);
+        }
+        return NextResponse.json(out);
+      }
+
 
 
 
