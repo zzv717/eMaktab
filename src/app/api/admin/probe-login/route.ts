@@ -207,8 +207,8 @@ export async function GET(req: NextRequest) {
         const jw = `https://emaktab.uz/journal/school/${encodeURIComponent(result.session.active.schoolId)}/group/2524942980748797372/week/26/10`;
         const hj = await pageGet(result.session.cookies, jw);
         const outL: string[] = [];
-        // inline skriptlar
-        const inl = [...hj.matchAll(/<script[^>]*>([\s\S]{50,}?)<\/script>/gi)].map((m) => m[1]);
+        // xom HTML (inline skriptlar ham ichida)
+        const inl = [hj];
         // yozuv endpointlari (editmark/editlesson/conducted/odo) va CTP chaqiruvlari alohida
         const k1 = /editmark|editlesson|conducted|otkazildi|\/odo\//gi;
         const k2 = /ctpApiUrl\s*[+:]|editctp|uploadctp|workplan|addHomework|CtpPopup|ctpcommon/gi;
@@ -229,7 +229,7 @@ export async function GET(req: NextRequest) {
         (out as Record<string, unknown>).j1 = g1.join(" ~~ ").slice(0, 900) || "-";
         (out as Record<string, unknown>).j2 = g2.join(" ~~ ").slice(0, 900) || "-";
         (out as Record<string, unknown>).jread = outL.length > 0 ? "ok" : "-";
-        (out as Record<string, unknown>).jlen = `html=${hj.length} inl=${inl.length}`;
+        (out as Record<string, unknown>).jlen = `html=${hj.length}`;
         } catch (e15) {
           (out as Record<string, unknown>).jread = "xato " + String(e15).slice(0, 40);
         }
