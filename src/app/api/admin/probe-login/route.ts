@@ -209,17 +209,26 @@ export async function GET(req: NextRequest) {
         const outL: string[] = [];
         // inline skriptlar
         const inl = [...hj.matchAll(/<script[^>]*>([\s\S]{50,}?)<\/script>/gi)].map((m) => m[1]);
-        // avval ctpApi va yozuv endpointlari (aniq kalit so'zlar)
-        const kws = /ctpApi\w*|editmark|editlesson|conducted|\/odo\/|uploadfile|uploadtask|workplan/gi;
-        for (const sc of inl) {
-          for (const mm of sc.matchAll(kws)) {
-            const i = mm.index ?? 0;
-            outL.push(sc.slice(Math.max(0, i - 30), i + 320).replace(/\s+/g, " "));
-            if (outL.length >= 4) break;
+        // yozuv endpointlari (editmark/editlesson/conducted/odo) va CTP chaqiruvlari alohida
+        const k1 = /editmark|editlesson|conducted|otkazildi|\/odo\//gi;
+        const k2 = /ctpApiUrl\s*[+:]|editctp|uploadctp|workplan|addHomework|CtpPopup|ctpcommon/gi;
+        const grab = (re: RegExp): string[] => {
+          const acc: string[] = [];
+          for (const sc of inl) {
+            for (const mm of sc.matchAll(re)) {
+              const i = mm.index ?? 0;
+              acc.push(sc.slice(Math.max(0, i - 30), i + 340).replace(/\s+/g, " "));
+              if (acc.length >= 3) break;
+            }
+            if (acc.length >= 3) break;
           }
-          if (outL.length >= 4) break;
-        }
-        (out as Record<string, unknown>).jread = outL.join(" ~~ ").slice(0, 1100) || "-";
+          return acc;
+        };
+        const g1 = grab(k1);
+        const g2 = grab(k2);
+        (out as Record<string, unknown>).j1 = g1.join(" ~~ ").slice(0, 900) || "-";
+        (out as Record<string, unknown>).j2 = g2.join(" ~~ ").slice(0, 900) || "-";
+        (out as Record<string, unknown>).jread = outL.length > 0 ? "ok" : "-";
         (out as Record<string, unknown>).jlen = `html=${hj.length} inl=${inl.length}`;
         } catch (e15) {
           (out as Record<string, unknown>).jread = "xato " + String(e15).slice(0, 40);
