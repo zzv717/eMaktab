@@ -397,6 +397,28 @@ export async function GET(req: NextRequest) {
         }
         return NextResponse.json(out);
       }
+      // ?jwsrc=1 — haftalik + kunlik sahifalarning to'liq script src ro'yxati
+      if (sp.get("jwsrc")) {
+        try {
+          const today = tashkentDayKey();
+          const [yy, mm2, dd2] = today.split("-");
+          const pages: Array<[string, string]> = [
+            ["w", `https://emaktab.uz/journal/school/${encodeURIComponent(result.session.active.schoolId)}/group/2524942980748797372/week/26/10`],
+            ["d", `https://emaktab.uz/journal/school/${encodeURIComponent(result.session.active.schoolId)}/group/2524942980748797372/day/${Number(dd2)}/${Number(mm2)}/${yy}`],
+          ];
+          const resL: string[] = [];
+          for (const [lab, u] of pages) {
+            const html = await pageGet(result.session.cookies, u);
+            const srcs = [...new Set([...html.matchAll(/<script[^>]+src="([^"]+)"/gi)].map((m) => m[1]))];
+            resL.push(`${lab}(${srcs.length}):` + srcs.map((x) => x.replace(/^https?:\/\/static\.emaktab\.uz/, "").split("?")[0]).join(" ").slice(0, 700));
+          }
+          (out as Record<string, unknown>).jwsrc = resL.join(" ~~ ").slice(0, 1400);
+        } catch (e24) {
+          (out as Record<string, unknown>).jwsrc = "xato " + String(e24).slice(0, 40);
+        }
+        return NextResponse.json(out);
+      }
+
 
 
 
