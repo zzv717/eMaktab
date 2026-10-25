@@ -157,85 +157,42 @@ export async function GET(req: NextRequest) {
             check[label] = `xato ${String(error).slice(0, 25)}`;
           }
         }
-        // Jurnal JS kashfiyoti: state URL qiymatlari + requirejs modullari + yozuv yollari
+        // Jurnal kashfiyoti: upload URL + ish-reja formasi + yozuv kontekstlari
         {
           const parts: string[] = [];
           try {
             const jw = `https://emaktab.uz/journal/school/${encodeURIComponent(result.session.active.schoolId)}/group/2524942980748797372/week/26/10`;
             const hj = await pageGet(result.session.cookies, jw);
-            // 1) State ichidagi tayyor URL qiymatlari (yozuv/upload uchun eng muhim)
             const kv = (k: string): string => {
-              const m = hj.match(new RegExp(`"${k}"\\s*:\\s*"([^"]{4,160})"`)) ?? hj.match(new RegExp(`\\b${k}\\s*:\\s*"([^"]{4,160})"`));
+              const m = hj.match(new RegExp(`"${k}"\\s*:\\s*"([^"]{4,180})"`)) ?? hj.match(new RegExp(`\\b${k}\\s*:\\s*"([^"]{4,180})"`));
               return m ? m[1].replace(/\\u0026/g, "&").replace(/&amp;/g, "&") : "-";
             };
-            (out as Record<string, unknown>).jurl =
-              [kv("fileUploadApiUrl"), kv("taskStateHandlerUrl"), kv("planningUrl"), kv("exportUrl")]
-                .map((x) => x.slice(0, 46))
-                .join(" ")
-                .slice(0, 190);
-            // 2) Skriptlar + requirejs konfiguratsiyasi
-            const srcs = [...new Set([...hj.matchAll(/<script[^>]+src="([^"]+)"/gi)].map((m) => m[1]))].slice(0, 6);
-            const urls = new Set<string>();
-            const modIds = new Set<string>();
-            let baseUrl = "/assets/scripts/";
-            const scanTxt = (txt: string): void => {
-              const b = txt.match(/baseUrl\s*:\s*["']([^"']{2,60})["']/);
-              if (b) baseUrl = b[1];
-              const re1 = /["'`]((?:https?:\/\/(?:emaktab|schools)\.uz)?\/(?:api|v2|journals?|FileUploadHandler|upload)[a-zA-Z0-9/_\-.]{2,80})["'`]/gi;
-              for (const mm of txt.matchAll(re1)) {
-                const u = mm[1].replace(/^https?:\/\/(?:emaktab|schools)\.uz/, "").split("?")[0];
-                if (!/(static|\.css|\.png|\.js|\.svg|\.woff|\.ico)/i.test(u)) urls.add(u);
-              }
-              // qisqa yo'l ko'rinishidagi satrlar: marks/set, conduct/... , ctp/upload
-              const re2 = /["'`]([a-zA-Z][a-zA-Z0-9/_\-.]{2,60}?(?:marks?|conduct|lesson-?logs?|attendance|upload|ctp|planning|work-?plan|homework)[a-zA-Z0-9/_\-.]{0,40})["'`]/gi;
-              for (const mm of txt.matchAll(re2)) {
-                const u = mm[1];
-                if (u.includes("/") && !/(Ctp[A-Z]|Popup|Settings|Message|Button)/.test(u)) urls.add(u.slice(0, 60));
-              }
-              for (const mm of txt.matchAll(/define\(\s*["']([^"']{3,80})["']/g)) {
-                if (/(Ctp|Mark|Conduct|Log|Upload|Plann|Timetable)/i.test(mm[1])) modIds.add(mm[1]);
-              }
-            };
-            scanTxt(hj);
-            for (const s2 of srcs) {
-              const abs = s2.startsWith("http") ? s2 : `https://emaktab.uz${s2.startsWith("/") ? "" : "/"}${s2}`;
+            (out as Record<string, unknown>).jurl = [kv("fileUploadApiUrl"), kv("planningUrl")].map((x) => x.slice(0, 80)).join(" ");
+            // Ish-reja (CTP) sahifasi — forma action + input nomlari
+            const pu = `https://schools.emaktab.uz/journals/?school=${encodeURIComponent(result.session.active.schoolId)}&group=2524942980748797372&subject=1856018561884296245&period=2525707862884565213`;
+            const hp = await pageGet(result.session.cookies, pu);
+            const forms = [...hp.matchAll(/<form[^>]*action="([^"]{2,120})"/gi)].map((m) => m[1]);
+            const inputs = [...new Set([...hp.matchAll(/<input[^>]+name="([^"]{2,60})"/gi)].map((m) => m[1]))].slice(0, 8);
+            const hrefs = [...new Set([...hp.matchAll(/href="([^"]*(?:upload|ctp|plan|excel|xls)[^"]{0,60})"/gi)].map((m) => m[1]))].slice(0, 3);
+            (out as Record<string, unknown>).jform =
+              `act:${(forms[0] ?? "-").slice(0, 40)} in:${inputs.join(",").slice(0, 60)} h:${hrefs.join(" ").slice(0, 40)}`.slice(0, 180);
+            // blocks.js — yozuv atrofidagi satrlar (kontekst)
+            const contexts: string[] = [];
+            for (const s2 of ["/blocks/blocks.js?v=3", "/assets/scripts/modules/main-redesign.min.js"]) {
               try {
-                const rr = await fetch(abs, { headers: { "User-Agent": "Mozilla/5.0" }, redirect: "manual" });
-                scanTxt(await rr.text());
+                const rr = await fetch(`https://emaktab.uz${s2}`, { headers: { "User-Agent": "Mozilla/5.0" }, redirect: "manual" });
+                const bb = await rr.text();
+                const re = /["'`]([^"'\`]{0,60}(?:[Mm]ark|conduct|Conduct|visited|attended|upload|Upload)[^"'\`]{0,60})["'`]/g;
+                for (const mm of bb.matchAll(re)) {
+                  const u = mm[1];
+                  if (u.includes("/") && !/(Popup|Settings|Message|Button|Icon|Label|css|png)/.test(u) && contexts.length < 4) contexts.push(u.slice(0, 56));
+                }
               } catch {
                 /* o'tkazib yuboramiz */
               }
             }
-            // 3) Modul fayllari (urinishlar CHEKLANGAN — vaqt tugamasligi uchun)
-            const fetchedMods: string[] = [];
-            let fetched = 0;
-            let attempts = 0;
-            const baseClean = baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
-            for (const id of [...modIds]) {
-              if (fetched >= 4 || attempts >= 9) break;
-              for (const cand of [
-                `https://emaktab.uz${baseClean.startsWith("/") ? "" : "/"}${baseClean}${id}.js`,
-                `https://emaktab.uz/blocks/${id}.js`,
-                `https://emaktab.uz/assets/scripts/modules/${id}.js`,
-              ]) {
-                if (attempts >= 9) break;
-                attempts++;
-                try {
-                  const rr = await fetch(cand, { headers: { "User-Agent": "Mozilla/5.0" }, redirect: "manual" });
-                  if (rr.status === 200) {
-                    scanTxt(await rr.text());
-                    fetchedMods.push(id.slice(0, 16));
-                    fetched++;
-                    break;
-                  }
-                } catch {
-                  /* o'tkazib yuboramiz */
-                }
-              }
-            }
-            (out as Record<string, unknown>).japi = [...urls].slice(0, 5).map((p2) => p2.slice(0, 40)).join(" ").slice(0, 180) || "-";
-            (out as Record<string, unknown>).jmod = `${modIds.size}:${fetchedMods.join(",").slice(0, 60)}`.slice(0, 80);
-            parts.push(`js:${srcs.length}x${fetched}`);
+            (out as Record<string, unknown>).jctx = contexts.join(" | ").slice(0, 180) || "-";
+            parts.push("ok");
           } catch (error) {
             parts.push(`xato ${String(error).slice(0, 20)}`);
           }
