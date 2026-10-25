@@ -230,6 +230,11 @@ export async function GET(req: NextRequest) {
         (out as Record<string, unknown>).j2 = g2.join(" ~~ ").slice(0, 900) || "-";
         (out as Record<string, unknown>).jread = outL.length > 0 ? "ok" : "-";
         (out as Record<string, unknown>).jlen = `html=${hj.length}`;
+        } catch (e15) {
+          (out as Record<string, unknown>).jread = "xato " + String(e15).slice(0, 40);
+        }
+        return NextResponse.json(out);
+      }
       // ?jmods=1 — jurnal sahifasidagi require/define modul IDlari
       if (sp.get("jmods")) {
         try {
@@ -256,11 +261,7 @@ export async function GET(req: NextRequest) {
         }
         return NextResponse.json(out);
       }
-        } catch (e15) {
-          (out as Record<string, unknown>).jread = "xato " + String(e15).slice(0, 40);
-        }
-        return NextResponse.json(out);
-      }
+
       // ?check=1 — ma'lumot oqimlarini ham sinaymiz (menyu funksiyalari).
       if (sp.get("check")) {
         const check: Record<string, string> = {};
