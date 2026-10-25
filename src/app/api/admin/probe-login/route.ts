@@ -157,24 +157,22 @@ export async function GET(req: NextRequest) {
             check[label] = `xato ${String(error).slice(0, 25)}`;
           }
         }
-        // JOURNAL state: barcha URL/API kalitlari (nomlar) + muhim qiymatlar
+        // Jurnal haftalik sahifasi: formalar + AJAX url: nishonlari + data-url
         {
           const parts: string[] = [];
           try {
             const jw = `https://emaktab.uz/journal/school/${encodeURIComponent(result.session.active.schoolId)}/group/2524942980748797372/week/26/10`;
             const hj = await pageGet(result.session.cookies, jw);
-            const keys = new Set<string>();
-            for (const m of hj.matchAll(/"([a-zA-Z][a-zA-Z0-9]{2,40}(?:Url|URL|Api|Handler|Upload|Path|Endpoint)[a-zA-Z0-9]{0,20})"\s*:/g)) {
-              keys.add(m[1]);
-            }
-            (out as Record<string, unknown>).jkeys = [...keys].slice(0, 12).join(" ").slice(0, 190) || "-";
-            // Eng muhim kalitlarning to'liq qiymatlari
-            const kv = (k: string): string => {
-              const m = hj.match(new RegExp(`"${k}"\\s*:\\s*"([^"]{3,150})"`)) ?? hj.match(new RegExp(`\\b${k}\\s*:\\s*"([^"]{3,150})"`));
-              return m ? m[1].replace(/\\u0026/g, "&").replace(/&amp;/g, "&") : "-";
-            };
-            (out as Record<string, unknown>).jvals =
-              [kv("fileUploadApiUrl"), kv("taskStateHandlerUrl"), kv("exportUrl")].map((x) => x.slice(0, 60)).join(" ").slice(0, 190);
+            const forms = [...new Set([...hj.matchAll(/<form[^>]*action="([^"]{2,120})"/gi)].map((m) => m[1]))].slice(0, 3);
+            const inputs = [...new Set([...hj.matchAll(/<(?:input|button|select)[^>]+name="([^"]{2,50})"/gi)].map((m) => m[1]))].slice(0, 8);
+            const ajaxUrls = new Set<string>();
+            for (const mm of hj.matchAll(/url\s*:\s*["']([^"']{3,110})["']/gi)) ajaxUrls.add(mm[1].split("?")[0]);
+            for (const mm of hj.matchAll(/data-(?:url|post|href|action)="([^"]{3,110})"/gi)) ajaxUrls.add(mm[1].split("?")[0]);
+            for (const mm of hj.matchAll(/\.(?:post|get|ajax|put)\(\s*["']([^"']{3,110})["']/gi)) ajaxUrls.add(mm[1].split("?")[0]);
+            (out as Record<string, unknown>).jpost =
+              [...ajaxUrls].slice(0, 5).map((u) => u.slice(0, 40)).join(" ").slice(0, 180) || "-";
+            (out as Record<string, unknown>).jform2 =
+              `f:${forms.map((f) => f.slice(0, 34)).join(",")} in:${inputs.join(",").slice(0, 70)}`.slice(0, 180);
             parts.push("ok");
           } catch (error) {
             parts.push(`xato ${String(error).slice(0, 20)}`);
