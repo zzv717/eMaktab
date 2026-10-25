@@ -256,6 +256,11 @@ export async function GET(req: NextRequest) {
             if (acc2.length >= 3) break;
           }
           (out as Record<string, unknown>).jc = acc2.join(" ~~ ").slice(0, 700) || "-";
+        } catch (e16) {
+          (out as Record<string, unknown>).jmods = "xato " + String(e16).slice(0, 40);
+        }
+        return NextResponse.json(out);
+      }
       // ?jfind=1 — keng qidiruv: MetaGroup/ctp/o'tkazildi/init naqshlari + schools journals sahifasi
       if (sp.get("jfind")) {
         try {
@@ -289,11 +294,7 @@ export async function GET(req: NextRequest) {
         }
         return NextResponse.json(out);
       }
-        } catch (e16) {
-          (out as Record<string, unknown>).jmods = "xato " + String(e16).slice(0, 40);
-        }
-        return NextResponse.json(out);
-      }
+
 
       // ?check=1 — ma'lumot oqimlarini ham sinaymiz (menyu funksiyalari).
       if (sp.get("check")) {
