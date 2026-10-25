@@ -209,11 +209,12 @@ export async function GET(req: NextRequest) {
         const outL: string[] = [];
         // inline skriptlar
         const inl = [...hj.matchAll(/<script[^>]*>([\s\S]{50,}?)<\/script>/gi)].map((m) => m[1]);
-        const kws = /odo\/|conducted|editlesson|o'tkaz|otkaz|ctp|workplan|ish.?reja|upload|editmark|lessonlog/gi;
+        // avval ctpApi va yozuv endpointlari (aniq kalit so'zlar)
+        const kws = /ctpApi\w*|editmark|editlesson|conducted|\/odo\/|uploadfile|uploadtask|workplan/gi;
         for (const sc of inl) {
           for (const mm of sc.matchAll(kws)) {
             const i = mm.index ?? 0;
-            outL.push(sc.slice(Math.max(0, i - 60), i + 280).replace(/\s+/g, " "));
+            outL.push(sc.slice(Math.max(0, i - 30), i + 320).replace(/\s+/g, " "));
             if (outL.length >= 4) break;
           }
           if (outL.length >= 4) break;
