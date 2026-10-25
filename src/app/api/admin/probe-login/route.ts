@@ -104,18 +104,15 @@ export async function GET(req: NextRequest) {
         } catch (e9) {
           (out as Record<string, unknown>).jreq = "xato " + String(e9).slice(0, 25);
         }
-        // Keng path skaneri: /marks /conduct /ctp kabi qisqa yollar (ilgari tushib qolgan)
+        // "odo/" qardosh yollari + hostni aniqlash
         try {
           const jw = `https://emaktab.uz/journal/school/${encodeURIComponent(result.session.active.schoolId)}/group/2524942980748797372/week/26/10`;
           const hj = await pageGet(result.session.cookies, jw);
           const srcs = [...new Set([...hj.matchAll(/<script[^>]+src="([^"]+)"/gi)].map((m) => m[1]))].slice(0, 5);
           const paths = new Set<string>();
           const scan = (bb: string): void => {
-            for (const mm of bb.matchAll(/["'`](\/[a-zA-Z][a-zA-Z0-9/_\-.]{2,60})["'`]/g)) {
-              const u = mm[1];
-              if (/(mark|conduct|visit|task|ctp|upload|lesson|diary|plan|work|present|absent|journal)/i.test(u) && !/(\.css|\.png|\.svg|\.woff|\.ico|static)/i.test(u)) {
-                paths.add(u.slice(0, 44));
-              }
+            for (const mm of bb.matchAll(/["'`]([^"'\`]{0,24}odo\/[^"'\`]{0,70})["'`]/g)) {
+              paths.add(mm[1].split("?")[0].slice(0, 48));
             }
           };
           scan(hj);
@@ -128,7 +125,22 @@ export async function GET(req: NextRequest) {
               /* o'tkazib yuboramiz */
             }
           }
-          (out as Record<string, unknown>).ju4 = [...paths].slice(0, 5).join(" ").slice(0, 190) || "-";
+          (out as Record<string, unknown>).ju4 = [...paths].slice(0, 4).join(" ").slice(0, 180) || "-";
+          // host sinovi
+          const ck = Object.entries(result.session.cookies).map(([k, v]) => `${k}=${v}`).join("; ");
+          const res: string[] = [];
+          for (const host of ["https://emaktab.uz", "https://schools.emaktab.uz"]) {
+            try {
+              const rr = await fetch(`${host}/odo/journals/journalmark/editmark/`, {
+                headers: { "User-Agent": "Mozilla/5.0", Cookie: ck },
+                redirect: "manual",
+              });
+              res.push(`${host.includes("schools") ? "sch" : "em"}:${rr.status}`);
+            } catch {
+              res.push("x");
+            }
+          }
+          (out as Record<string, unknown>).jhost = res.join(" ");
         } catch (e12) {
           (out as Record<string, unknown>).ju4 = "xato " + String(e12).slice(0, 25);
         }
