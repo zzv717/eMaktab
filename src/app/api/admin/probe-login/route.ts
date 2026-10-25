@@ -104,14 +104,33 @@ export async function GET(req: NextRequest) {
         } catch (e9) {
           (out as Record<string, unknown>).jreq = "xato " + String(e9).slice(0, 25);
         }
-        // Modul fayllari: require.config paths xaritasini to'liq olish
+        // Keng path skaneri: /marks /conduct /ctp kabi qisqa yollar (ilgari tushib qolgan)
         try {
           const jw = `https://emaktab.uz/journal/school/${encodeURIComponent(result.session.active.schoolId)}/group/2524942980748797372/week/26/10`;
           const hj = await pageGet(result.session.cookies, jw);
-          const cfg = hj.match(/require(?:js)?\.config\(\s*\{[\s\S]{0,700}/);
-          (out as Record<string, unknown>).jcfg = (cfg?.[0] ?? "-").replace(/\s+/g, " ").slice(0, 320);
-        } catch (e11) {
-          (out as Record<string, unknown>).jcfg = "xato " + String(e11).slice(0, 25);
+          const srcs = [...new Set([...hj.matchAll(/<script[^>]+src="([^"]+)"/gi)].map((m) => m[1]))].slice(0, 5);
+          const paths = new Set<string>();
+          const scan = (bb: string): void => {
+            for (const mm of bb.matchAll(/["'`](\/[a-zA-Z][a-zA-Z0-9/_\-.]{2,60})["'`]/g)) {
+              const u = mm[1];
+              if (/(mark|conduct|visit|task|ctp|upload|lesson|diary|plan|work|present|absent|journal)/i.test(u) && !/(\.css|\.png|\.svg|\.woff|\.ico|static)/i.test(u)) {
+                paths.add(u.slice(0, 44));
+              }
+            }
+          };
+          scan(hj);
+          for (const s2 of srcs) {
+            const abs = s2.startsWith("http") ? s2 : `https://emaktab.uz${s2.startsWith("/") ? "" : "/"}${s2}`;
+            try {
+              const rr = await fetch(abs, { headers: { "User-Agent": "Mozilla/5.0" }, redirect: "manual" });
+              if (rr.status === 200) scan(await rr.text());
+            } catch {
+              /* o'tkazib yuboramiz */
+            }
+          }
+          (out as Record<string, unknown>).ju4 = [...paths].slice(0, 5).join(" ").slice(0, 190) || "-";
+        } catch (e12) {
+          (out as Record<string, unknown>).ju4 = "xato " + String(e12).slice(0, 25);
         }
 
       // ?check=1 — ma'lumot oqimlarini ham sinaymiz (menyu funksiyalari).
