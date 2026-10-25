@@ -157,45 +157,47 @@ export async function GET(req: NextRequest) {
             check[label] = `xato ${String(error).slice(0, 25)}`;
           }
         }
-        // Jurnal kashfiyoti 4: static.emaktab.uz/client ilovasi — upload/CTP yollari
+        // Jurnal kashfiyoti 5: kontekst oynalari + /javascripts/ modul urinishlari
         {
           const parts: string[] = [];
           try {
             const pu = `https://schools.emaktab.uz/journals/?school=${encodeURIComponent(result.session.active.schoolId)}&group=2524942980748797372&subject=1856018561884296245&period=2525707862884565213`;
             const hp = await pageGet(result.session.cookies, pu);
             const srcs = [...new Set([...hp.matchAll(/<script[^>]+src="([^"]+)"/gi)].map((m) => m[1]))]
-              .filter((x) => /static|client|journal/i.test(x))
-              .slice(0, 4);
-            (out as Record<string, unknown>).js2 = srcs.map((x) => x.replace(/^https?:\/\/[^/]+/, "").slice(0, 44)).join(" ").slice(0, 170) || "-";
-            const urls = new Set<string>();
-            const scan = (txt: string): void => {
-              const re = /["'`]((?:https?:\/\/[^"'` ]{2,40})?\/(?:api|v2|journals?|upload|Task|File)[a-zA-Z0-9/_\-.]{2,70})["'`]/gi;
-              for (const mm of txt.matchAll(re)) {
-                const u = mm[1].replace(/^https?:\/\/[^/]+/, "").split("?")[0];
-                if (!/(\.css|\.png|\.svg|\.woff|\.ico|static)/i.test(u)) urls.add(u);
-              }
-              const re2 = /["'`]([^"'\` ]{2,50}(?:upload|Upload|ctp|Ctp|Xlsx|xls|Excel|TaskState|planning|Plann)[^"'\` ]{0,40})["'`]/g;
-              for (const mm of txt.matchAll(re2)) {
-                const u = mm[1];
-                if (u.includes("/") && urls.size < 10 && !/(Popup|Settings|Message|Button|css|png|svg)/.test(u)) urls.add(u.slice(0, 50));
-              }
-            };
-            let fetched = 0;
+              .filter((x) => /libs\.min|main\.min/i.test(x))
+              .slice(0, 2);
+            const windows: string[] = [];
             for (const s2 of srcs) {
-              if (fetched >= 4) break;
               const abs = s2.startsWith("http") ? s2 : `https://schools.emaktab.uz${s2.startsWith("/") ? "" : "/"}${s2}`;
               try {
                 const rr = await fetch(abs, { headers: { "User-Agent": "Mozilla/5.0" }, redirect: "manual" });
-                if (rr.status === 200) {
-                  scan(await rr.text());
-                  fetched++;
+                const bb = await rr.text();
+                for (const kw of [/upload/i, /ctp/i, /taskstate/i]) {
+                  const m = bb.search(kw);
+                  if (m >= 0 && windows.length < 3) windows.push(`${s2.slice(-12)}~${bb.slice(Math.max(0, m - 30), m + 50).replace(/\s+/g, " ")}`);
                 }
               } catch {
                 /* o'tkazib yuboramiz */
               }
             }
-            (out as Record<string, unknown>).ju = [...urls].slice(0, 5).map((u) => u.slice(0, 38)).join(" ").slice(0, 180) || "-";
-            parts.push(`js:${srcs.length}x${fetched}`);
+            (out as Record<string, unknown>).jctx2 = windows.join(" || ").slice(0, 190) || "-";
+            // /javascripts/ modul urinishlari
+            const tries = [
+              "/javascripts/CtpPopup/CtpPopup_utils.js",
+              "/javascripts/CtpPopup.js",
+              "/javascripts/modules/CtpPopup.js",
+            ];
+            const res: string[] = [];
+            for (const t of tries) {
+              try {
+                const rr = await fetch(`https://schools.emaktab.uz${t}`, { headers: { "User-Agent": "Mozilla/5.0" }, redirect: "manual" });
+                res.push(`${t.slice(0, 28)}:${rr.status}`);
+              } catch {
+                res.push(`${t.slice(0, 28)}:x`);
+              }
+            }
+            (out as Record<string, unknown>).jtry = res.join(" ").slice(0, 150);
+            parts.push("ok");
           } catch (error) {
             parts.push(`xato ${String(error).slice(0, 20)}`);
           }
