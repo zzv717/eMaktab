@@ -204,7 +204,7 @@ export async function GET(req: NextRequest) {
             const scan = (bb: string): void => {
               for (const mm of bb.matchAll(/odo\//g)) {
                 const i = mm.index ?? 0;
-                hits.push(bb.slice(Math.max(0, i - 45), i + 50).replace(/\s+/g, " "));
+                hits.push(bb.slice(Math.max(0, i - 50), i + 190).replace(/\s+/g, " "));
               }
             };
             scan(hj);
@@ -221,7 +221,8 @@ export async function GET(req: NextRequest) {
                 /* o'tkazib yuboramiz */
               }
             }
-            (out as Record<string, unknown>).ju4 = hits.slice(0, 3).join(" || ").slice(0, 280) || "-";
+            (out as Record<string, unknown>).ju4 = hits.slice(0, 2).join(" || ").slice(0, 380) || "-";
+            (out as Record<string, unknown>).jsrc = srcs.map((u) => u.slice(-60)).join(" ").slice(0, 300);
           } catch (e14) {
             (out as Record<string, unknown>).ju4 = "xato " + String(e14).slice(0, 20);
           }
