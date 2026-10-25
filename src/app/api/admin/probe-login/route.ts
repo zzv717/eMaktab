@@ -157,47 +157,45 @@ export async function GET(req: NextRequest) {
             check[label] = `xato ${String(error).slice(0, 25)}`;
           }
         }
-        // Jurnal kashfiyoti 3: sahifa tuzilishi + requirejs paths + modul IDlari
+        // Jurnal kashfiyoti 4: static.emaktab.uz/client ilovasi — upload/CTP yollari
         {
           const parts: string[] = [];
           try {
-            const jw = `https://emaktab.uz/journal/school/${encodeURIComponent(result.session.active.schoolId)}/group/2524942980748797372/week/26/10`;
-            const hj = await pageGet(result.session.cookies, jw);
-            // Jurnal sahifasidagi havolalar (app URL naqshlari)
-            const hrefs = [...new Set([...hj.matchAll(/href="([^"]{6,110})"/gi)].map((m) => m[1]))]
-              .filter((h) => /journal|lesson|plan|task|ctp|week/i.test(h))
-              .slice(0, 4);
-            (out as Record<string, unknown>).jhref = hrefs.map((h) => h.slice(0, 42)).join(" ").slice(0, 170) || "-";
-            // Ish-reja sahifasi tuzilishi
             const pu = `https://schools.emaktab.uz/journals/?school=${encodeURIComponent(result.session.active.schoolId)}&group=2524942980748797372&subject=1856018561884296245&period=2525707862884565213`;
             const hp = await pageGet(result.session.cookies, pu);
-            const title = (hp.match(/<title>([^<]{1,60})/i) ?? [])[1] ?? "-";
-            const h1 = (hp.match(/<h1[^>]*>([\s\S]{1,80}?)<\/h1>/i) ?? [])[1]?.replace(/<[^>]+>/g, "").trim() ?? "-";
-            const scripts = [...new Set([...hp.matchAll(/<script[^>]+src="([^"]+)"/gi)].map((m) => m[1]))].slice(0, 3);
-            const forms = [...new Set([...hp.matchAll(/<form[^>]*action="([^"]{2,120})"/gi)].map((m) => m[1]))].slice(0, 3);
-            (out as Record<string, unknown>).jp =
-              `${title.slice(0, 22)}|${h1.slice(0, 22)}|f:${forms.map((f) => f.slice(0, 24)).join(",")}|s:${scripts.map((x) => x.slice(0, 26)).join(",")}`.slice(0, 180);
-            // requirejs paths + modul ID namunalari
-            let pathsSnip = "-";
-            let defSnip = "-";
-            for (const s2 of ["/assets/scripts/modules/redesign.min.js", "/assets/scripts/modules/main-redesign.min.js", "/blocks/blocks.js?v=3"]) {
+            const srcs = [...new Set([...hp.matchAll(/<script[^>]+src="([^"]+)"/gi)].map((m) => m[1]))]
+              .filter((x) => /static|client|journal/i.test(x))
+              .slice(0, 4);
+            (out as Record<string, unknown>).js2 = srcs.map((x) => x.replace(/^https?:\/\/[^/]+/, "").slice(0, 44)).join(" ").slice(0, 170) || "-";
+            const urls = new Set<string>();
+            const scan = (txt: string): void => {
+              const re = /["'`]((?:https?:\/\/[^"'` ]{2,40})?\/(?:api|v2|journals?|upload|Task|File)[a-zA-Z0-9/_\-.]{2,70})["'`]/gi;
+              for (const mm of txt.matchAll(re)) {
+                const u = mm[1].replace(/^https?:\/\/[^/]+/, "").split("?")[0];
+                if (!/(\.css|\.png|\.svg|\.woff|\.ico|static)/i.test(u)) urls.add(u);
+              }
+              const re2 = /["'`]([^"'\` ]{2,50}(?:upload|Upload|ctp|Ctp|Xlsx|xls|Excel|TaskState|planning|Plann)[^"'\` ]{0,40})["'`]/g;
+              for (const mm of txt.matchAll(re2)) {
+                const u = mm[1];
+                if (u.includes("/") && urls.size < 10 && !/(Popup|Settings|Message|Button|css|png|svg)/.test(u)) urls.add(u.slice(0, 50));
+              }
+            };
+            let fetched = 0;
+            for (const s2 of srcs) {
+              if (fetched >= 4) break;
+              const abs = s2.startsWith("http") ? s2 : `https://schools.emaktab.uz${s2.startsWith("/") ? "" : "/"}${s2}`;
               try {
-                const rr = await fetch(`https://emaktab.uz${s2}`, { headers: { "User-Agent": "Mozilla/5.0" }, redirect: "manual" });
-                const bb = await rr.text();
-                if (pathsSnip === "-") {
-                  const pm = bb.match(/paths\s*:\s*\{[^}]{0,120}/);
-                  if (pm) pathsSnip = pm[0].slice(0, 80);
-                }
-                if (defSnip === "-") {
-                  const defs = [...bb.matchAll(/define\(\s*["']([^"']{3,50})["']/g)].slice(0, 3).map((m) => m[1]);
-                  if (defs.length > 0) defSnip = defs.join(" ").slice(0, 70);
+                const rr = await fetch(abs, { headers: { "User-Agent": "Mozilla/5.0" }, redirect: "manual" });
+                if (rr.status === 200) {
+                  scan(await rr.text());
+                  fetched++;
                 }
               } catch {
                 /* o'tkazib yuboramiz */
               }
             }
-            (out as Record<string, unknown>).jdef = `${pathsSnip} || ${defSnip}`.slice(0, 180);
-            parts.push("ok");
+            (out as Record<string, unknown>).ju = [...urls].slice(0, 5).map((u) => u.slice(0, 38)).join(" ").slice(0, 180) || "-";
+            parts.push(`js:${srcs.length}x${fetched}`);
           } catch (error) {
             parts.push(`xato ${String(error).slice(0, 20)}`);
           }
