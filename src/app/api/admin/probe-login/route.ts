@@ -88,11 +88,22 @@ export async function GET(req: NextRequest) {
               `${r.classId ?? "?"}/${r.emaktabLogin.slice(0, 4)}x${days.length}d:${segs.join(" ; ")}`.slice(0, 260),
             );
           }
-          (out as Record<string, unknown>).dia = (outLines.join(" | ") || "hisob-yok").slice(0, 300);
-        } catch (e8) {
-          (out as Record<string, unknown>).dia = "xato " + String(e8).slice(0, 40);
+            (out as Record<string, unknown>).dia = (outLines.join(" | ") || "hisob-yok").slice(0, 300);
+          } catch (e8) {
+            (out as Record<string, unknown>).dia = "xato " + String(e8).slice(0, 40);
+          }
         }
-      }
+        // requirejs: data-main + inline require.config (modul fayllari manzili)
+        try {
+          const jw = `https://emaktab.uz/journal/school/${encodeURIComponent(result.session.active.schoolId)}/group/2524942980748797372/week/26/10`;
+          const hj = await pageGet(result.session.cookies, jw);
+          const dm = [...hj.matchAll(/data-main="([^"]{2,80})"/gi)].map((m) => m[1]);
+          const cfg = hj.match(/require(?:js)?\.config\(\s*\{[\s\S]{0,160}/);
+          (out as Record<string, unknown>).jreq =
+            `dm:${dm.join(",").slice(0, 50)} cfg:${(cfg?.[0] ?? "-").replace(/\s+/g, " ").slice(0, 90)}`.slice(0, 170);
+        } catch (e9) {
+          (out as Record<string, unknown>).jreq = "xato " + String(e9).slice(0, 25);
+        }
 
       // ?check=1 — ma'lumot oqimlarini ham sinaymiz (menyu funksiyalari).
       if (sp.get("check")) {
