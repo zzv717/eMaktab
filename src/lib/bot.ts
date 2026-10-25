@@ -33,6 +33,8 @@ import {
   lessonMatchesTeacherLoad,
   loginEmaktab,
   scheduleFromDiaryDays,
+  setLessonConducted,
+  uploadCtpFile,
   sessionFromCookies,
   submitCaptchaLogin,
   type LoginFormState,
@@ -71,6 +73,7 @@ import {
   classCabinetKeyboard,
   classSelectKeyboard,
   deleteMessage,
+  downloadTelegramFile,
   editMessageText,
   gradesKeyboard,
   kb,
@@ -691,6 +694,12 @@ async function handleMessage(message: TelegramMessage) {
     return;
   }
 
+  // --- Ish reja fayli (dokument) ---
+  if (message.document && (user.state ?? "").startsWith("ctp_file:")) {
+    await handleCtpDocument(chatId, user, message);
+    return;
+  }
+
   // --- Buyruqlar ---
   if (text === "/start") {
     await resetState(from.id);
@@ -1037,6 +1046,14 @@ async function handleMessage(message: TelegramMessage) {
       else await sendWeekView(chatId, user);
       return;
     }
+    if (text === MENU_TEXT.conduct) {
+      if (isTeacher(user)) await sendConductStart(chatId, user);
+      return;
+    }
+    if (text === MENU_TEXT.ctp) {
+      if (isTeacher(user)) await sendCtpStart(chatId, user);
+      return;
+    }
     if (text === MENU_TEXT.profile) {
       await sendProfileView(chatId, user);
       return;
@@ -1170,6 +1187,287 @@ async function sendChildOverview(chatId: number, user: BotUser, child: ChildCont
   } catch (error) {
     await failProgress(chatId, progress, "Farzand ma'lumotlari");
     await sendEmaktabError(chatId, user, error);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// ✅ Darsni o'tildi qilish + 📄 Ish reja joylashtirish (o'qituvchi oqimlari)
+// ---------------------------------------------------------------------------
+
+const ADMIN_NICK = "@zzv717";
+
+/** Haqiqiy o'qituvchi yuklamasi (TEACHERV2 guruhlari + jurnal yozuvlari). */
+async function teacherLoad(user: BotUser): Promise<ClassLink[]> {
+  return withSession(user, async (s) => {
+    const groups = await fetchTeacherGroups(s);
+    return groups.map((g) => ({
+      classId: g.classId,
+      className: g.className,
+      isClassTeacher: g.isClassTeacher,
+      subjects: g.subjects,
+    }));
+  }).catch(() => [] as ClassLink[]);
+}
+
+function adminFailNote(reason?: string | null): string {
+  return (
+    `\n\n💡 <i>Yordam uchun admin bilan bog'laning: <b>${ADMIN_NICK}</b></i>` +
+    (reason ? `\n\n🔍 <i>Sabab: ${escapeHtml(reason)}</i>` : "")
+  );
+}
+
+async function sendConductStart(chatId: number, user: BotUser) {
+  const classes = await teacherLoad(user);
+  if (classes.length === 0) {
+    await sendMessage(chatId, "⚠️ Sinflar topilmadi. Keyinroq qayta urinib ko'ring.", { replyMarkup: menuFor(user) });
+    return;
+  }
+  const rows = classes.map((c) => [{ text: `🏫 ${c.className}`, callback_data: `cond:${c.classId}` }]);
+  rows.push([{ text: "🏠 Asosiy menyu", callback_data: "menu:home" }]);
+  await sendMessage(
+    chatId,
+    `✅ <b>Darsni o'tildi qilish</b>\n\n1️⃣ Sinifni tanlang:`,
+    { replyMarkup: kb(rows) },
+  );
+}
+
+async function sendCtpStart(chatId: number, user: BotUser) {
+  const classes = await teacherLoad(user);
+  if (classes.length === 0) {
+    await sendMessage(chatId, "⚠️ Sinflar topilmadi. Keyinroq qayta urinib ko'ring.", { replyMarkup: menuFor(user) });
+    return;
+  }
+  const rows = classes.map((c) => [{ text: `🏫 ${c.className}`, callback_data: `ctp:${c.classId}` }]);
+  rows.push([{ text: "🏠 Asosiy menyu", callback_data: "menu:home" }]);
+  await sendMessage(
+    chatId,
+    `📄 <b>Ish reja joylashtirish</b>\n\n1️⃣ Sinifni tanlang:`,
+    { replyMarkup: kb(rows) },
+  );
+}
+
+/** Sinf va fan tanlovi uchun callback konteksti. */
+async function classSubjects(user: BotUser, classId: string): Promise<ClassLink | null> {
+  const classes = await teacherLoad(user);
+  return classes.find((c) => classIdMatch(c.classId, classId)) ?? null;
+}
+
+/** Sinf darslarini (joriy/sana) olish — o'qituvchi yuklamasi asosida. */
+async function classDayLessons(user: BotUser, className: string, dayKey: string) {
+  const { days } = await buildTeacherWeek(user, dayKey, dayKey);
+  const day = days.find((d) => d.date === dayKey);
+  return (day?.lessons ?? []).filter((l) => l.groupName === className);
+}
+
+async function handleConductCallback(chatId: number, user: BotUser, data: string, editTo: (text: string, markup: ReturnType<typeof kb>) => Promise<void>) {
+  if (data === "t:conduct") {
+    await sendConductStart(chatId, user);
+    return;
+  }
+  // cond:{classId} — fan tanlash
+  if (/^cond:\d+$/.test(data)) {
+    const classId = data.slice(5);
+    const cl = await classSubjects(user, classId);
+    if (!cl) {
+      await sendMessage(chatId, "⚠️ Sinf topilmadi.", { replyMarkup: menuFor(user) });
+      return;
+    }
+    const subjects = cl.subjects ?? [];
+    if (subjects.length === 0) {
+      await sendMessage(chatId, "⚠️ Bu sinf uchun fanlar topilmadi.", { replyMarkup: menuFor(user) });
+      return;
+    }
+    const rows = subjects.map((s, i) => [{ text: `📖 ${s}`, callback_data: `conds:${classId}:${i}` }]);
+    rows.push([{ text: "🏠 Asosiy menyu", callback_data: "menu:home" }]);
+    await editTo(`✅ <b>Darsni o'tildi qilish</b> — ${escapeHtml(cl.className)}\n\n2️⃣ Fanni tanlang:`, kb(rows));
+    return;
+  }
+  // conds:{classId}:{subjIdx} — sana tanlash
+  if (/^conds:\d+:\d+$/.test(data)) {
+    const [classId, subjIdxS] = data.slice(6).split(":");
+    const rows: Array<Array<{ text: string; callback_data: string }>> = [];
+    for (let i = 0; i < 6; i++) {
+      const dayKey = shiftDayKey(tashkentDayKey(), -i);
+      rows.push([
+        {
+          text: i === 0 ? `📅 Bugun (${dayKey.slice(8)}.${dayKey.slice(5, 7)})` : `📅 ${dayKey.slice(8)}.${dayKey.slice(5, 7)}`,
+          callback_data: `condd:${classId}:${subjIdxS}:${dayKey}`,
+        },
+      ]);
+    }
+    rows.push([{ text: "🏠 Asosiy menyu", callback_data: "menu:home" }]);
+    await editTo(`✅ <b>Darsni o'tildi qilish</b>\n\n3️⃣ Dars sanasini tanlang:`, kb(rows));
+    return;
+  }
+  // condd:{classId}:{subjIdx}:{dayKey} — dars tanlash
+  if (/^condd:\d+:\d+:\d{4}-\d{2}-\d{2}$/.test(data)) {
+    const rest = data.slice(6);
+    const dayKey = rest.slice(-10);
+    const [classId, subjIdxS] = rest.slice(0, -11).split(":");
+    const cl = await classSubjects(user, classId);
+    const subject = cl?.subjects?.[Number(subjIdxS)] ?? "";
+    const lessons = await classDayLessons(user, cl?.className ?? "", dayKey);
+    const filtered = subject ? lessons.filter((l) => l.subject === subject) : lessons;
+    if (filtered.length === 0) {
+      await sendMessage(chatId, "⚠️ Bu kunda dars topilmadi.", { replyMarkup: menuFor(user) });
+      return;
+    }
+    const rows = filtered.map((l) => [
+      {
+        text: `${l.startTime ?? ""} ${l.number}. ${l.subject}`.slice(0, 48),
+        callback_data: `condl:${classId}:${subjIdxS}:${dayKey}:${l.number}`,
+      },
+    ]);
+    rows.push([{ text: "🏠 Asosiy menyu", callback_data: "menu:home" }]);
+    await editTo(`✅ <b>Darsni o'tildi qilish</b> — ${dayKey.slice(8)}.${dayKey.slice(5, 7)}\n\n4️⃣ Darsni tanlang:`, kb(rows));
+    return;
+  }
+  // condl:{classId}:{subjIdx}:{dayKey}:{lessonNo} — tasdiqlash
+  if (/^condl:\d+:\d+:\d{4}-\d{2}-\d{2}:\d+$/.test(data)) {
+    const rest = data.slice(6);
+    const m = rest.match(/^(\d+):(\d+):(\d{4}-\d{2}-\d{2}):(\d+)$/)!;
+    const [, classId, subjIdxS, dayKey, lessonNo] = m;
+    const rows = [
+      [{ text: "✅ Ha, o'tildi deb belgilash", callback_data: `condgo:${classId}:${subjIdxS}:${dayKey}:${lessonNo}` }],
+      [{ text: "🔙 Bekor qilish", callback_data: "menu:home" }],
+    ];
+    await editTo(
+      `✅ <b>Darsni o'tildi qilish</b>\n\n` +
+        `📅 Sana: <b>${dayKey.slice(8)}.${dayKey.slice(5, 7)}.${dayKey.slice(0, 4)}</b>\n` +
+        `📝 Dars № ${escapeHtml(lessonNo)}\n\n` +
+        `<i>Dars eMaktabda "o'tildi" deb belgilansinmi?</i>`,
+      kb(rows),
+    );
+    return;
+  }
+  // condgo: — bajarish
+  if (/^condgo:\d+:\d+:\d{4}-\d{2}-\d{2}:\d+$/.test(data)) {
+    const rest = data.slice(7);
+    const m = rest.match(/^(\d+):(\d+):(\d{4}-\d{2}-\d{2}):(\d+)$/)!;
+    const [, classId, subjIdxS, dayKey, lessonNo] = m;
+    const progress = await startProgress(chatId, "Dars maqomi belgilanmoqda");
+    try {
+      const cl = await classSubjects(user, classId);
+      const subject = cl?.subjects?.[Number(subjIdxS)] ?? "";
+      const result = await withSession(user, (s) =>
+        setLessonConducted(s, {
+          classId,
+          className: cl?.className ?? "",
+          subjectName: subject,
+          date: dayKey,
+          lessonNumber: Number(lessonNo),
+        }),
+      );
+      if (result.ok) {
+        await finishProgress(chatId, progress, "Dars maqomi");
+        await sendMessage(
+          chatId,
+          `✅ <b>Dars o'tildi deb belgilandi!</b>\n\n📅 ${dayKey.slice(8)}.${dayKey.slice(5, 7)}.${dayKey.slice(0, 4)} — ${escapeHtml(subject)}${cl?.className ? ` (${escapeHtml(cl.className)})` : ""}`,
+          { replyMarkup: menuFor(user) },
+        );
+      } else {
+        await failProgress(chatId, progress, "Dars maqomi");
+        await sendMessage(chatId, `❌ <b>Dars maqomini belgilab bo'lmadi.</b>${adminFailNote(result.reason)}`, {
+          replyMarkup: menuFor(user),
+        });
+      }
+    } catch (error) {
+      await failProgress(chatId, progress, "Dars maqomi");
+      await sendMessage(chatId, `❌ <b>Dars maqomini belgilab bo'lmadi.</b>${adminFailNote(String(error).slice(0, 120))}`, {
+        replyMarkup: menuFor(user),
+      });
+    }
+    return;
+  }
+  // ---- Ish reja (CTP) ----
+  if (data === "t:ctp") {
+    await sendCtpStart(chatId, user);
+    return;
+  }
+  if (/^ctp:\d+$/.test(data)) {
+    const classId = data.slice(4);
+    const cl = await classSubjects(user, classId);
+    if (!cl || (cl.subjects ?? []).length === 0) {
+      await sendMessage(chatId, "⚠️ Fanlar topilmadi.", { replyMarkup: menuFor(user) });
+      return;
+    }
+    const rows = cl.subjects!.map((s, i) => [{ text: `📖 ${s}`, callback_data: `ctps:${classId}:${i}` }]);
+    rows.push([{ text: "🏠 Asosiy menyu", callback_data: "menu:home" }]);
+    await editTo(`📄 <b>Ish reja joylashtirish</b> — ${escapeHtml(cl.className)}\n\n2️⃣ Fanni tanlang:`, kb(rows));
+    return;
+  }
+  if (/^ctps:\d+:\d+$/.test(data)) {
+    const [classId, subjIdxS] = data.slice(5).split(":");
+    await db
+      .update(botUsers)
+      .set({ state: `ctp_file:${classId}:${subjIdxS}`, updatedAt: new Date() })
+      .where(eq(botUsers.telegramId, user.telegramId));
+    await editTo(
+      `📄 <b>Ish reja joylashtirish</b>\n\n3️⃣ Endi <b>.xls</b> yoki <b>.xlsx</b> faylni shu chatga yuboring.\n\n⏳ <i>Fayl kelganda bot "Iltimos kuting…" deb javob beradi.</i>`,
+      kb([[{ text: "❌ Bekor qilish", callback_data: "menu:cancel" }]]),
+    );
+    return;
+  }
+}
+
+/** Yuborilgan ish-reja faylini qabul qilish (faqat o'qituvchi, ctp_file holatida). */
+async function handleCtpDocument(chatId: number, user: BotUser, message: TelegramMessage) {
+  const doc = message.document!;
+  const fileName = (doc.file_name ?? "ish-reja").toLowerCase();
+  const st = user.state ?? "";
+  const m = st.match(/^ctp_file:(\d+):(\d+)$/);
+  if (!m) return;
+  if (!fileName.endsWith(".xls") && !fileName.endsWith(".xlsx")) {
+    await sendMessage(chatId, "⚠️ Faqat <b>.xls</b> yoki <b>.xlsx</b> fayl yuboring.", { replyMarkup: menuFor(user) });
+    return;
+  }
+  const [, classId, subjIdxS] = m;
+  const cl = await classSubjects(user, classId);
+  const subjectName = cl?.subjects?.[Number(subjIdxS)] ?? "";
+  const progress = await startProgress(chatId, "Iltimos kuting…");
+  try {
+    // ikkinchi bosqich xabari
+    await sendMessage(chatId, "⏳ <b>Ish reja joylanmoqda…</b>");
+    const file = await downloadTelegramFile(doc.file_id);
+    if (!file) {
+      await failProgress(chatId, progress, "Ish reja");
+      await sendMessage(chatId, `❌ <b>Ish reja muvaffaqiyatsiz joylashtirildi.</b>${adminFailNote("Telegram faylini yuklab bo'lmadi")}`, {
+        replyMarkup: menuFor(user),
+      });
+    } else {
+      const result = await withSession(user, (s) =>
+        uploadCtpFile(s, {
+          classId,
+          className: cl?.className ?? "",
+          subjectName,
+          fileName: doc.file_name ?? "ish-reja.xlsx",
+          bytes: file.bytes,
+        }),
+      );
+      if (result.ok) {
+        await finishProgress(chatId, progress, "Ish reja");
+        await sendMessage(
+          chatId,
+          `✅ <b>Ish reja muvaffaqiyatli joylandi!</b>\n\n🏫 ${escapeHtml(cl?.className ?? "")} — 📖 ${escapeHtml(subjectName)}\n📄 ${escapeHtml(doc.file_name ?? "")}`,
+          { replyMarkup: menuFor(user) },
+        );
+      } else {
+        await failProgress(chatId, progress, "Ish reja");
+        await sendMessage(chatId, `❌ <b>Ish reja muvaffaqiyatsiz joylashtirildi.</b>${adminFailNote(result.reason)}`, {
+          replyMarkup: menuFor(user),
+        });
+      }
+    }
+  } catch (error) {
+    await failProgress(chatId, progress, "Ish reja");
+    await sendMessage(chatId, `❌ <b>Ish reja muvaffaqiyatsiz joylashtirildi.</b>${adminFailNote(String(error).slice(0, 120))}`, {
+      replyMarkup: menuFor(user),
+    });
+  } finally {
+    await db
+      .update(botUsers)
+      .set({ state: "idle", updatedAt: new Date() })
+      .where(eq(botUsers.telegramId, user.telegramId));
   }
 }
 
@@ -1759,6 +2057,20 @@ async function handleCallback(cb: TelegramCallbackQuery) {
   }
 
   const fresh = (await getUser(cb.from.id)) ?? user;
+
+  // --- Darsni o'tildi qilish / Ish reja oqimlari (o'qituvchi) ---
+  if (
+    data === "t:conduct" ||
+    data === "t:ctp" ||
+    data.startsWith("cond") ||
+    data.startsWith("ctp")
+  ) {
+    await handleConductCallback(chatId, fresh, data, async (text, markup) => {
+      if (messageId) await editMessageText(chatId, messageId, text, { replyMarkup: markup });
+      else await sendMessage(chatId, text, { replyMarkup: markup });
+    });
+    return;
+  }
 
   // --- O'quvchi / ota-ona bo'limlari ---
   if (data === "menu:grades" || data === "grades:refresh") {

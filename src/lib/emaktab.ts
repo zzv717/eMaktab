@@ -1602,6 +1602,202 @@ function lessonFromDiary(raw: DiaryLesson): Lesson {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Yozuv API'lari — "Dars o'tkazildi" belgisi va ish reja fayli (odo)
+// Endpoint naqshlari eMaktab SPA skriptlaridan olingan:
+//   /odo/journals/journalmark/editmark/   (jurnal, baholar)
+// Host hali to'liq tasdiqlanmagani uchun bir nechta haqiqiy hostda sinab ko'riladi
+// (smarty / emaktab / schools / api). Muvaffaqiyatsiz bo'lsa — aniq sabab qaytariladi.
+// ---------------------------------------------------------------------------
+
+export interface WriteResult {
+  ok: boolean;
+  reason?: string | null;
+}
+
+const ODO_HOSTS = [
+  "https://smarty.emaktab.uz",
+  "https://emaktab.uz",
+  "https://schools.emaktab.uz",
+  "https://api.emaktab.uz",
+];
+
+interface OdoCall {
+  status: number;
+  body: string;
+  host: string;
+}
+
+/** Berilgan odo yo'lini hostlar bo'ylab POST qiladi. 404/405 = yo'q, keyingi host. */
+async function odoPost(
+  cookies: Record<string, string>,
+  path: string,
+  json: unknown,
+): Promise<OdoCall | null> {
+  const ck = Object.entries(cookies)
+    .map(([k, v]) => `${k}=${v}`)
+    .join("; ");
+  let last: OdoCall | null = null;
+  for (const host of ODO_HOSTS) {
+    try {
+      const rr = await fetch(`${host}${path}`, {
+        method: "POST",
+        headers: {
+          "User-Agent": "Mozilla/5.0",
+          Cookie: ck,
+          Accept: "application/json, text/plain, */*",
+          "Content-Type": "application/json",
+          "X-Requested-With": "XMLHttpRequest",
+          Referer: "https://emaktab.uz/userfeed",
+        },
+        body: JSON.stringify(json),
+        redirect: "manual",
+      });
+      const text = (await rr.text()).replace(/\s+/g, " ").slice(0, 220);
+      last = { status: rr.status, body: text, host: host.slice(8) };
+      if (rr.status >= 200 && rr.status < 300) return last; // muvaffaqiyat
+      if (rr.status !== 404 && rr.status !== 405) return last; // endpoint bor, javob muhim
+    } catch {
+      /* keyingi host */
+    }
+  }
+  return last;
+}
+
+/** Multipart fayl yuborish (ish reja fayli uchun). */
+async function odoUpload(
+  cookies: Record<string, string>,
+  path: string,
+  fields: Record<string, string>,
+  file: { fileName: string; bytes: Buffer },
+): Promise<OdoCall | null> {
+  const ck = Object.entries(cookies)
+    .map(([k, v]) => `${k}=${v}`)
+    .join("; ");
+  let last: OdoCall | null = null;
+  for (const host of ODO_HOSTS) {
+    try {
+      const fd = new FormData();
+      for (const [k, v] of Object.entries(fields)) fd.append(k, v);
+      fd.append(
+        "file",
+        new Blob([new Uint8Array(file.bytes)], {
+          type:
+            file.fileName.toLowerCase().endsWith(".xlsx") ||
+            file.fileName.toLowerCase().endsWith(".xlsm")
+              ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+              : "application/vnd.ms-excel",
+        }),
+        file.fileName,
+      );
+      const rr = await fetch(`${host}${path}`, {
+        method: "POST",
+        headers: {
+          "User-Agent": "Mozilla/5.0",
+          Cookie: ck,
+          Accept: "application/json, text/plain, */*",
+          "X-Requested-With": "XMLHttpRequest",
+          Referer: "https://emaktab.uz/userfeed",
+        },
+        body: fd,
+        redirect: "manual",
+      });
+      const text = (await rr.text()).replace(/\s+/g, " ").slice(0, 220);
+      last = { status: rr.status, body: text, host: host.slice(8) };
+      if (rr.status >= 200 && rr.status < 300) return last;
+      if (rr.status !== 404 && rr.status !== 405) return last;
+    } catch {
+      /* keyingi host */
+    }
+  }
+  return last;
+}
+
+/**
+ * Darsni o'tkazildi deb belgilash ("Dars o'tkazildi" — eMaktab talabi).
+ * Yo'l nomzodlari SPA naqshidan: /odo/journals/journal{lesson,mark}/...
+ */
+export async function setLessonConducted(
+  s: EmaktabSession,
+  p: {
+    classId: string;
+    className: string;
+    subjectName: string;
+    date: string;
+    lessonNumber: number;
+  },
+): Promise<WriteResult> {
+  const payload = {
+    groupId: p.classId,
+    className: p.className,
+    subjectName: p.subjectName,
+    date: p.date,
+    lessonNumber: p.lessonNumber,
+    conducted: true,
+    isConducted: true,
+  };
+  const tried: string[] = [];
+  for (const path of [
+    "/odo/journals/journallesson/editlesson/",
+    "/odo/journals/journallesson/setconducted/",
+    "/odo/journals/journalmark/editmark/",
+  ]) {
+    const r = await odoPost(s.cookies, path, payload);
+    if (!r) continue;
+    tried.push(`${path.slice(6, 26)}→${r.status}`);
+    if (r.status >= 200 && r.status < 300) return { ok: true, reason: null };
+    // 400/422 = endpoint bor, format talabi ochildi
+    if (r.status === 400 || r.status === 422) {
+      return { ok: false, reason: `server talabi: ${r.body.slice(0, 120)}` };
+    }
+  }
+  return {
+    ok: false,
+    reason: `endpoint topilmadi (${tried.join(" ") || "sinovlar bo'sh"})`,
+  };
+}
+
+/** Ish reja (kalendarlik-reja) faylini joylashtirish. Faqat .xls/.xlsx qabul qilinadi. */
+export async function uploadCtpFile(
+  s: EmaktabSession,
+  p: {
+    classId: string;
+    className: string;
+    subjectName: string;
+    fileName: string;
+    bytes: Buffer;
+  },
+): Promise<WriteResult> {
+  const fields = {
+    groupId: p.classId,
+    className: p.className,
+    subjectName: p.subjectName,
+    fileName: p.fileName,
+    type: "ctp",
+  };
+  const tried: string[] = [];
+  for (const path of [
+    "/odo/journals/journalctp/uploadctp/",
+    "/odo/journals/journaltask/uploadtask/",
+    "/odo/journals/journalctp/editctp/",
+  ]) {
+    const r = await odoUpload(s.cookies, path, fields, {
+      fileName: p.fileName,
+      bytes: p.bytes,
+    });
+    if (!r) continue;
+    tried.push(`${path.slice(6, 28)}→${r.status}`);
+    if (r.status >= 200 && r.status < 300) return { ok: true, reason: null };
+    if (r.status === 400 || r.status === 422) {
+      return { ok: false, reason: `server talabi: ${r.body.slice(0, 120)}` };
+    }
+  }
+  return {
+    ok: false,
+    reason: `endpoint topilmadi (${tried.join(" ") || "sinovlar bo'sh"})`,
+  };
+}
+
 function dayKeyFromDiaryDate(value: string | number | undefined): string {
   if (value === undefined || value === null || value === "") return tashkentDayKey();
   const n = Number(value);
