@@ -385,6 +385,19 @@ export async function GET(req: NextRequest) {
         }
         return NextResponse.json(out);
       }
+      // ?jtail=1 — haftalik jurnal sahifasi boshi va oxiri
+      if (sp.get("jtail")) {
+        try {
+          const jw = `https://emaktab.uz/journal/school/${encodeURIComponent(result.session.active.schoolId)}/group/2524942980748797372/week/26/10`;
+          const hj = await pageGet(result.session.cookies, jw);
+          (out as Record<string, unknown>).jt1 = hj.slice(0, 1200).replace(/\s+/g, " ");
+          (out as Record<string, unknown>).jt2 = hj.slice(-3000).replace(/\s+/g, " ").slice(0, 1600);
+        } catch (e23) {
+          (out as Record<string, unknown>).jt1 = "xato " + String(e23).slice(0, 40);
+        }
+        return NextResponse.json(out);
+      }
+
 
 
 
