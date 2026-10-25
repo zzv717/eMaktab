@@ -157,34 +157,36 @@ export async function GET(req: NextRequest) {
             check[label] = `xato ${String(error).slice(0, 25)}`;
           }
         }
-        // smarty.emaktab.uz + smart-integration yollari (yozuv endpointlari)
+        // smarty/smart-integration atrofidagi KOD konteksti (yo'l qo'shimchalari)
         {
           const parts: string[] = [];
           try {
             const jw = `https://emaktab.uz/journal/school/${encodeURIComponent(result.session.active.schoolId)}/group/2524942980748797372/week/26/10`;
             const hj = await pageGet(result.session.cookies, jw);
-            const smartPaths = new Set<string>();
-            for (const mm of hj.matchAll(/smarty\.emaktab\.uz(\/[a-zA-Z0-9/_\-.]{2,70})/g)) smartPaths.add(mm[1].split("?")[0]);
-            for (const mm of hj.matchAll(/smart-integration(\/[a-zA-Z0-9/_\-.]{0,70})/g)) smartPaths.add(`/api/v1/smart-integration${mm[1].split("?")[0]}`);
-            (out as Record<string, unknown>).jsm = [...smartPaths].slice(0, 5).map((u) => u.slice(0, 44)).join(" ").slice(0, 190) || "-";
-            // smarty root + keng ajax url satrlari
-            const wide = new Set<string>();
-            for (const mm of hj.matchAll(/url\s*:\s*["']([^"']{3,140})["']/gi)) {
-              const u = mm[1].split("?")[0];
-              if (/(smarty|smart|mark|conduct|visit|task|ctp|upload|lesson)/i.test(u)) wide.add(u.slice(0, 56));
+            const windows: string[] = [];
+            const grab = (label: string, txt: string, re: RegExp): void => {
+              for (const mm of txt.matchAll(re)) {
+                if (windows.length >= 4) break;
+                windows.push(`${label}~${txt.slice(Math.max(0, mm.index - 25), mm.index + 65).replace(/\s+/g, " ")}`);
+              }
+            };
+            grab("pg", hj, /smarty|smart-integration/gi);
+            const srcs = [...new Set([...hj.matchAll(/<script[^>]+src="([^"]+)"/gi)].map((m) => m[1]))].slice(0, 5);
+            let fi = 0;
+            for (const s2 of srcs) {
+              if (windows.length >= 4) break;
+              const abs = s2.startsWith("http") ? s2 : `https://emaktab.uz${s2.startsWith("/") ? "" : "/"}${s2}`;
+              try {
+                const rr = await fetch(abs, { headers: { "User-Agent": "Mozilla/5.0" }, redirect: "manual" });
+                if (rr.status === 200) {
+                  grab(`f${fi}`, await rr.text(), /smarty|smart-integration/gi);
+                  fi++;
+                }
+              } catch {
+                /* o'tkazib yuboramiz */
+              }
             }
-            (out as Record<string, unknown>).jwide = [...wide].slice(0, 4).join(" ").slice(0, 190) || "-";
-            try {
-              const ck = Object.entries(result.session.cookies).map(([k, v]) => `${k}=${v}`).join("; ");
-              const rr = await fetch("https://smarty.emaktab.uz/", {
-                headers: { "User-Agent": "Mozilla/5.0", Cookie: ck },
-                redirect: "manual",
-              });
-              const body = (await rr.text()).slice(0, 60).replace(/\s+/g, " ");
-              (out as Record<string, unknown>).jsroot = `${rr.status} ${body}`.slice(0, 90);
-            } catch (e7) {
-              (out as Record<string, unknown>).jsroot = "x " + String(e7).slice(0, 25);
-            }
+            (out as Record<string, unknown>).jsm2 = windows.join(" || ").slice(0, 190) || "-";
             parts.push("ok");
           } catch (error) {
             parts.push(`xato ${String(error).slice(0, 20)}`);
