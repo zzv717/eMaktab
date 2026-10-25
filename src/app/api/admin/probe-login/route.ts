@@ -206,17 +206,20 @@ export async function GET(req: NextRequest) {
                 /* o'tkazib yuboramiz */
               }
             }
-            // 3) Modul fayllari
+            // 3) Modul fayllari (urinishlar CHEKLANGAN — vaqt tugamasligi uchun)
             const fetchedMods: string[] = [];
             let fetched = 0;
+            let attempts = 0;
             const baseClean = baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
             for (const id of [...modIds]) {
-              if (fetched >= 5) break;
+              if (fetched >= 4 || attempts >= 9) break;
               for (const cand of [
                 `https://emaktab.uz${baseClean.startsWith("/") ? "" : "/"}${baseClean}${id}.js`,
                 `https://emaktab.uz/blocks/${id}.js`,
                 `https://emaktab.uz/assets/scripts/modules/${id}.js`,
               ]) {
+                if (attempts >= 9) break;
+                attempts++;
                 try {
                   const rr = await fetch(cand, { headers: { "User-Agent": "Mozilla/5.0" }, redirect: "manual" });
                   if (rr.status === 200) {
