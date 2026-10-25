@@ -48,24 +48,29 @@ export async function GET(req: NextRequest) {
       // ?diag=1 — bazadagi o'quvchi hisoblaridan XOM diary (duplikat/smena tahlili)
       if (sp.get("diag")) {
         try {
-          const rows = await db
-            .select()
-            .from(memberAccounts)
-            .where(eq(memberAccounts.kind, "student"))
-            .limit(8);
-          const outLines: string[] = [];
+          const rows = await db.select().from(memberAccounts).limit(30);
+          const outLines: string[] = [`rows=${rows.length}`];
           let used = 0;
+          let attempts = 0;
           for (const r of rows) {
-            if (used >= 2) break;
-            if (!r.emaktabLogin || !r.emaktabPasswordEnc) continue;
+            if (used >= 1 || attempts >= 8) break;
+            if (!r.emaktabLogin || !r.emaktabPasswordEnc) {
+              outLines.push(`${r.kind}:${r.classId ?? "?"}:nologin`);
+              continue;
+            }
+            attempts++;
             let pw = "";
             try {
               pw = decryptSecret(r.emaktabPasswordEnc);
             } catch {
+              outLines.push(`${r.emaktabLogin.slice(0, 4)}:decrypt-xato`);
               continue;
             }
             const lr = await loginEmaktab(r.emaktabLogin, pw);
-            if (lr.status !== "ok") continue;
+            if (lr.status !== "ok") {
+              outLines.push(`${r.emaktabLogin.slice(0, 4)}:${lr.status}`);
+              continue;
+            }
             used++;
             const days = await fetchDiaryDays(lr.session, "2026-10-25", "2026-10-27");
             const segs: string[] = [];
@@ -77,13 +82,13 @@ export async function GET(req: NextRequest) {
                   return `${l.number ?? "?"}:${String(subj).slice(0, 7)}@${h.startHour ?? "-"}:${String(h.startMinute ?? "-").padStart(2, "0")}`;
                 })
                 .join(",");
-              segs.push(`${String(d.date).slice(0, 12)}→[${les}]`.slice(0, 170));
+              segs.push(`${String(d.date).slice(0, 12)}→[${les}]`.slice(0, 200));
             }
             outLines.push(
-              `${r.classId ?? "?"}/${r.emaktabLogin.slice(0, 4)}x${days.length}d:${segs.join(" ; ")}`.slice(0, 240),
+              `${r.classId ?? "?"}/${r.emaktabLogin.slice(0, 4)}x${days.length}d:${segs.join(" ; ")}`.slice(0, 260),
             );
           }
-          (out as Record<string, unknown>).dia = (outLines.join(" || ") || "hisob-yok").slice(0, 280);
+          (out as Record<string, unknown>).dia = (outLines.join(" | ") || "hisob-yok").slice(0, 300);
         } catch (e8) {
           (out as Record<string, unknown>).dia = "xato " + String(e8).slice(0, 40);
         }
