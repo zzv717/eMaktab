@@ -28,6 +28,7 @@ import {
   extractTeacherJournals,
   mergeTeacherGroups,
   lessonMatchesTeacherLoad,
+  dedupeShiftLessons,
   looksLikeName,
   shiftDayKey,
   tashkentDayKey,
@@ -350,6 +351,33 @@ check("looksLikeName: ko'rish rad", !looksLikeName("Ko'rish"), true);
   check("vaqt: hours '8:30' matn ko'rinishida", l3?.startTime === "08:30" && l3?.endTime === "09:15", l3);
   const l4 = mk({ number: 1, subject: "Alifbe", hours: { startHour: 8, startMinute: 30, endHour: 9, endMinute: 15 } as never });
   check("vaqt: hours raqam (avvalgidek)", l4?.startTime === "08:30" && l4?.endTime === "09:15", l4);
+}
+
+{
+  // smena aralashuvi + duplikatlar (jonli rasm holati: kunduzgi + tushdan keyingi smena)
+  const mk = (number: number, subject: string, startTime: string) =>
+    ({ number, subject, startTime }) as never;
+  const mixed = [
+    mk(1, "Kelajak soati", "12:55"),
+    mk(1, "Kelajak soati", "08:30"),
+    mk(2, "Matematika", "13:45"),
+    mk(2, "Matematika", "09:20"),
+    mk(3, "Jismoniy tarbiya", "10:10"),
+    mk(4, "Jismoniy tarbiya", "15:25"),
+  ];
+  const clean = dedupeShiftLessons(mixed);
+  check("smena: 3 ta dars qoladi (duplikatlar yo'q)", clean.length === 3, clean);
+  check(
+    "smena: faqat kunduzgi soatlar (08:30, 09:20, 10:10)",
+    clean.map((l) => l.startTime).join(",") === "08:30,09:20,10:10",
+    clean.map((l) => `${l.subject}@${l.startTime}`),
+  );
+  const onlyAfternoon = dedupeShiftLessons([mk(1, "Matematika", "13:00"), mk(2, "Ona tili", "14:00")]);
+  check("smena: barchasi tushdan keyin bo'lsa — o'zgarmaydi", onlyAfternoon.length === 2, onlyAfternoon);
+  const doubles = dedupeShiftLessons([mk(2, "Matematika", "09:20"), mk(3, "Matematika", "10:10")]);
+  check("smena: kunduzgi ikki dars (takror emas) — ikkalasi qoladi", doubles.length === 2, doubles);
+  const noTime = dedupeShiftLessons([mk(1, "Alifbe", "08:30"), mk(1, "Alifbe", "")]);
+  check("smena: vaqtsiz duplikat tushmaydi, ertasi qoladi", noTime.length === 1 && noTime[0].startTime === "08:30", noTime);
 }
 
 console.log(`\nNatija: ${passed} o'tdi, ${failed} yiqildi`);

@@ -29,6 +29,7 @@ import {
   fetchTeacherClasses,
   fetchTeacherGroups,
   fetchDiaryDays,
+  dedupeShiftLessons,
   lessonMatchesTeacherLoad,
   loginEmaktab,
   scheduleFromDiaryDays,
@@ -1296,11 +1297,11 @@ async function buildTeacherWeek(user: BotUser, fromDay: string, toDay: string): 
     }
     if (!gotData) missing.push(cl.className);
 
-    // Saralash: fan erkin mos yoki o'qituvchi ismi mos.
+    // Saralash: avval smena aralashuvi + duplikatlar tozalanadi, keyin fan/ism mosligi.
     const rawDays = [...perDate.entries()].map(([date, slot]) => ({
       date,
       weekday: slot.weekday,
-      lessons: [...slot.byKey.values()],
+      lessons: dedupeShiftLessons([...slot.byKey.values()]),
     }));
     const anyTeacherInfo = rawDays.some((d) => d.lessons.some((l) => (l.teacher ?? "").trim().length > 0));
     let kept = 0;
@@ -1352,8 +1353,8 @@ async function sendTeacherDayView(chatId: number, user: BotUser, dayShift: numbe
   const progress = await startProgress(chatId, "Darslar yuklanmoqda");
   try {
     const dayKey = shiftDayKey(tashkentDayKey(), dayShift);
-    const nextKey = shiftDayKey(dayKey, 1);
-    const { days, missing } = await buildTeacherWeek(user, dayKey, nextKey);
+    // Faqat shu kun — keyingi kun ma'lumoti aralashib ketmasin (duplikat manbai).
+    const { days, missing } = await buildTeacherWeek(user, dayKey, dayKey);
     const day = days.find((d) => d.date === dayKey);
     const lessons = day?.lessons ?? [];
     const title = dayShift === 0 ? "Bugungi darslaringiz" : "Ertangi darslaringiz";
