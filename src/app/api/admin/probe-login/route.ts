@@ -159,6 +159,75 @@ export async function GET(req: NextRequest) {
           (out as Record<string, unknown>).ju4 = "xato " + String(e12).slice(0, 25);
         }
 
+      // ?hostonly=1|2 — yengil host/prefiks sinovi (faqat login + 4 ta POST + kontekst)
+      if (sp.get("hostonly")) {
+        const ck = Object.entries(result.session.cookies).map(([k, v]) => `${k}=${v}`).join("; ");
+        const hset = sp.get("hostonly");
+        const targets: Array<[string, string]> =
+          hset === "2"
+            ? [
+                ["https://emaktab.uz", "/webapi/odo/journals/journalmark/editmark/"],
+                ["https://emaktab.uz", "/uz/odo/journals/journalmark/editmark/"],
+                ["https://schools.emaktab.uz", "/v2/odo/journals/journalmark/editmark/"],
+                ["https://smarty.emaktab.uz", "/api/odo/journals/journalmark/editmark/"],
+              ]
+            : [
+                ["https://schools.emaktab.uz", "/odo/journals/journalmark/editmark/"],
+                ["https://emaktab.uz", "/odo/journals/journalmark/editmark/"],
+                ["https://odo.emaktab.uz", "/odo/journals/journalmark/editmark/"],
+                ["https://smarty.emaktab.uz", "/webapi/odo/journals/journalmark/editmark/"],
+              ];
+        const res: string[] = [];
+        for (const [host, path] of targets) {
+          try {
+            const rr = await fetch(`${host}${path}`, {
+              method: "POST",
+              headers: { "User-Agent": "Mozilla/5.0", Cookie: ck, "Content-Type": "application/json" },
+              body: "{}",
+              redirect: "manual",
+              signal: AbortSignal.timeout(8000),
+            });
+            const bt = (await rr.text()).replace(/\s+/g, " ").trim().slice(0, 16);
+            res.push(`${host.slice(8, 13)}|${path.slice(1, 7)}:${rr.status}«${bt}»`);
+          } catch (e13) {
+            res.push(`x${String(e13).slice(0, 12)}`);
+          }
+        }
+        (out as Record<string, unknown>).jhost = res.join(" ");
+        // kontekst: odo/ atrofidagi kod (faqat 1-chi to'plamda)
+        if (hset !== "2") {
+          try {
+            const jw = `https://emaktab.uz/journal/school/${encodeURIComponent(result.session.active.schoolId)}/group/2524942980748797372/week/26/10`;
+            const hj = await pageGet(result.session.cookies, jw);
+            const srcs = [...new Set([...hj.matchAll(/<script[^>]+src="([^"]+)"/gi)].map((m) => m[1]))].slice(0, 5);
+            const hits: string[] = [];
+            const scan = (bb: string): void => {
+              for (const mm of bb.matchAll(/odo\//g)) {
+                const i = mm.index ?? 0;
+                hits.push(bb.slice(Math.max(0, i - 45), i + 50).replace(/\s+/g, " "));
+              }
+            };
+            scan(hj);
+            for (const s2 of srcs) {
+              const abs = s2.startsWith("http") ? s2 : `https://emaktab.uz${s2.startsWith("/") ? "" : "/"}${s2}`;
+              try {
+                const rr = await fetch(abs, {
+                  headers: { "User-Agent": "Mozilla/5.0" },
+                  redirect: "manual",
+                  signal: AbortSignal.timeout(8000),
+                });
+                if (rr.status === 200) scan(await rr.text());
+              } catch {
+                /* o'tkazib yuboramiz */
+              }
+            }
+            (out as Record<string, unknown>).ju4 = hits.slice(0, 3).join(" || ").slice(0, 280) || "-";
+          } catch (e14) {
+            (out as Record<string, unknown>).ju4 = "xato " + String(e14).slice(0, 20);
+          }
+        }
+        return NextResponse.json(out);
+      }
       // ?check=1 — ma'lumot oqimlarini ham sinaymiz (menyu funksiyalari).
       if (sp.get("check")) {
         const check: Record<string, string> = {};
