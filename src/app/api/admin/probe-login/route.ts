@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
+import { eq } from "drizzle-orm";
+import { db } from "@/db";
+import { memberAccounts } from "@/db/schema";
+import { decryptSecret } from "@/lib/crypto";
 import {
   extractTeacherJournals,
   fetchClassMembers,
+  fetchDiaryDays,
   fetchNews,
   fetchSchedule,
   fetchTeacherClasses,
@@ -39,6 +44,50 @@ export async function GET(req: NextRequest) {
     if (result.status === "ok") {
       out.name = result.session.fullName;
       out.role = result.session.role;
+
+      // ?diag=1 — bazadagi o'quvchi hisoblaridan XOM diary (duplikat/smena tahlili)
+      if (sp.get("diag")) {
+        try {
+          const rows = await db
+            .select()
+            .from(memberAccounts)
+            .where(eq(memberAccounts.kind, "student"))
+            .limit(8);
+          const outLines: string[] = [];
+          let used = 0;
+          for (const r of rows) {
+            if (used >= 2) break;
+            if (!r.emaktabLogin || !r.emaktabPasswordEnc) continue;
+            let pw = "";
+            try {
+              pw = decryptSecret(r.emaktabPasswordEnc);
+            } catch {
+              continue;
+            }
+            const lr = await loginEmaktab(r.emaktabLogin, pw);
+            if (lr.status !== "ok") continue;
+            used++;
+            const days = await fetchDiaryDays(lr.session, "2026-10-25", "2026-10-27");
+            const segs: string[] = [];
+            for (const d of days as Array<Record<string, unknown>>) {
+              const les = ((d.lessons ?? []) as Array<Record<string, unknown>>)
+                .map((l) => {
+                  const h = (l.hours ?? {}) as Record<string, unknown>;
+                  const subj = typeof l.subject === "string" ? l.subject : ((l.subject as Record<string, unknown> | undefined)?.name as string | undefined) ?? "?";
+                  return `${l.number ?? "?"}:${String(subj).slice(0, 7)}@${h.startHour ?? "-"}:${String(h.startMinute ?? "-").padStart(2, "0")}`;
+                })
+                .join(",");
+              segs.push(`${String(d.date).slice(0, 12)}→[${les}]`.slice(0, 170));
+            }
+            outLines.push(
+              `${r.classId ?? "?"}/${r.emaktabLogin.slice(0, 4)}x${days.length}d:${segs.join(" ; ")}`.slice(0, 240),
+            );
+          }
+          (out as Record<string, unknown>).dia = (outLines.join(" || ") || "hisob-yok").slice(0, 280);
+        } catch (e8) {
+          (out as Record<string, unknown>).dia = "xato " + String(e8).slice(0, 40);
+        }
+      }
 
       // ?check=1 — ma'lumot oqimlarini ham sinaymiz (menyu funksiyalari).
       if (sp.get("check")) {
