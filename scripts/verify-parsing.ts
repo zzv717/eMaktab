@@ -25,6 +25,9 @@ import {
   scheduleFromFlatLessons,
   extractAllUserLinks,
   extractTeacherGroups,
+  extractTeacherJournals,
+  mergeTeacherGroups,
+  lessonMatchesTeacherLoad,
   looksLikeName,
   shiftDayKey,
   tashkentDayKey,
@@ -301,6 +304,52 @@ check("looksLikeName: ko'rish rad", !looksLikeName("Ko'rish"), true);
   check("TEACHERV2: fanlar (Alifbe, Matematika)", groups[0]?.subjects.join(",") === "Alifbe,Matematika", groups[0]?.subjects);
   check("TEACHERV2: id string (katta son)", groups[0]?.classId === "2524942980748797372", groups[0]?.classId);
   check("TEACHERV2: marker yo'q → bo'sh", extractTeacherGroups("<html></html>").length === 0);
+}
+
+// ---------------------------------------------------------------------------
+// 7) Jurnal yozuvlari (journalUrl) + guruhlarni birlashtirish + erkin fan mosligi
+// ---------------------------------------------------------------------------
+{
+  const html = `x <script>window.__TEACHERV2__INITIAL__STATE__ = { groups: {"groups":[
+    {"id":"2524942980748797372","name":"1-A","parallel":1,"isClassTeacher":true,
+     "journal":[{"subjectId":"185","subjectName":"Alifbe"}]}
+  ]}, "journals":[
+    {"subjectId":"185","subjectName":"Alifbe","journalUrl":"https://emaktab.uz/journal/school/1/group/2524942980748797372/subject/185"},
+    {"subjectId":"186","subjectName":"Informatika","journalUrl":"https://emaktab.uz/journal/school/1/group/2524942980748797372/subject/186"},
+    {"subjectId":"187","subjectName":"Alifbe","groupName":"5-B","journalUrl":"https://emaktab.uz/journal/school/1/group/30030826200645631/subject/187"}
+  ]};</script>`;
+  const jl = extractTeacherJournals(html);
+  check("jurnal: 3 yozuv", jl.length === 3, jl);
+  check("jurnal: gid journalUrl'dan", jl[2]?.groupId === "30030826200645631", jl[2]);
+  check("jurnal: fan nomi", jl[1]?.subjectName === "Informatika", jl[1]);
+  const merged = mergeTeacherGroups(extractTeacherGroups(html), jl);
+  check("birlashtirish: 2 guruh (yangi 5-B qo'shildi)", merged.length === 2, merged.map((g) => g.className));
+  check("birlashtirish: 1-A fanlari to'ldi", merged[0]?.subjects.join(",") === "Alifbe,Informatika", merged[0]);
+  check("birlashtirish: 5-B nomi jurnaldan", merged[1]?.className === "5-B" && merged[1]?.subjects.join(",") === "Alifbe", merged[1]);
+}
+{
+  const t = "Sattarova Mavluda Raxmatullayevna";
+  check("mos: aynan fan", lessonMatchesTeacherLoad("Alifbe", null, ["Alifbe", "Informatika"], t) === true);
+  check("mos: fan ichma-ich (Informatika va AT)", lessonMatchesTeacherLoad("Informatika va axborot texnologiyalari", null, ["Alifbe", "Informatika"], t) === true);
+  check("mos: apostrof farqi (o'qituvchi)", lessonMatchesTeacherLoad("Ona tili", "Sattarova M. R.", ["Alifbe"], t) === true);
+  check("mos: emas (yot fan va yot o'qituvchi)", lessonMatchesTeacherLoad("Musiqa", "Karimov A.", ["Alifbe", "Informatika"], t) === false);
+  check("mos: emas (fan farq, ism yo'q)", lessonMatchesTeacherLoad("Musiqa", null, ["Alifbe"], t) === false);
+  check("mos: ism bo'sh + fanlar yo'q → emas", lessonMatchesTeacherLoad("Musiqa", "", [], t) === false);
+}
+{
+  // soatlar: millisekund timestamp va "8:30" matni to'g'ri parse bo'lishi kerak
+  const mk = (lesson: Record<string, unknown>) =>
+    scheduleFromDiaryDays([{ date: "2026-10-26", lessons: [lesson] } as never])[0]?.lessons?.[0];
+  const msTs = Date.UTC(2026, 9, 26, 3, 30); // millisekund (08:30 Toshkent)
+  const l1 = mk({ number: 1, subject: "Alifbe", startTime: String(msTs), endTime: String(msTs + 45 * 60000) });
+  check("vaqt: millisekund timestamp → HH:MM", l1?.startTime === "08:30" && l1?.endTime === "09:15", l1);
+  const secTs = Math.floor(msTs / 1000);
+  const l2 = mk({ number: 1, subject: "Alifbe", startTime: String(secTs), endTime: String(secTs + 45 * 60) });
+  check("vaqt: sekund timestamp → HH:MM", l2?.startTime === "08:30" && l2?.endTime === "09:15", l2);
+  const l3 = mk({ number: 1, subject: "Alifbe", hours: { startHour: "8:30", endHour: "9:15" } as never });
+  check("vaqt: hours '8:30' matn ko'rinishida", l3?.startTime === "08:30" && l3?.endTime === "09:15", l3);
+  const l4 = mk({ number: 1, subject: "Alifbe", hours: { startHour: 8, startMinute: 30, endHour: 9, endMinute: 15 } as never });
+  check("vaqt: hours raqam (avvalgidek)", l4?.startTime === "08:30" && l4?.endTime === "09:15", l4);
 }
 
 console.log(`\nNatija: ${passed} o'tdi, ${failed} yiqildi`);

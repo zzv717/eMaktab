@@ -26,10 +26,10 @@ import {
   fetchGrades,
   fetchNews,
   fetchSchedule,
-  fetchTeacherSchedule,
   fetchTeacherClasses,
   fetchTeacherGroups,
   fetchDiaryDays,
+  lessonMatchesTeacherLoad,
   loginEmaktab,
   scheduleFromDiaryDays,
   sessionFromCookies,
@@ -41,6 +41,7 @@ import {
   type ClassLink,
   type DaySchedule,
   type EmaktabSession,
+  type Lesson,
 } from "@/lib/emaktab";
 import {
   escapeHtml,
@@ -1162,17 +1163,6 @@ function classIdMatch(a: string | null | undefined, b: string): boolean {
   return a === b || a.includes(b) || b.includes(a);
 }
 
-function teacherNameMatches(teacher: string | null | undefined, teacherName: string): boolean {
-  const t = (teacher ?? "").toLowerCase().replace(/['\u2019\u2018\u02BB\u02BC]/g, "");
-  if (!t.trim()) return true;
-  const tokens = teacherName
-    .toLowerCase()
-    .replace(/['\u2019\u2018\u02BB\u02BC]/g, "")
-    .split(/\s+/)
-    .filter((x) => x.length >= 4);
-  return tokens.some((tok) => t.includes(tok));
-}
-
 interface TeacherWeekResult {
   days: DaySchedule[];
   missing: string[];
@@ -1181,19 +1171,33 @@ interface TeacherWeekResult {
 /**
  * Haqiqiy dars jadvalini yig'adi.
  * Manba: sinf a'zolarining (biriktirilgan login/parol) eMaktab diary'si —
- * u yerda darslar SOAT va FAN bilan keladi. Har bir sinf uchun o'qituvchining
- * o'sha sinfdagi fanlari bo'yicha saralanadi.
+ * u yerda darslar SOAT va FAN bilan keladi. Sinflar TEACHERV2 (guruhlar +
+ * jurnal yozuvlari) va "Mening sinflarim" dan YIG'ILADI — hech biri tushib
+ * qolmaydi. Fan nomlari erkin moslashtiriladi, soatlar FAQAT diary'dan.
  */
 async function buildTeacherWeek(user: BotUser, fromDay: string, toDay: string): Promise<TeacherWeekResult> {
-  const classes = await withSession(user, (s) => getTeacherClasses(user, s)).catch(() => [] as ClassLink[]);
+  // To'liq o'qituvchi yuklamasi (keshsiz, jonli).
+  let classes = await withSession(user, async (s) => {
+    const groups = await fetchTeacherGroups(s);
+    const list: ClassLink[] = groups.map((g) => ({
+      classId: g.classId,
+      className: g.className,
+      isClassTeacher: g.isClassTeacher,
+      subjects: g.subjects,
+    }));
+    const known = (id: string) => list.some((c) => classIdMatch(c.classId, id));
+    for (const c of await fetchTeacherClasses(s).catch(() => [] as ClassLink[])) {
+      if (!known(c.classId)) list.push({ ...c, subjects: [] });
+    }
+    return list;
+  }).catch(() => [] as ClassLink[]);
+  if (classes.length === 0) {
+    classes = await withSession(user, (s) => getTeacherClasses(user, s)).catch(() => [] as ClassLink[]);
+  }
+
   const merged = new Map<string, DaySchedule>();
   const missing: string[] = [];
-  const norm = (s: string) =>
-    s
-      .toLowerCase()
-      .replace(/['\u2019\u2018\u02BB\u02BC]/g, "")
-      .replace(/\s+/g, " ")
-      .trim();
+  const globalSubjects = [...new Set(classes.flatMap((c) => c.subjects ?? []))];
 
   const saved = await db
     .select()
@@ -1201,11 +1205,14 @@ async function buildTeacherWeek(user: BotUser, fromDay: string, toDay: string): 
     .where(eq(memberAccounts.teacherTelegramId, user.telegramId));
 
   for (const cl of classes) {
-    const subNames = new Set((cl.subjects ?? []).map(norm).filter(Boolean));
+    const subjects = (cl.subjects ?? []).length > 0 ? cl.subjects! : globalSubjects;
     const candidates = saved
       .filter((s) => classIdMatch(s.classId, cl.classId) && s.emaktabLogin && s.emaktabPasswordEnc)
-      .sort((a, b) => (a.kind === "student" ? 0 : 1) - (b.kind === "student" ? 0 : 1));
+      .sort((a, b) => (a.kind === "student" ? 0 : 1) - (b.kind === "student" ? 0 : 1))
+      .slice(0, 4);
 
+    // Bir nechta ishlaydigan a'zodan kunlar kesimida yig'amiz (bo'sh kunlar to'lsin).
+    const perDate = new Map<string, { weekday: number; byKey: Map<string, Lesson> }>();
     let gotData = false;
     for (const acc of candidates) {
       try {
@@ -1215,53 +1222,60 @@ async function buildTeacherWeek(user: BotUser, fromDay: string, toDay: string): 
         const diaryDays = await fetchDiaryDays(res.session, fromDay, toDay);
         const sched = scheduleFromDiaryDays(diaryDays);
         if (sched.length === 0) {
-          gotData = true; // kirildi, lekin kunlar bo'sh — sinf bo'sh emas
+          gotData = true; // kirildi, lekin kunlar bo'sh
           continue;
         }
         gotData = true;
         for (const day of sched) {
+          let slot = perDate.get(day.date);
+          if (!slot) {
+            slot = { weekday: day.weekday, byKey: new Map() };
+            perDate.set(day.date, slot);
+          }
           for (const l of day.lessons) {
-            const subject = norm(l.subject ?? "");
-            if (subNames.size > 0) {
-              if (!subNames.has(subject)) continue;
-            } else if (!teacherNameMatches(l.teacher, user.fullName ?? "")) {
-              continue;
-            }
-            const existing = merged.get(day.date);
-            if (existing) {
-              existing.lessons.push({ ...l, groupName: cl.className });
-            } else {
-              merged.set(day.date, {
-                date: day.date,
-                weekday: day.weekday,
-                lessons: [{ ...l, groupName: cl.className }],
-              });
-            }
+            const key = `${l.number}|${l.subject}|${l.startTime ?? ""}`;
+            if (!slot.byKey.has(key)) slot.byKey.set(key, l);
           }
         }
-        break; // bitta ishlaydigan a'zo yetarli
       } catch {
         // keyingi a'zo bilan davom
       }
     }
     if (!gotData) missing.push(cl.className);
-  }
 
-  // Zaxira manba (kelajakda API ochilsa): o'qituvchi diary'si.
-  if (merged.size === 0) {
-    try {
-      const fallback = await withSession(user, (s) =>
-        fetchTeacherSchedule(s, fromDay, toDay, user.fullName),
-      );
-      for (const day of fallback) {
-        if (day.lessons.length > 0) merged.set(day.date, day);
+    // Saralash: fan erkin mos yoki o'qituvchi ismi mos.
+    const rawDays = [...perDate.entries()].map(([date, slot]) => ({
+      date,
+      weekday: slot.weekday,
+      lessons: [...slot.byKey.values()],
+    }));
+    const anyTeacherInfo = rawDays.some((d) => d.lessons.some((l) => (l.teacher ?? "").trim().length > 0));
+    let kept = 0;
+    for (const day of rawDays) {
+      for (const l of day.lessons) {
+        const ok = lessonMatchesTeacherLoad(l.subject, l.teacher, subjects, user.fullName ?? "");
+        // Fan ham, ism ham yo'q — tekshirib bo'lmaydi: faqat umuman ism yo'q bo'lsa saqlaymiz.
+        const unverified = !ok && subjects.length === 0 && !anyTeacherInfo && (l.teacher ?? "").trim().length === 0;
+        if (!ok && !unverified) continue;
+        kept++;
+        const existing = merged.get(day.date);
+        if (existing) {
+          existing.lessons.push({ ...l, groupName: cl.className });
+        } else {
+          merged.set(day.date, {
+            date: day.date,
+            weekday: day.weekday,
+            lessons: [{ ...l, groupName: cl.className }],
+          });
+        }
       }
-    } catch {
-      /* e'tiborsiz */
     }
+    void kept;
   }
 
-  return { days: [...merged.values()], missing };
+  const days = [...merged.values()].sort((a, b) => a.date.localeCompare(b.date));
+  for (const d of days) d.lessons.sort((a, b) => (a.number || 99) - (b.number || 99));
+  return { days, missing };
 }
 
 async function sendTeacherWeekView(chatId: number, user: BotUser) {
