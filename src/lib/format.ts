@@ -278,12 +278,13 @@ export function formatAccount(user: {
 }
 
 export function formatPersonList(persons: PersonContext[], activePersonId: string): string {
-  let text = `👶 <b>Farzandni tanlang:</b>\n`;
+  let text = `👶 <b>Bolalar</b> — ko'rmoqchi bo'lgan farzandingizni tanlang:\n`;
   persons.forEach((p, i) => {
     const active = p.personId === activePersonId ? " ✅" : "";
-    text += `\n${i + 1}. ${escapeHtml(p.fullName || p.personId)}${active}\n`;
+    text += `\n${i + 1}. <b>${escapeHtml(p.fullName || p.personId)}</b>${active}\n`;
     text += `   ${escapeHtml(p.schoolName || "")} ${escapeHtml(p.groupName || "")}`.trim() + "\n";
   });
+  text += `\n<i>Tanlangan farzandning dars jadvali va baholari ko'rsatiladi.</i>`;
   return text;
 }
 

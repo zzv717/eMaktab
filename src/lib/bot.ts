@@ -469,7 +469,20 @@ async function finishLoginSuccess(
   session: EmaktabSession,
   progress: ProgressMsg,
 ) {
-  const children = session.persons.length > 1 || session.role === "parent" ? session.persons : [];
+  let children = session.persons.length > 1 || session.role === "parent" ? session.persons : [];
+  // Ota-ona uchun kamida bitta farzand bo'lishi shart ("Bolalar" bo'limi doim ishlashi uchun).
+  if (session.role === "parent" && children.length === 0 && session.active.personId) {
+    children = [
+      {
+        personId: session.active.personId,
+        fullName: session.active.fullName || session.fullName,
+        schoolId: session.active.schoolId,
+        groupId: session.active.groupId,
+        schoolName: session.active.schoolName,
+        groupName: session.active.groupName,
+      },
+    ];
+  }
 
   // O'qituvchi uchun sinflarni ham olamiz (rol menyusi uchun).
   let classes: ClassLink[] = [];
@@ -1066,8 +1079,8 @@ async function handleMessage(message: TelegramMessage) {
     if (text === "/settings" || text === MENU_TEXT.settings) {
       const children = parseChildren(user);
       const rows: Array<Array<{ text: string; callback_data: string }>> = [];
-      if (children.length > 1) {
-        rows.push([{ text: "👶 Farzandni almashtirish", callback_data: "settings:children" }]);
+      if (children.length > 0 || user.role === "parent") {
+        rows.push([{ text: "👶 Bolalar", callback_data: "settings:children" }]);
       }
       rows.push([{ text: "🔄 Login/parolni yangilash", callback_data: "settings:relogin" }]);
       rows.push([{ text: "🚪 Chiqish (Logout)", callback_data: "settings:logout" }]);
@@ -1084,8 +1097,15 @@ async function handleMessage(message: TelegramMessage) {
 // Ko'rinishlar (views)
 // ---------------------------------------------------------------------------
 
+/** Faol farzand (ota-ona uchun) — aralashtirib yubormaslik uchun aynan tanlangan. */
+function activeChild(user: BotUser): ChildContext | null {
+  const children = parseChildren(user);
+  if (children.length === 0) return null;
+  return children.find((c) => c.personId === user.personId) ?? (children.length === 1 ? children[0] : null);
+}
+
 function personLabel(user: BotUser): string {
-  return user.fullName || user.emaktabLogin || "";
+  return activeChild(user)?.fullName || user.fullName || user.emaktabLogin || "";
 }
 
 async function sendGradesView(chatId: number, user: BotUser, days: number) {
@@ -1115,6 +1135,39 @@ async function sendDayView(chatId: number, user: BotUser, dayShift: number) {
     await sendLong(chatId, text, scheduleKeyboard());
   } catch (error) {
     await failProgress(chatId, progress, "Dars jadvali");
+    await sendEmaktabError(chatId, user, error);
+  }
+}
+
+/** Tanlangan farzandning bugungi darslari + so'nggi baholari (faqat O'SHA farzandniki). */
+async function sendChildOverview(chatId: number, user: BotUser, child: ChildContext) {
+  const progress = await startProgress(chatId, "Farzand ma'lumotlari yuklanmoqda");
+  try {
+    const today = tashkentDayKey();
+    const nextKey = shiftDayKey(today, 1);
+    const { schedule, grades } = await withSession(user, async (s) => {
+      const schedule = await fetchSchedule(s, today, nextKey);
+      const grades = await fetchGrades(s, 14);
+      return { schedule, grades };
+    });
+    const day = schedule.find((d) => d.date === today);
+    let text = formatDay(day, "Bugungi dars jadvali", child.fullName || personLabel(user));
+    const recent = grades.slice(0, 20);
+    if (recent.length > 0) {
+      text += `\n\n${formatGrades(recent, "So'nggi 14 kun baholari", child.fullName || personLabel(user))}`;
+    }
+    text += `\n\n<i>👶 Boshqa farzandni ko'rish uchun: Sozlamalar → Bolalar</i>`;
+    await finishProgress(chatId, progress, "Farzand ma'lumotlari");
+    await sendLong(
+      chatId,
+      text,
+      kb([
+        [{ text: "👶 Bolalar", callback_data: "settings:children" }],
+        [{ text: "🏠 Asosiy menyu", callback_data: "menu:home" }],
+      ]),
+    );
+  } catch (error) {
+    await failProgress(chatId, progress, "Farzand ma'lumotlari");
     await sendEmaktabError(chatId, user, error);
   }
 }
@@ -1850,8 +1903,8 @@ async function handleCallback(cb: TelegramCallbackQuery) {
   if (data === "menu:settings" || data === "settings:account") {
     const children = parseChildren(fresh);
     const rows: Array<Array<{ text: string; callback_data: string }>> = [];
-    if (children.length > 1) {
-      rows.push([{ text: "👶 Farzandni almashtirish", callback_data: "settings:children" }]);
+    if (children.length > 0 || fresh.role === "parent") {
+      rows.push([{ text: "👶 Bolalar", callback_data: "settings:children" }]);
     }
     rows.push([{ text: "🔄 Login/parolni yangilash", callback_data: "settings:relogin" }]);
     rows.push([{ text: "🚪 Chiqish (Logout)", callback_data: "settings:logout" }]);
@@ -1862,13 +1915,18 @@ async function handleCallback(cb: TelegramCallbackQuery) {
 
   if (data === "settings:children") {
     const children = parseChildren(fresh);
-    if (children.length <= 1) {
-      await showView(cb, "👶 Bu akkauntga bitta farzand bog'langan.", settingsKeyboard());
+    if (children.length === 0) {
+      await showView(
+        cb,
+        "👶 <b>Bolalar</b>\n\nBu akkauntga hozircha farzand bog'lanmagan.\n\n" +
+          "eMaktabdan kirib, farzand bog'langanda bu yerda avtomatik ko'rinadi.",
+        settingsKeyboard(),
+      );
       return;
     }
     const rows = children.map((c, i) => [
       {
-        text: `${c.fullName || c.personId}${c.personId === fresh.personId ? " ✅" : ""}`,
+        text: `👶 ${c.fullName || c.personId}${c.personId === fresh.personId ? " ✅" : ""}`,
         callback_data: `child:${i}`,
       },
     ]);
@@ -1908,7 +1966,7 @@ async function handleCallback(cb: TelegramCallbackQuery) {
     return;
   }
 
-  // --- Farzandni almashtirish (ota-onalar uchun) ---
+  // --- Farzandni tanlash (ota-onalar uchun) ---
   if (data.startsWith("child:")) {
     const idx = Number(data.slice("child:".length));
     const children = parseChildren(fresh);
@@ -1918,23 +1976,24 @@ async function handleCallback(cb: TelegramCallbackQuery) {
       return;
     }
     invalidateSession(cb.from.id);
+    // Faol farzand konteksti almashtiriladi — ota-ona ismi O'ZGARMAYDI (aralashtirmaslik uchun).
     await db
       .update(botUsers)
       .set({
         personId: selected.personId,
         schoolId: selected.schoolId,
         groupId: selected.groupId,
-        fullName: selected.fullName,
         schoolName: selected.schoolName,
         groupName: selected.groupName,
         updatedAt: new Date(),
       })
       .where(eq(botUsers.telegramId, cb.from.id));
-    await showView(
-      cb,
-      `👶 <b>${escapeHtml(selected.fullName)}</b> tanlandi.\n\n${escapeHtml(selected.schoolName)} ${escapeHtml(selected.groupName)}`,
-      menuFor(fresh),
+    const updated = (await getUser(cb.from.id)) ?? fresh;
+    await sendMessage(
+      chatId,
+      `👶 <b>${escapeHtml(selected.fullName)}</b> — ${escapeHtml(selected.groupName || "")} tanlandi.`,
     );
+    await sendChildOverview(chatId, updated, selected);
     return;
   }
 
