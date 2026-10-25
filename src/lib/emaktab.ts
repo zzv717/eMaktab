@@ -1676,18 +1676,17 @@ export function gradesFromDiaryDays(days: DiaryDay[]): Grade[] {
 
 function scheduleFromStartState(state: StartState | null, personId: string): DaySchedule[] {
   if (!state) return [];
-  const child =
-    state.userSchedule?.children?.find((c) => str(c.personId) === personId) ??
-    state.userSchedule?.children?.[0];
+  const kids = state.userSchedule?.children ?? [];
+  // Qat'iy qoida: faqat tanlangan farzand. Ko'p farzand bo'lsa — boshqasinikini KO'RSATMAYMIZ.
+  const child = kids.find((c) => str(c.personId) === personId) ?? (kids.length === 1 ? kids[0] : undefined);
   const days = (child?.schedule?.days ?? []) as DiaryDay[];
   return scheduleFromDiaryDays(days);
 }
 
 function gradesFromStartState(state: StartState | null, personId: string): Grade[] {
   if (!state) return [];
-  const child =
-    state.userMarks?.children?.find((c) => str(c.personId) === personId) ??
-    state.userMarks?.children?.[0];
+  const kids = state.userMarks?.children ?? [];
+  const child = kids.find((c) => str(c.personId) === personId) ?? (kids.length === 1 ? kids[0] : undefined);
   // userMarks.children[].marks — har bir yozuvda sana va marks[] massivi bor.
   const grades: Grade[] = [];
   for (const raw of child?.marks ?? []) {
