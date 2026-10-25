@@ -316,6 +316,24 @@ export async function GET(req: NextRequest) {
         }
         return NextResponse.json(out);
       }
+      // ?jax=1 — $.get/$.post/fetch/require chaqiruv kontekstlari
+      if (sp.get("jax")) {
+        try {
+          const jw = `https://emaktab.uz/journal/school/${encodeURIComponent(result.session.active.schoolId)}/group/2524942980748797372/week/26/10`;
+          const hj = await pageGet(result.session.cookies, jw);
+          const acc: string[] = [];
+          for (const mm of hj.matchAll(/\$\.get\(|\$\.post\(|\$\.getJSON\(|fetch\(|XMLHttpRequest|require\(|requirejs\(/g)) {
+            const i = mm.index ?? 0;
+            acc.push(mm[0] + "@" + hj.slice(i, i + 160).replace(/\s+/g, " "));
+            if (acc.length >= 8) break;
+          }
+          (out as Record<string, unknown>).jax = acc.join(" ~~ ").slice(0, 1400) || "-";
+        } catch (e20) {
+          (out as Record<string, unknown>).jax = "xato " + String(e20).slice(0, 40);
+        }
+        return NextResponse.json(out);
+      }
+
 
       // ?jurls=1 — sahifadagi barcha URL/yol naqshlari
       if (sp.get("jurls")) {
