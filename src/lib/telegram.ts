@@ -161,6 +161,8 @@ export function replyKb(rows: ReplyButton[][], placeholder = "Xabar yozing...") 
 export const MENU_TEXT = {
   today: "📅 Bugungi darslar",
   week: "📆 Haftalik jadval",
+  conduct: "✅ Darsni o'tildi qilish",
+  ctp: "📄 Ish reja joylashtirish",
   myClass: "🏫 Sinfim — O'quvchilar",
   parents: "👪 Ota-onalar faolligi",
   checkAll: "⚡ Barchani tekshirish",
@@ -174,7 +176,10 @@ export const MENU_TEXT = {
 
 /** O'qituvchi menyusi — reply keyboard (sinf rahbariga qarab). */
 export function teacherReplyKeyboard(isClassTeacher: boolean) {
-  const rows: ReplyButton[][] = [[{ text: MENU_TEXT.today }, { text: MENU_TEXT.week }]];
+  const rows: ReplyButton[][] = [
+    [{ text: MENU_TEXT.today }, { text: MENU_TEXT.week }],
+    [{ text: MENU_TEXT.conduct }, { text: MENU_TEXT.ctp }],
+  ];
   if (isClassTeacher) {
     rows.push([{ text: MENU_TEXT.myClass }, { text: MENU_TEXT.parents }]);
     rows.push([{ text: MENU_TEXT.checkAll }, { text: MENU_TEXT.profile }]);
@@ -284,6 +289,27 @@ export interface TelegramMessage {
   from?: TelegramUser;
   chat: { id: number };
   text?: string;
+  document?: { file_id: string; file_name?: string; mime_type?: string };
+}
+
+/** Telegram faylini yuklab oladi (bot token serverda — brauzer kerak emas). */
+export async function downloadTelegramFile(
+  fileId: string,
+): Promise<{ bytes: Buffer; fileName: string } | null> {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  if (!token) return null;
+  try {
+    const infoRes = await fetch(`https://api.telegram.org/bot${token}/getFile?file_id=${encodeURIComponent(fileId)}`);
+    const info = (await infoRes.json()) as { ok?: boolean; result?: { file_path?: string } };
+    const path = info.result?.file_path;
+    if (!info.ok || !path) return null;
+    const fileRes = await fetch(`https://api.telegram.org/file/bot${token}/${path}`);
+    if (!fileRes.ok) return null;
+    const bytes = Buffer.from(await fileRes.arrayBuffer());
+    return { bytes, fileName: path.split("/").pop() ?? "file" };
+  } catch {
+    return null;
+  }
 }
 
 export interface TelegramCallbackQuery {
