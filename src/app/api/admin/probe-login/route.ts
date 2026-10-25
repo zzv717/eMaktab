@@ -333,6 +333,29 @@ export async function GET(req: NextRequest) {
         }
         return NextResponse.json(out);
       }
+      // ?jsp=1 — schools journals SPA: script src + href + bundle naqshlari
+      if (sp.get("jsp")) {
+        try {
+          const su = `https://schools.emaktab.uz/journals/?school=${encodeURIComponent(result.session.active.schoolId)}`;
+          const html = await pageGet(result.session.cookies, su);
+          const srcs = [...new Set([...html.matchAll(/<script[^>]+src="([^"]+)"/gi)].map((m) => m[1]))].slice(0, 10);
+          const hrefs = [...new Set([...html.matchAll(/href="([^"]{4,90})"/gi)].map((m) => m[1]))]
+            .filter((h) => /journal|group|lesson|odo/i.test(h))
+            .slice(0, 10);
+          const kws3 = /conducted|otkazildi|o'tkazildi|visitlog|editlesson|ctp|workplan|ish.?reja|upload/gi;
+          const acc3: string[] = [];
+          for (const mm of html.matchAll(kws3)) {
+            const i = mm.index ?? 0;
+            acc3.push(html.slice(Math.max(0, i - 40), i + 120).replace(/\s+/g, " "));
+            if (acc3.length >= 3) break;
+          }
+          (out as Record<string, unknown>).jsp = `len=${html.length} srcs:${srcs.join(" ").slice(0, 500)} | hrefs:${hrefs.join(" ").slice(0, 300)} | kw:${acc3.join(" ~~ ").slice(0, 400)}`;
+        } catch (e21) {
+          (out as Record<string, unknown>).jsp = "xato " + String(e21).slice(0, 40);
+        }
+        return NextResponse.json(out);
+      }
+
 
 
       // ?jurls=1 — sahifadagi barcha URL/yol naqshlari
