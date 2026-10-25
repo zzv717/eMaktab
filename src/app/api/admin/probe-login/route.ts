@@ -230,6 +230,32 @@ export async function GET(req: NextRequest) {
         (out as Record<string, unknown>).j2 = g2.join(" ~~ ").slice(0, 900) || "-";
         (out as Record<string, unknown>).jread = outL.length > 0 ? "ok" : "-";
         (out as Record<string, unknown>).jlen = `html=${hj.length}`;
+      // ?jmods=1 — jurnal sahifasidagi require/define modul IDlari
+      if (sp.get("jmods")) {
+        try {
+          const jw = `https://emaktab.uz/journal/school/${encodeURIComponent(result.session.active.schoolId)}/group/2524942980748797372/week/26/10`;
+          const hj = await pageGet(result.session.cookies, jw);
+          const mods = new Set<string>();
+          for (const m of hj.matchAll(/require\(\s*\[([^\]]{2,400})\]/g)) {
+            for (const q of m[1].matchAll(/["']([^"']{2,60})["']/g)) mods.add(q[1]);
+          }
+          for (const m of hj.matchAll(/define\(\s*["']([^"']{2,60})["']/g)) mods.add(m[1]);
+          for (const m of hj.matchAll(/data-main="([^"]{2,80})"/g)) mods.add("dm:" + m[1]);
+          (out as Record<string, unknown>).jmods = [...mods].slice(0, 24).join(" ").slice(0, 800) || "-";
+          // CTP/o'tkazildi atrof-kontekstlari (kengaytirilgan kalitlar)
+          const kws2 = /CtpPopup|CtpCommon|ctppopup|lessonstate|lessonState|visitlog|factHours|isHeld|isTaught|o'tkazildi|otkazildi|conduct|editlesson|editvisit|attendance|journallesson/gi;
+          const acc2: string[] = [];
+          for (const mm of hj.matchAll(kws2)) {
+            const i = mm.index ?? 0;
+            acc2.push(hj.slice(Math.max(0, i - 50), i + 140).replace(/\s+/g, " "));
+            if (acc2.length >= 3) break;
+          }
+          (out as Record<string, unknown>).jc = acc2.join(" ~~ ").slice(0, 700) || "-";
+        } catch (e16) {
+          (out as Record<string, unknown>).jmods = "xato " + String(e16).slice(0, 40);
+        }
+        return NextResponse.json(out);
+      }
         } catch (e15) {
           (out as Record<string, unknown>).jread = "xato " + String(e15).slice(0, 40);
         }
