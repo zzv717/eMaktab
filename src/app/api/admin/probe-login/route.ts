@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
+  extractTeacherJournals,
   fetchClassMembers,
   fetchNews,
   fetchSchedule,
@@ -231,6 +232,16 @@ export async function GET(req: NextRequest) {
                   .map((g) => `${g.className}${g.isClassTeacher ? "*" : ""}[${g.subjects.slice(0, 2).join("+")}]`)
                   .join(" ")
                   .slice(0, 80)
+              : "yok";
+          const htmlT = await pageGet(result.session.cookies, "https://emaktab.uz/teachers");
+          const jl = extractTeacherJournals(htmlT);
+          (out as Record<string, unknown>).jload =
+            jl.length > 0
+              ? jl
+                  .slice(0, 4)
+                  .map((j) => `${j.subjectName.slice(0, 14)}|${j.groupName || "?"}|${j.groupId.slice(-6)}`)
+                  .join(" ")
+                  .slice(0, 170)
               : "yok";
         } catch (e4) {
           (out as Record<string, unknown>).groups = "xato " + String(e4).slice(0, 25);

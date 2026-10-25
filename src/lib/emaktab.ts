@@ -1521,18 +1521,32 @@ export async function fetchDiaryDays(
   return Array.isArray(data?.days) ? data!.days! : [];
 }
 
+function hhmmFromHourParts(h?: string | number | null, m?: string | number | null): string | null {
+  const hs = String(h ?? "").trim();
+  const ms = String(m ?? "").trim();
+  // "8:30" yoki "08:30" ko'rinishidagi birlashtirilgan qiymat
+  const combo = hs.match(/^(\d{1,2}):(\d{2})$/);
+  if (combo) return `${combo[1].padStart(2, "0")}:${combo[2]}`;
+  if (!/^\d{1,2}$/.test(hs) && h !== 0 && h !== "0") return null;
+  if (!/^\d{1,2}$/.test(ms) && m !== 0 && m !== "0" && m !== undefined && m !== null && ms !== "") return null;
+  return `${hs.padStart(2, "0")}:${(ms === "" ? "0" : ms).padStart(2, "0")}`;
+}
+
 function lessonTime(hours?: DiaryLesson["hours"], fallbackStart?: string | null, fallbackEnd?: string | null): { start: string | null; end: string | null } {
   if (hours && hours.startHour !== undefined && hours.startHour !== null) {
-    const pad = (v: string | number | undefined) => String(v ?? 0).padStart(2, "0");
-    return {
-      start: `${pad(hours.startHour)}:${pad(hours.startMinute)}`,
-      end: `${pad(hours.endHour)}:${pad(hours.endMinute)}`,
-    };
+    const start = hhmmFromHourParts(hours.startHour, hours.startMinute) ?? "00:00";
+    const end = hhmmFromHourParts(hours.endHour, hours.endMinute) ?? "00:00";
+    return { start, end };
   }
   const fmt = (ts?: string | number | null) => {
     if (!ts) return null;
-    const n = Number(ts);
-    if (!Number.isFinite(n)) return null;
+    const s = String(ts).trim();
+    // "8:30" / "08:30" ko'rinishidagi matn
+    const combo = s.match(/^(\d{1,2}):(\d{2})(?::\d{2})?$/);
+    if (combo) return `${combo[1].padStart(2, "0")}:${combo[2]}`;
+    let n = Number(ts);
+    if (!Number.isFinite(n) || n <= 0) return null;
+    if (n > 1e12) n = n / 1000; // millisekund bo'lsa — sekundga
     const d = new Date(n * 1000 + TZ_OFFSET_MS);
     return `${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}`;
   };
@@ -2186,10 +2200,122 @@ export function extractTeacherGroups(html: string): TeacherGroup[] {
 export async function fetchTeacherGroups(session: EmaktabSession): Promise<TeacherGroup[]> {
   try {
     const html = await pageGet(session.cookies, `${WEB_BASE}/teachers`);
-    return extractTeacherGroups(html);
+    const groups = extractTeacherGroups(html);
+    return mergeTeacherGroups(groups, extractTeacherJournals(html));
   } catch {
     return [];
   }
+}
+
+/** TEACHERV2 state'dagi jurnal yozuvlari: fan + guruh (journalUrl ichidan gid). */
+export interface TeacherJournalEntry {
+  groupId: string;
+  groupName: string;
+  subjectName: string;
+}
+
+function unescJsonStr(s: string): string {
+  return s
+    .replace(/\\u0026/g, "&")
+    .replace(/\\u0027/g, "'")
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'");
+}
+
+/**
+ * TEACHERV2 state bo'ylab `"journalUrl": "..."` yozuvlarini topib, yonidagi
+ * subjectName/guruh nomini oladi. groups[] ro'yxatiga kirmagan guruhlar
+ * (masalan qo'shimcha sinflar) shu yerda ko'rinadi.
+ */
+export function extractTeacherJournals(html: string): TeacherJournalEntry[] {
+  const out: TeacherJournalEntry[] = [];
+  const marker = html.search(/TEACHERV2__INITIAL/);
+  const region = marker >= 0 ? html.slice(marker, marker + 600000) : html;
+  const re = /"journalUrl"\s*:\s*"([^"]{10,300})"/g;
+  let m: RegExpExecArray | null;
+  const nearest = (before: string, after: string, key: RegExp): string => {
+    // Avval old tomondan eng YAQIN qiymat, bo'lmasa orqadan
+    const b = [...before.matchAll(new RegExp(key.source, "g"))];
+    if (b.length > 0) return b[b.length - 1][1] ?? "";
+    const a = after.match(key);
+    return a?.[1] ?? "";
+  };
+  while ((m = re.exec(region)) !== null) {
+    const url = m[1].replace(/\\u0026/g, "&").replace(/&amp;/g, "&");
+    const gidM = url.match(/\/group\/(\d{6,25})/) ?? url.match(/[?&]group=(\d{6,25})/);
+    const gid = gidM?.[1] ?? "";
+    if (!gid) continue;
+    const before = region.slice(Math.max(0, m.index - 300), m.index);
+    const after = region.slice(m.index + m[0].length, m.index + m[0].length + 300);
+    const subjectName = unescJsonStr(nearest(before, after, /"subjectName"\s*:\s*"([^"]{1,80})"/)).trim();
+    if (!subjectName) continue;
+    const groupName = unescJsonStr(
+      nearest(before, after, /"groupName"\s*:\s*"([^"]{1,40})"/) ||
+        nearest(before, after, /"name"\s*:\s*"([A-Za-z0-9\-]{2,10})"/),
+    ).trim();
+    out.push({ groupId: gid, groupName, subjectName });
+  }
+  return out;
+}
+
+/** Guruhlar ro'yxatini jurnal yozuvlari bilan birlashtiradi (fanlar + yangi guruhlar). */
+export function mergeTeacherGroups(groups: TeacherGroup[], journals: TeacherJournalEntry[]): TeacherGroup[] {
+  const out = groups.map((g) => ({ ...g, subjects: [...g.subjects] }));
+  const find = (gid: string) =>
+    out.find((g) => g.classId === gid || g.classId.includes(gid) || gid.includes(g.classId));
+  for (const j of journals) {
+    let g = find(j.groupId);
+    if (!g) {
+      g = {
+        classId: j.groupId,
+        className: j.groupName || j.groupId,
+        isClassTeacher: false,
+        subjects: [],
+      };
+      out.push(g);
+    }
+    if (j.subjectName && !g.subjects.includes(j.subjectName)) g.subjects.push(j.subjectName);
+    if (!g.className && j.groupName) g.className = j.groupName;
+  }
+  return out;
+}
+
+function normLoose(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/['\u2019\u2018\u02BB\u02BC]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Dars o'qituvchining yuklamasiga tegishlimi?
+ * - fan nomi qat'iy teng bo'lmasa ham ichma-ich bo'lsa — mos ("Informatika va AT" ⊃ "Informatika");
+ * - yoki darsdagi o'qituvchi ismi mos kelsa — mos;
+ * - aks holda — emas. Bo'sh fan/ism bilan tasdiqlab bo'lmaydi → emas.
+ */
+export function lessonMatchesTeacherLoad(
+  subject: string,
+  teacher: string | null | undefined,
+  subjects: string[],
+  teacherName: string,
+): boolean {
+  const ls = normLoose(subject ?? "");
+  const taught = subjects.map(normLoose).filter(Boolean);
+  if (ls) {
+    for (const sn of taught) {
+      if (ls === sn) return true;
+      const shorter = ls.length <= sn.length ? ls : sn;
+      if (shorter.length >= 4 && (ls.includes(sn) || sn.includes(ls))) return true;
+    }
+  }
+  const t = normLoose(teacher ?? "");
+  if (!t) return false;
+  const tokens = normLoose(teacherName ?? "")
+    .split(/\s+/)
+    .filter((x) => x.length >= 4);
+  return tokens.some((tok) => t.includes(tok));
 }
 
 /**
