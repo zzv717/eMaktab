@@ -294,6 +294,29 @@ export async function GET(req: NextRequest) {
         }
         return NextResponse.json(out);
       }
+      // ?jdump=1 — haftalik jurnal HTML namunalari + tuzilma sanagichlari
+      if (sp.get("jdump")) {
+        try {
+          const jw = `https://emaktab.uz/journal/school/${encodeURIComponent(result.session.active.schoolId)}/group/2524942980748797372/week/26/10`;
+          const hj = await pageGet(result.session.cookies, jw);
+          const counts = {
+            table: (hj.match(/<table/gi) ?? []).length,
+            td: (hj.match(/<td/gi) ?? []).length,
+            dataMark: (hj.match(/data-mark/gi) ?? []).length,
+            lesson: (hj.match(/lesson/gi) ?? []).length,
+            script: (hj.match(/<script/gi) ?? []).length,
+            form: (hj.match(/<form/gi) ?? []).length,
+            odo: (hj.match(/odo\//gi) ?? []).length,
+          };
+          (out as Record<string, unknown>).jd = JSON.stringify(counts);
+          (out as Record<string, unknown>).js1 = hj.slice(12000, 13400).replace(/\s+/g, " ");
+          (out as Record<string, unknown>).js2 = hj.slice(26000, 27400).replace(/\s+/g, " ");
+        } catch (e19) {
+          (out as Record<string, unknown>).jd = "xato " + String(e19).slice(0, 40);
+        }
+        return NextResponse.json(out);
+      }
+
       // ?jurls=1 — sahifadagi barcha URL/yol naqshlari
       if (sp.get("jurls")) {
         try {
