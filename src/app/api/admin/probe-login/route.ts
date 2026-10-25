@@ -256,6 +256,39 @@ export async function GET(req: NextRequest) {
             if (acc2.length >= 3) break;
           }
           (out as Record<string, unknown>).jc = acc2.join(" ~~ ").slice(0, 700) || "-";
+      // ?jfind=1 — keng qidiruv: MetaGroup/ctp/o'tkazildi/init naqshlari + schools journals sahifasi
+      if (sp.get("jfind")) {
+        try {
+          const pages: Array<[string, string]> = [
+            ["w", `https://emaktab.uz/journal/school/${encodeURIComponent(result.session.active.schoolId)}/group/2524942980748797372/week/26/10`],
+            ["s", `https://schools.emaktab.uz/journals/?school=${encodeURIComponent(result.session.active.schoolId)}`],
+          ];
+          const groups: Array<[string, RegExp]> = [
+            ["A", /MetaGroup|marksTable|journalTable|data-work|data-school|editmark/gi],
+            ["B", /ctpApi|\bctp\b|Ctp|kalendar|ish.?reja|workplan|WorkPlan|editctp|uploadctp/gi],
+            ["C", /o'tkaz|otkaz|conducted|visitlog|attendance|factHours|isHeld|journallesson|editlesson/gi],
+            ["D", /require\(|requirejs|dnevnik\.blocks|blocks\.init|\$\.ajax/gi],
+          ];
+          const resL: string[] = [];
+          for (const [pLabel, u] of pages) {
+            const html = await pageGet(result.session.cookies, u);
+            for (const [gLabel, re] of groups) {
+              let found = 0;
+              for (const mm of html.matchAll(re)) {
+                const i = mm.index ?? 0;
+                resL.push(`${pLabel}${gLabel}:` + html.slice(Math.max(0, i - 30), i + 110).replace(/\s+/g, " "));
+                found++;
+                if (found >= 1) break;
+              }
+              if (found === 0) resL.push(`${pLabel}${gLabel}:-`);
+            }
+          }
+          (out as Record<string, unknown>).jfind = resL.join(" ~~ ").slice(0, 1300);
+        } catch (e17) {
+          (out as Record<string, unknown>).jfind = "xato " + String(e17).slice(0, 40);
+        }
+        return NextResponse.json(out);
+      }
         } catch (e16) {
           (out as Record<string, unknown>).jmods = "xato " + String(e16).slice(0, 40);
         }
