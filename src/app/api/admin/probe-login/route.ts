@@ -294,6 +294,32 @@ export async function GET(req: NextRequest) {
         }
         return NextResponse.json(out);
       }
+      // ?jurls=1 — sahifadagi barcha URL/yol naqshlari
+      if (sp.get("jurls")) {
+        try {
+          const pages: Array<[string, string]> = [
+            ["w", `https://emaktab.uz/journal/school/${encodeURIComponent(result.session.active.schoolId)}/group/2524942980748797372/week/26/10`],
+            ["s", `https://schools.emaktab.uz/journals/?school=${encodeURIComponent(result.session.active.schoolId)}`],
+          ];
+          const resL: string[] = [];
+          for (const [pLabel, u] of pages) {
+            const html = await pageGet(result.session.cookies, u);
+            const urls = new Set<string>();
+            for (const m of html.matchAll(/(?:https?:)?\\?\/\\?\/[a-z0-9.-]*emaktab\.uz[^"'\\\s<]{0,70}/gi)) {
+              urls.add(m[0].replace(/\\/g, "").slice(0, 70));
+            }
+            for (const m of html.matchAll(/["'](\/(?:api|v2|journal|journals|odo|userfeed|marks)[^"']{0,60})["']/gi)) {
+              urls.add(m[1]);
+            }
+            resL.push(`${pLabel}:` + [...urls].slice(0, 14).join(" ").slice(0, 700));
+          }
+          (out as Record<string, unknown>).jurls = resL.join(" ~~ ").slice(0, 1400);
+        } catch (e18) {
+          (out as Record<string, unknown>).jurls = "xato " + String(e18).slice(0, 40);
+        }
+        return NextResponse.json(out);
+      }
+
 
 
       // ?check=1 — ma'lumot oqimlarini ham sinaymiz (menyu funksiyalari).
