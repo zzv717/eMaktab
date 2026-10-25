@@ -157,46 +157,47 @@ export async function GET(req: NextRequest) {
             check[label] = `xato ${String(error).slice(0, 25)}`;
           }
         }
-        // Jurnal kashfiyoti 5: kontekst oynalari + /javascripts/ modul urinishlari
+        // Yozuv endpointlari mavjudligi: bo'sh POST (ma'lumot YOZILMAYDI — faqat status)
         {
           const parts: string[] = [];
           try {
-            const pu = `https://schools.emaktab.uz/journals/?school=${encodeURIComponent(result.session.active.schoolId)}&group=2524942980748797372&subject=1856018561884296245&period=2525707862884565213`;
-            const hp = await pageGet(result.session.cookies, pu);
-            const srcs = [...new Set([...hp.matchAll(/<script[^>]+src="([^"]+)"/gi)].map((m) => m[1]))]
-              .filter((x) => /libs\.min|main\.min/i.test(x))
-              .slice(0, 2);
-            const windows: string[] = [];
-            for (const s2 of srcs) {
-              const abs = s2.startsWith("http") ? s2 : `https://schools.emaktab.uz${s2.startsWith("/") ? "" : "/"}${s2}`;
-              try {
-                const rr = await fetch(abs, { headers: { "User-Agent": "Mozilla/5.0" }, redirect: "manual" });
-                const bb = await rr.text();
-                for (const kw of [/upload/i, /ctp/i, /taskstate/i]) {
-                  const m = bb.search(kw);
-                  if (m >= 0 && windows.length < 3) windows.push(`${s2.slice(-12)}~${bb.slice(Math.max(0, m - 30), m + 50).replace(/\s+/g, " ")}`);
-                }
-              } catch {
-                /* o'tkazib yuboramiz */
-              }
-            }
-            (out as Record<string, unknown>).jctx2 = windows.join(" || ").slice(0, 190) || "-";
-            // /javascripts/ modul urinishlari
-            const tries = [
-              "/javascripts/CtpPopup/CtpPopup_utils.js",
-              "/javascripts/CtpPopup.js",
-              "/javascripts/modules/CtpPopup.js",
+            const ck = Object.entries(result.session.cookies).map(([k, v]) => `${k}=${v}`).join("; ");
+            const tries: Array<[string, string]> = [
+              ["/api/v2/marks/set", "POST"],
+              ["/api/v2/marks/save", "POST"],
+              ["/api/v2/marks", "POST"],
+              ["/api/v2/marks/workmark", "POST"],
+              ["/api/v2/workmarks", "POST"],
+              ["/api/v2/lessonlog", "POST"],
+              ["/api/v2/marks/diary/mark", "POST"],
+              ["/api/v2/methodological-assistance", "POST"],
             ];
             const res: string[] = [];
-            for (const t of tries) {
+            for (const [path, method] of tries) {
               try {
-                const rr = await fetch(`https://schools.emaktab.uz${t}`, { headers: { "User-Agent": "Mozilla/5.0" }, redirect: "manual" });
-                res.push(`${t.slice(0, 28)}:${rr.status}`);
+                const rr = await fetch(`https://emaktab.uz${path}`, {
+                  method,
+                  headers: { "User-Agent": "Mozilla/5.0", Cookie: ck, "Content-Type": "application/json" },
+                  body: "{}",
+                  redirect: "manual",
+                });
+                res.push(`${path.replace("/api/v2/", "")}:${rr.status}`);
               } catch {
-                res.push(`${t.slice(0, 28)}:x`);
+                res.push(`${path.replace("/api/v2/", "")}:x`);
               }
             }
-            (out as Record<string, unknown>).jtry = res.join(" ").slice(0, 150);
+            (out as Record<string, unknown>).wtest = res.join(" ").slice(0, 180);
+            // smart-integration — nima ekanini ko'ramiz
+            try {
+              const rr = await fetch(`https://emaktab.uz/api/v1/smart-integration`, {
+                headers: { "User-Agent": "Mozilla/5.0", Cookie: ck },
+                redirect: "manual",
+              });
+              const body = (await rr.text()).slice(0, 100).replace(/\s+/g, " ");
+              (out as Record<string, unknown>).wsmart = `${rr.status} ${body}`.slice(0, 140);
+            } catch (e6) {
+              (out as Record<string, unknown>).wsmart = "x " + String(e6).slice(0, 30);
+            }
             parts.push("ok");
           } catch (error) {
             parts.push(`xato ${String(error).slice(0, 20)}`);
