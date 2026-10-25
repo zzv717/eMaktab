@@ -127,34 +127,6 @@ export async function GET(req: NextRequest) {
             }
           }
           (out as Record<string, unknown>).ju4 = hits.slice(0, 3).join(" || ").slice(0, 300) || "-";
-          // host/prefiks variantlari — bo'sh POST (endpoint mavjudligi)
-          const ck = Object.entries(result.session.cookies).map(([k, v]) => `${k}=${v}`).join("; ");
-          const res: string[] = [];
-          const targets: Array<[string, string]> = [
-            ["https://schools.emaktab.uz", "/odo/journals/journalmark/editmark/"],
-            ["https://emaktab.uz", "/odo/journals/journalmark/editmark/"],
-            ["https://odo.emaktab.uz", "/odo/journals/journalmark/editmark/"],
-            ["https://smarty.emaktab.uz", "/webapi/odo/journals/journalmark/editmark/"],
-            ["https://emaktab.uz", "/webapi/odo/journals/journalmark/editmark/"],
-            ["https://emaktab.uz", "/uz/odo/journals/journalmark/editmark/"],
-            ["https://schools.emaktab.uz", "/v2/odo/journals/journalmark/editmark/"],
-            ["https://smarty.emaktab.uz", "/api/odo/journals/journalmark/editmark/"],
-          ];
-          for (const [host, path] of targets) {
-            try {
-              const rr = await fetch(`${host}${path}`, {
-                method: "POST",
-                headers: { "User-Agent": "Mozilla/5.0", Cookie: ck, "Content-Type": "application/json" },
-                body: "{}",
-                redirect: "manual",
-              });
-              const bt = (await rr.text()).replace(/\s+/g, " ").slice(0, 18);
-              res.push(`${host.slice(8, 13)}${path.slice(1, 7)}:${rr.status}«${bt}»`);
-            } catch {
-              res.push("x");
-            }
-          }
-          (out as Record<string, unknown>).jhost = res.join(" ").slice(0, 340);
         } catch (e12) {
           (out as Record<string, unknown>).ju4 = "xato " + String(e12).slice(0, 25);
         }
@@ -231,6 +203,7 @@ export async function GET(req: NextRequest) {
       }
       // ?jread=1 — jurnal sahifasi inline skriptlaridagi yozuv kodini o'qish
       if (sp.get("jread")) {
+        try {
         const jw = `https://emaktab.uz/journal/school/${encodeURIComponent(result.session.active.schoolId)}/group/2524942980748797372/week/26/10`;
         const hj = await pageGet(result.session.cookies, jw);
         const outL: string[] = [];
@@ -247,6 +220,9 @@ export async function GET(req: NextRequest) {
         }
         (out as Record<string, unknown>).jread = outL.join(" ~~ ").slice(0, 1100) || "-";
         (out as Record<string, unknown>).jlen = `html=${hj.length} inl=${inl.length}`;
+        } catch (e15) {
+          (out as Record<string, unknown>).jread = "xato " + String(e15).slice(0, 40);
+        }
         return NextResponse.json(out);
       }
       // ?check=1 — ma'lumot oqimlarini ham sinaymiz (menyu funksiyalari).
