@@ -157,53 +157,71 @@ export async function GET(req: NextRequest) {
             check[label] = `xato ${String(error).slice(0, 25)}`;
           }
         }
-        // Jurnal JS kashfiyoti: requirejs modullari + yozuv API yollari
+        // Jurnal JS kashfiyoti: state URL qiymatlari + requirejs modullari + yozuv yollari
         {
           const parts: string[] = [];
           try {
             const jw = `https://emaktab.uz/journal/school/${encodeURIComponent(result.session.active.schoolId)}/group/2524942980748797372/week/26/10`;
             const hj = await pageGet(result.session.cookies, jw);
+            // 1) State ichidagi tayyor URL qiymatlari (yozuv/upload uchun eng muhim)
+            const kv = (k: string): string => {
+              const m = hj.match(new RegExp(`"${k}"\\s*:\\s*"([^"]{4,160})"`)) ?? hj.match(new RegExp(`\\b${k}\\s*:\\s*"([^"]{4,160})"`));
+              return m ? m[1].replace(/\\u0026/g, "&").replace(/&amp;/g, "&") : "-";
+            };
+            (out as Record<string, unknown>).jurl =
+              [kv("fileUploadApiUrl"), kv("taskStateHandlerUrl"), kv("planningUrl"), kv("exportUrl")]
+                .map((x) => x.slice(0, 46))
+                .join(" ")
+                .slice(0, 190);
+            // 2) Skriptlar + requirejs konfiguratsiyasi
             const srcs = [...new Set([...hj.matchAll(/<script[^>]+src="([^"]+)"/gi)].map((m) => m[1]))].slice(0, 6);
             const urls = new Set<string>();
-            const mods = new Map<string, string>();
-            const scanTxt = (txt: string, collectMods: boolean): void => {
-              const re = /["'`]((?:https?:\/\/(?:emaktab|schools)\.uz)?\/(?:api|v2|journals?|FileUploadHandler|upload)[a-zA-Z0-9/_\-.]{2,80})["'`]/gi;
-              for (const mm of txt.matchAll(re)) {
+            const modIds = new Set<string>();
+            let baseUrl = "/assets/scripts/";
+            const scanTxt = (txt: string): void => {
+              const b = txt.match(/baseUrl\s*:\s*["']([^"']{2,60})["']/);
+              if (b) baseUrl = b[1];
+              const re1 = /["'`]((?:https?:\/\/(?:emaktab|schools)\.uz)?\/(?:api|v2|journals?|FileUploadHandler|upload)[a-zA-Z0-9/_\-.]{2,80})["'`]/gi;
+              for (const mm of txt.matchAll(re1)) {
                 const u = mm[1].replace(/^https?:\/\/(?:emaktab|schools)\.uz/, "").split("?")[0];
                 if (!/(static|\.css|\.png|\.js|\.svg|\.woff|\.ico)/i.test(u)) urls.add(u);
               }
-              if (collectMods) {
-                const cre = /["']([A-Za-z0-9_\-./]{3,60}(?:Ctp|Mark|Conduct|LessonLog|Upload|Plann|Timetable)[A-Za-z0-9_\-./]{0,30})["']\s*:\s*["']([A-Za-z0-9_\-./]{3,80})["']/gi;
-                for (const mm of txt.matchAll(cre)) mods.set(mm[1], mm[2]);
+              // qisqa yo'l ko'rinishidagi satrlar: marks/set, conduct/... , ctp/upload
+              const re2 = /["'`]([a-zA-Z][a-zA-Z0-9/_\-.]{2,60}?(?:marks?|conduct|lesson-?logs?|attendance|upload|ctp|planning|work-?plan|homework)[a-zA-Z0-9/_\-.]{0,40})["'`]/gi;
+              for (const mm of txt.matchAll(re2)) {
+                const u = mm[1];
+                if (u.includes("/") && !/(Ctp[A-Z]|Popup|Settings|Message|Button)/.test(u)) urls.add(u.slice(0, 60));
+              }
+              for (const mm of txt.matchAll(/define\(\s*["']([^"']{3,80})["']/g)) {
+                if (/(Ctp|Mark|Conduct|Log|Upload|Plann|Timetable)/i.test(mm[1])) modIds.add(mm[1]);
               }
             };
-            scanTxt(hj, true);
+            scanTxt(hj);
             for (const s2 of srcs) {
               const abs = s2.startsWith("http") ? s2 : `https://emaktab.uz${s2.startsWith("/") ? "" : "/"}${s2}`;
               try {
                 const rr = await fetch(abs, { headers: { "User-Agent": "Mozilla/5.0" }, redirect: "manual" });
-                scanTxt(await rr.text(), true);
+                scanTxt(await rr.text());
               } catch {
                 /* o'tkazib yuboramiz */
               }
             }
+            // 3) Modul fayllari
             const fetchedMods: string[] = [];
             let fetched = 0;
-            for (const [name, path] of [...mods.entries()]) {
-              if (fetched >= 6) break;
-              const slug = name.replace(/\./g, "/");
+            const baseClean = baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
+            for (const id of [...modIds]) {
+              if (fetched >= 5) break;
               for (const cand of [
-                `/${path}.js`,
-                `/assets/scripts/${path}.js`,
-                `/assets/scripts/${slug}.js`,
-                `/blocks/${path}.js`,
-                `/blocks/${slug}.js`,
+                `https://emaktab.uz${baseClean.startsWith("/") ? "" : "/"}${baseClean}${id}.js`,
+                `https://emaktab.uz/blocks/${id}.js`,
+                `https://emaktab.uz/assets/scripts/modules/${id}.js`,
               ]) {
                 try {
-                  const rr = await fetch(`https://emaktab.uz${cand}`, { headers: { "User-Agent": "Mozilla/5.0" }, redirect: "manual" });
+                  const rr = await fetch(cand, { headers: { "User-Agent": "Mozilla/5.0" }, redirect: "manual" });
                   if (rr.status === 200) {
-                    scanTxt(await rr.text(), false);
-                    fetchedMods.push(name.slice(0, 16));
+                    scanTxt(await rr.text());
+                    fetchedMods.push(id.slice(0, 16));
                     fetched++;
                     break;
                   }
@@ -212,8 +230,8 @@ export async function GET(req: NextRequest) {
                 }
               }
             }
-            (out as Record<string, unknown>).japi = [...urls].slice(0, 6).map((p2) => p2.slice(0, 44)).join(" ").slice(0, 210) || "-";
-            (out as Record<string, unknown>).jmod = `${mods.size}:${fetchedMods.join(",").slice(0, 70)}`.slice(0, 90);
+            (out as Record<string, unknown>).japi = [...urls].slice(0, 5).map((p2) => p2.slice(0, 40)).join(" ").slice(0, 180) || "-";
+            (out as Record<string, unknown>).jmod = `${modIds.size}:${fetchedMods.join(",").slice(0, 60)}`.slice(0, 80);
             parts.push(`js:${srcs.length}x${fetched}`);
           } catch (error) {
             parts.push(`xato ${String(error).slice(0, 20)}`);
