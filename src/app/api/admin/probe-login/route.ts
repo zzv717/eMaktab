@@ -338,7 +338,7 @@ export async function GET(req: NextRequest) {
         try {
           const su = `https://schools.emaktab.uz/journals/?school=${encodeURIComponent(result.session.active.schoolId)}`;
           const html = await pageGet(result.session.cookies, su);
-          const srcs = [...new Set([...html.matchAll(/<script[^>]+src="([^"]+)"/gi)].map((m) => m[1]))].slice(0, 10);
+          const srcs: string[] = [];
           const hrefs = [...new Set([...html.matchAll(/href="([^"]{4,90})"/gi)].map((m) => m[1]))]
             .filter((h) => /journal|group|lesson|odo/i.test(h))
             .slice(0, 10);
@@ -349,7 +349,8 @@ export async function GET(req: NextRequest) {
             acc3.push(html.slice(Math.max(0, i - 40), i + 120).replace(/\s+/g, " "));
             if (acc3.length >= 3) break;
           }
-          (out as Record<string, unknown>).jsp = `len=${html.length} srcs:${srcs.join(" ").slice(0, 500)} | hrefs:${hrefs.join(" ").slice(0, 300)} | kw:${acc3.join(" ~~ ").slice(0, 400)}`;
+          (out as Record<string, unknown>).jsrcs = [...new Set([...html.matchAll(/<script[^>]+src="([^"]+)"/gi)].map((m) => m[1]))].slice(0, 16).join(" ").slice(0, 1200);
+          (out as Record<string, unknown>).jsp = `len=${html.length} hrefs:${hrefs.join(" ").slice(0, 300)} | kw:${acc3.join(" ~~ ").slice(0, 400)}`;
         } catch (e21) {
           (out as Record<string, unknown>).jsp = "xato " + String(e21).slice(0, 40);
         }
