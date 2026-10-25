@@ -104,6 +104,35 @@ export async function GET(req: NextRequest) {
         } catch (e9) {
           (out as Record<string, unknown>).jreq = "xato " + String(e9).slice(0, 25);
         }
+        // main.min (ish-reja sahifasi) — URL yollari + upload konteksti (ilgari skanerlanmagan)
+        try {
+          const pu = `https://schools.emaktab.uz/journals/?school=${encodeURIComponent(result.session.active.schoolId)}&group=2524942980748797372&subject=1856018561884296245&period=2525707862884565213`;
+          const hp = await pageGet(result.session.cookies, pu);
+          const srcs = [...new Set([...hp.matchAll(/<script[^>]+src="([^"]+)"/gi)].map((m) => m[1]))]
+            .filter((x) => /main\\.min/i.test(x))
+            .slice(0, 1);
+          const urls = new Set<string>();
+          const windows: string[] = [];
+          for (const s2 of srcs) {
+            const abs = s2.startsWith("http") ? s2 : `https://schools.emaktab.uz${s2.startsWith("/") ? "" : "/"}${s2}`;
+            const rr = await fetch(abs, { headers: { "User-Agent": "Mozilla/5.0" }, redirect: "manual" });
+            const bb = await rr.text();
+            for (const mm of bb.matchAll(/["'`]((?:https?:\/\/[^"'` ]{2,40})?\/(?:api|v2|journals?|upload|Task|File|ctp)[a-zA-Z0-9/_\-.]{2,70})["'`]/gi)) {
+              const u = mm[1].replace(/^https?:\/\/[^/]+/, "").split("?")[0];
+              if (!/(\.css|\.png|\.svg|\.woff|\.ico)/i.test(u)) urls.add(u.slice(0, 44));
+            }
+            for (const kw of [/upload/i, /ctp/i, /task/i, /reja|plan/i]) {
+              const m = bb.search(kw);
+              if (m >= 0 && windows.length < 3) {
+                windows.push(`${kw.source.slice(0, 4)}~${bb.slice(Math.max(0, m - 25), m + 55).replace(/[\s"']/g, " ")}`);
+              }
+            }
+          }
+          (out as Record<string, unknown>).ju2 = [...urls].slice(0, 4).join(" ").slice(0, 170) || "-";
+          (out as Record<string, unknown>).jw2 = windows.join(" || ").slice(0, 180) || "-";
+        } catch (e10) {
+          (out as Record<string, unknown>).ju2 = "xato " + String(e10).slice(0, 25);
+        }
 
       // ?check=1 — ma'lumot oqimlarini ham sinaymiz (menyu funksiyalari).
       if (sp.get("check")) {
