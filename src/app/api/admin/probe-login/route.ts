@@ -157,47 +157,24 @@ export async function GET(req: NextRequest) {
             check[label] = `xato ${String(error).slice(0, 25)}`;
           }
         }
-        // Yozuv endpointlari mavjudligi: bo'sh POST (ma'lumot YOZILMAYDI — faqat status)
+        // JOURNAL state: barcha URL/API kalitlari (nomlar) + muhim qiymatlar
         {
           const parts: string[] = [];
           try {
-            const ck = Object.entries(result.session.cookies).map(([k, v]) => `${k}=${v}`).join("; ");
-            const tries: Array<[string, string]> = [
-              ["/api/v2/marks/set", "POST"],
-              ["/api/v2/marks/save", "POST"],
-              ["/api/v2/marks", "POST"],
-              ["/api/v2/marks/workmark", "POST"],
-              ["/api/v2/workmarks", "POST"],
-              ["/api/v2/lessonlog", "POST"],
-              ["/api/v2/marks/diary/mark", "POST"],
-              ["/api/v2/methodological-assistance", "POST"],
-            ];
-            const res: string[] = [];
-            for (const [path, method] of tries) {
-              try {
-                const rr = await fetch(`https://emaktab.uz${path}`, {
-                  method,
-                  headers: { "User-Agent": "Mozilla/5.0", Cookie: ck, "Content-Type": "application/json" },
-                  body: "{}",
-                  redirect: "manual",
-                });
-                res.push(`${path.replace("/api/v2/", "")}:${rr.status}`);
-              } catch {
-                res.push(`${path.replace("/api/v2/", "")}:x`);
-              }
+            const jw = `https://emaktab.uz/journal/school/${encodeURIComponent(result.session.active.schoolId)}/group/2524942980748797372/week/26/10`;
+            const hj = await pageGet(result.session.cookies, jw);
+            const keys = new Set<string>();
+            for (const m of hj.matchAll(/"([a-zA-Z][a-zA-Z0-9]{2,40}(?:Url|URL|Api|Handler|Upload|Path|Endpoint)[a-zA-Z0-9]{0,20})"\s*:/g)) {
+              keys.add(m[1]);
             }
-            (out as Record<string, unknown>).wtest = res.join(" ").slice(0, 180);
-            // smart-integration — nima ekanini ko'ramiz
-            try {
-              const rr = await fetch(`https://emaktab.uz/api/v1/smart-integration`, {
-                headers: { "User-Agent": "Mozilla/5.0", Cookie: ck },
-                redirect: "manual",
-              });
-              const body = (await rr.text()).slice(0, 100).replace(/\s+/g, " ");
-              (out as Record<string, unknown>).wsmart = `${rr.status} ${body}`.slice(0, 140);
-            } catch (e6) {
-              (out as Record<string, unknown>).wsmart = "x " + String(e6).slice(0, 30);
-            }
+            (out as Record<string, unknown>).jkeys = [...keys].slice(0, 12).join(" ").slice(0, 190) || "-";
+            // Eng muhim kalitlarning to'liq qiymatlari
+            const kv = (k: string): string => {
+              const m = hj.match(new RegExp(`"${k}"\\s*:\\s*"([^"]{3,150})"`)) ?? hj.match(new RegExp(`\\b${k}\\s*:\\s*"([^"]{3,150})"`));
+              return m ? m[1].replace(/\\u0026/g, "&").replace(/&amp;/g, "&") : "-";
+            };
+            (out as Record<string, unknown>).jvals =
+              [kv("fileUploadApiUrl"), kv("taskStateHandlerUrl"), kv("exportUrl")].map((x) => x.slice(0, 60)).join(" ").slice(0, 190);
             parts.push("ok");
           } catch (error) {
             parts.push(`xato ${String(error).slice(0, 20)}`);
