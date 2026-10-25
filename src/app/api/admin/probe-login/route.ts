@@ -157,66 +157,63 @@ export async function GET(req: NextRequest) {
             check[label] = `xato ${String(error).slice(0, 25)}`;
           }
         }
-        // Jurnal JS kashfiyoti: skriptlar, chunklar, API yollari
+        // Jurnal JS kashfiyoti: requirejs modullari + yozuv API yollari
         {
           const parts: string[] = [];
           try {
             const jw = `https://emaktab.uz/journal/school/${encodeURIComponent(result.session.active.schoolId)}/group/2524942980748797372/week/26/10`;
             const hj = await pageGet(result.session.cookies, jw);
             const srcs = [...new Set([...hj.matchAll(/<script[^>]+src="([^"]+)"/gi)].map((m) => m[1]))].slice(0, 6);
-            (out as Record<string, unknown>).jsrc = srcs.map((s) => s.replace(/^https?:\/\/[^/]+/, "").slice(0, 42)).join(" ").slice(0, 150) || "-";
-            const apiPaths = new Set<string>();
-            const scanTxt = (txt: string): void => {
-              const re1 = /["'`]((?:\/api\/|\/v2\/)[a-zA-Z0-9/_\-.]{2,70})["'`]/g;
-              const re2 = /["'`]([a-zA-Z0-9/_\-.]{3,60}(?:lessonLog|lesson-log|conduct|upload|\/ctp|timetable)[a-zA-Z0-9/_\-.]{0,30})["'`]/gi;
-              for (const mm of txt.matchAll(re1)) apiPaths.add(mm[1]);
-              for (const mm of txt.matchAll(re2)) apiPaths.add(mm[1].slice(0, 60));
+            const urls = new Set<string>();
+            const mods = new Map<string, string>();
+            const scanTxt = (txt: string, collectMods: boolean): void => {
+              const re = /["'`]((?:https?:\/\/(?:emaktab|schools)\.uz)?\/(?:api|v2|journals?|FileUploadHandler|upload)[a-zA-Z0-9/_\-.]{2,80})["'`]/gi;
+              for (const mm of txt.matchAll(re)) {
+                const u = mm[1].replace(/^https?:\/\/(?:emaktab|schools)\.uz/, "").split("?")[0];
+                if (!/(static|\.css|\.png|\.js|\.svg|\.woff|\.ico)/i.test(u)) urls.add(u);
+              }
+              if (collectMods) {
+                const cre = /["']([A-Za-z0-9_\-./]{3,60}(?:Ctp|Mark|Conduct|LessonLog|Upload|Plann|Timetable)[A-Za-z0-9_\-./]{0,30})["']\s*:\s*["']([A-Za-z0-9_\-./]{3,80})["']/gi;
+                for (const mm of txt.matchAll(cre)) mods.set(mm[1], mm[2]);
+              }
             };
-            scanTxt(hj);
-            const chunks = new Set<string>();
-            let pubPath = "";
-            for (const s of srcs) {
-              const abs = s.startsWith("http") ? s : `https://emaktab.uz${s.startsWith("/") ? "" : "/"}${s}`;
+            scanTxt(hj, true);
+            for (const s2 of srcs) {
+              const abs = s2.startsWith("http") ? s2 : `https://emaktab.uz${s2.startsWith("/") ? "" : "/"}${s2}`;
               try {
                 const rr = await fetch(abs, { headers: { "User-Agent": "Mozilla/5.0" }, redirect: "manual" });
-                const bb = await rr.text();
-                scanTxt(bb);
-                const pm = bb.match(/\.p\s*=\s*"([^"]{2,80})"/);
-                if (pm && !pubPath) pubPath = pm[1];
-                const cm = bb.match(/\{(?:\d{1,6}:"[a-f0-9]{8,24}",?){2,}\}/);
-                if (cm) {
-                  try {
-                    const map = JSON.parse(cm[0]) as Record<string, string>;
-                    for (const kk of Object.keys(map)) chunks.add(`${kk}.${map[kk]}`);
-                  } catch {
-                    /* o'tkazib yuboramiz */
-                  }
-                }
+                scanTxt(await rr.text(), true);
               } catch {
                 /* o'tkazib yuboramiz */
               }
             }
-            (out as Record<string, unknown>).jchunk = `${(pubPath || "?").slice(0, 40)} n=${chunks.size}`;
-            const base = pubPath.startsWith("http") ? pubPath : `https://emaktab.uz${pubPath.startsWith("/") ? "" : "/"}${pubPath || "/"}`;
+            const fetchedMods: string[] = [];
             let fetched = 0;
-            for (const c of [...chunks].slice(0, 12)) {
+            for (const [name, path] of [...mods.entries()]) {
               if (fetched >= 6) break;
-              const u = c.includes("/")
-                ? c.startsWith("http")
-                  ? c
-                  : `https://emaktab.uz${c.startsWith("/") ? "" : "/"}${c}`
-                : `${base}${base.endsWith("/") ? "" : "/"}${c}.js`;
-              try {
-                const rr = await fetch(u, { headers: { "User-Agent": "Mozilla/5.0" }, redirect: "manual" });
-                if (rr.status === 200) {
-                  scanTxt(await rr.text());
-                  fetched += 1;
+              const slug = name.replace(/\./g, "/");
+              for (const cand of [
+                `/${path}.js`,
+                `/assets/scripts/${path}.js`,
+                `/assets/scripts/${slug}.js`,
+                `/blocks/${path}.js`,
+                `/blocks/${slug}.js`,
+              ]) {
+                try {
+                  const rr = await fetch(`https://emaktab.uz${cand}`, { headers: { "User-Agent": "Mozilla/5.0" }, redirect: "manual" });
+                  if (rr.status === 200) {
+                    scanTxt(await rr.text(), false);
+                    fetchedMods.push(name.slice(0, 16));
+                    fetched++;
+                    break;
+                  }
+                } catch {
+                  /* o'tkazib yuboramiz */
                 }
-              } catch {
-                /* o'tkazib yuboramiz */
               }
             }
-            (out as Record<string, unknown>).japi = [...apiPaths].slice(0, 7).map((p) => p.slice(0, 42)).join(" ").slice(0, 170) || "-";
+            (out as Record<string, unknown>).japi = [...urls].slice(0, 6).map((p2) => p2.slice(0, 44)).join(" ").slice(0, 210) || "-";
+            (out as Record<string, unknown>).jmod = `${mods.size}:${fetchedMods.join(",").slice(0, 70)}`.slice(0, 90);
             parts.push(`js:${srcs.length}x${fetched}`);
           } catch (error) {
             parts.push(`xato ${String(error).slice(0, 20)}`);
