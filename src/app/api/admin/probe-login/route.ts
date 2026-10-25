@@ -126,21 +126,25 @@ export async function GET(req: NextRequest) {
             }
           }
           (out as Record<string, unknown>).ju4 = [...paths].slice(0, 4).join(" ").slice(0, 180) || "-";
-          // host sinovi
+          // host sinovi — GET + bo'sh POST (endpoint mavjudligi)
           const ck = Object.entries(result.session.cookies).map(([k, v]) => `${k}=${v}`).join("; ");
           const res: string[] = [];
-          for (const host of ["https://emaktab.uz", "https://schools.emaktab.uz"]) {
-            try {
-              const rr = await fetch(`${host}/odo/journals/journalmark/editmark/`, {
-                headers: { "User-Agent": "Mozilla/5.0", Cookie: ck },
-                redirect: "manual",
-              });
-              res.push(`${host.includes("schools") ? "sch" : "em"}:${rr.status}`);
-            } catch {
-              res.push("x");
+          for (const host of ["https://smarty.emaktab.uz", "https://api.emaktab.uz", "https://emaktab.uz", "https://schools.emaktab.uz"]) {
+            for (const method of ["GET", "POST"]) {
+              try {
+                const rr = await fetch(`${host}/odo/journals/journalmark/editmark/`, {
+                  method,
+                  headers: { "User-Agent": "Mozilla/5.0", Cookie: ck, "Content-Type": "application/json" },
+                  body: method === "POST" ? "{}" : undefined,
+                  redirect: "manual",
+                });
+                res.push(`${host.slice(8, 13)}${method[0]}${rr.status}`);
+              } catch {
+                res.push("x");
+              }
             }
           }
-          (out as Record<string, unknown>).jhost = res.join(" ");
+          (out as Record<string, unknown>).jhost = res.join(" ").slice(0, 90);
         } catch (e12) {
           (out as Record<string, unknown>).ju4 = "xato " + String(e12).slice(0, 25);
         }
