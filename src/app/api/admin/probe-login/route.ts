@@ -138,13 +138,14 @@ export async function GET(req: NextRequest) {
                   body: method === "POST" ? "{}" : undefined,
                   redirect: "manual",
                 });
-                res.push(`${host.slice(8, 13)}${method[0]}${rr.status}`);
+                const bt = (await rr.text()).replace(/\s+/g, " ").slice(0, 40);
+              res.push(`${host.slice(8, 13)}${method[0]}${rr.status}«${bt}»`);
               } catch {
                 res.push("x");
               }
             }
           }
-          (out as Record<string, unknown>).jhost = res.join(" ").slice(0, 90);
+          (out as Record<string, unknown>).jhost = res.join(" ").slice(0, 260);
         } catch (e12) {
           (out as Record<string, unknown>).ju4 = "xato " + String(e12).slice(0, 25);
         }
