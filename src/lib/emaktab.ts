@@ -2280,6 +2280,46 @@ export function mergeTeacherGroups(groups: TeacherGroup[], journals: TeacherJour
   return out;
 }
 
+/**
+ * Bir kundagi darslarni smena aralashuvidan tozalaydi:
+ * 1) bir xil (raqam + fan) takrorlanganda — eng ertadagisi (kunduzgi smena) qoladi;
+ * 2) fan kun davomida ham erta, ham tushdan keyin uchrasa — faqat 12:00 oldinlar qoladi
+ *    (o'qituvchi darslari doim kunduzgi smenada).
+ * Barcha darslar tushdan keyin bo'lsa — o'zgarmaydi.
+ */
+export function dedupeShiftLessons(lessons: Lesson[]): Lesson[] {
+  const t = (l: Lesson) => (l.startTime && /^\d{1,2}:\d{2}/.test(l.startTime) ? l.startTime : "z");
+  const isMorning = (l: Lesson) => Boolean(l.startTime) && l.startTime! < "12:00";
+  const isAfternoon = (l: Lesson) => Boolean(l.startTime) && l.startTime! >= "12:00";
+  // 1) raqam+fan duplikati → eng ertasi (soatli oldin, soatsiz keyin)
+  const byNumSubj = new Map<string, Lesson>();
+  for (const l of [...lessons].sort((a, b) => t(a).localeCompare(t(b)))) {
+    const key = `${l.number}|${l.subject}`;
+    if (!byNumSubj.has(key)) byNumSubj.set(key, l);
+  }
+  let kept = [...byNumSubj.values()];
+  // 2) smena aralashuvi → faqat kunduzgi (12:00 oldin)
+  const bySubj = new Map<string, Lesson[]>();
+  for (const l of kept) {
+    const arr = bySubj.get(l.subject) ?? [];
+    arr.push(l);
+    bySubj.set(l.subject, arr);
+  }
+  kept = [];
+  for (const arr of bySubj.values()) {
+    const hasMorning = arr.some(isMorning);
+    const hasAfternoon = arr.some(isAfternoon);
+    for (const l of arr) {
+      if (hasMorning && hasAfternoon) {
+        if (isMorning(l)) kept.push(l);
+      } else {
+        kept.push(l);
+      }
+    }
+  }
+  return kept.sort((a, b) => t(a).localeCompare(t(b)) || (a.number || 99) - (b.number || 99));
+}
+
 function normLoose(s: string): string {
   return s
     .toLowerCase()
