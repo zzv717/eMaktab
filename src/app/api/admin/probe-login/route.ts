@@ -229,6 +229,26 @@ export async function GET(req: NextRequest) {
         }
         return NextResponse.json(out);
       }
+      // ?jread=1 — jurnal sahifasi inline skriptlaridagi yozuv kodini o'qish
+      if (sp.get("jread")) {
+        const jw = `https://emaktab.uz/journal/school/${encodeURIComponent(result.session.active.schoolId)}/group/2524942980748797372/week/26/10`;
+        const hj = await pageGet(result.session.cookies, jw);
+        const outL: string[] = [];
+        // inline skriptlar
+        const inl = [...hj.matchAll(/<script[^>]*>([\s\S]{50,}?)<\/script>/gi)].map((m) => m[1]);
+        const kws = /odo\/|conducted|editlesson|o'tkaz|otkaz|ctp|workplan|ish.?reja|upload|editmark|lessonlog/i;
+        for (const sc of inl) {
+          for (const mm of sc.matchAll(kws)) {
+            const i = mm.index ?? 0;
+            outL.push(sc.slice(Math.max(0, i - 60), i + 280).replace(/\s+/g, " "));
+            if (outL.length >= 4) break;
+          }
+          if (outL.length >= 4) break;
+        }
+        (out as Record<string, unknown>).jread = outL.join(" ~~ ").slice(0, 1100) || "-";
+        (out as Record<string, unknown>).jlen = `html=${hj.length} inl=${inl.length}`;
+        return NextResponse.json(out);
+      }
       // ?check=1 — ma'lumot oqimlarini ham sinaymiz (menyu funksiyalari).
       if (sp.get("check")) {
         const check: Record<string, string> = {};
