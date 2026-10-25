@@ -157,22 +157,34 @@ export async function GET(req: NextRequest) {
             check[label] = `xato ${String(error).slice(0, 25)}`;
           }
         }
-        // Jurnal haftalik sahifasi: formalar + AJAX url: nishonlari + data-url
+        // smarty.emaktab.uz + smart-integration yollari (yozuv endpointlari)
         {
           const parts: string[] = [];
           try {
             const jw = `https://emaktab.uz/journal/school/${encodeURIComponent(result.session.active.schoolId)}/group/2524942980748797372/week/26/10`;
             const hj = await pageGet(result.session.cookies, jw);
-            const forms = [...new Set([...hj.matchAll(/<form[^>]*action="([^"]{2,120})"/gi)].map((m) => m[1]))].slice(0, 3);
-            const inputs = [...new Set([...hj.matchAll(/<(?:input|button|select)[^>]+name="([^"]{2,50})"/gi)].map((m) => m[1]))].slice(0, 8);
-            const ajaxUrls = new Set<string>();
-            for (const mm of hj.matchAll(/url\s*:\s*["']([^"']{3,110})["']/gi)) ajaxUrls.add(mm[1].split("?")[0]);
-            for (const mm of hj.matchAll(/data-(?:url|post|href|action)="([^"]{3,110})"/gi)) ajaxUrls.add(mm[1].split("?")[0]);
-            for (const mm of hj.matchAll(/\.(?:post|get|ajax|put)\(\s*["']([^"']{3,110})["']/gi)) ajaxUrls.add(mm[1].split("?")[0]);
-            (out as Record<string, unknown>).jpost =
-              [...ajaxUrls].slice(0, 5).map((u) => u.slice(0, 40)).join(" ").slice(0, 180) || "-";
-            (out as Record<string, unknown>).jform2 =
-              `f:${forms.map((f) => f.slice(0, 34)).join(",")} in:${inputs.join(",").slice(0, 70)}`.slice(0, 180);
+            const smartPaths = new Set<string>();
+            for (const mm of hj.matchAll(/smarty\.emaktab\.uz(\/[a-zA-Z0-9/_\-.]{2,70})/g)) smartPaths.add(mm[1].split("?")[0]);
+            for (const mm of hj.matchAll(/smart-integration(\/[a-zA-Z0-9/_\-.]{0,70})/g)) smartPaths.add(`/api/v1/smart-integration${mm[1].split("?")[0]}`);
+            (out as Record<string, unknown>).jsm = [...smartPaths].slice(0, 5).map((u) => u.slice(0, 44)).join(" ").slice(0, 190) || "-";
+            // smarty root + keng ajax url satrlari
+            const wide = new Set<string>();
+            for (const mm of hj.matchAll(/url\s*:\s*["']([^"']{3,140})["']/gi)) {
+              const u = mm[1].split("?")[0];
+              if (/(smarty|smart|mark|conduct|visit|task|ctp|upload|lesson)/i.test(u)) wide.add(u.slice(0, 56));
+            }
+            (out as Record<string, unknown>).jwide = [...wide].slice(0, 4).join(" ").slice(0, 190) || "-";
+            try {
+              const ck = Object.entries(result.session.cookies).map(([k, v]) => `${k}=${v}`).join("; ");
+              const rr = await fetch("https://smarty.emaktab.uz/", {
+                headers: { "User-Agent": "Mozilla/5.0", Cookie: ck },
+                redirect: "manual",
+              });
+              const body = (await rr.text()).slice(0, 60).replace(/\s+/g, " ");
+              (out as Record<string, unknown>).jsroot = `${rr.status} ${body}`.slice(0, 90);
+            } catch (e7) {
+              (out as Record<string, unknown>).jsroot = "x " + String(e7).slice(0, 25);
+            }
             parts.push("ok");
           } catch (error) {
             parts.push(`xato ${String(error).slice(0, 20)}`);
