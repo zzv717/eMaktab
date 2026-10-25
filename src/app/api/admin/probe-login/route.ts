@@ -104,39 +104,14 @@ export async function GET(req: NextRequest) {
         } catch (e9) {
           (out as Record<string, unknown>).jreq = "xato " + String(e9).slice(0, 25);
         }
-        // Modul fayllari: require.config baseUrl = static.emaktab.uz/assets/scripts/modules
+        // Modul fayllari: require.config paths xaritasini to'liq olish
         try {
-          const base = "https://static.emaktab.uz/assets/scripts/modules";
-          const mods = [
-            "CtpPopup/CtpPopup_utils",
-            "CtpPopup/CtpPopup",
-            "CtpCommonConfirmPopup/CtpCommonConfirmPopup",
-          ];
-          const urls = new Set<string>();
-          const status: string[] = [];
-          for (const m of mods) {
-            try {
-              const rr = await fetch(`${base}/${m}.js`, { headers: { "User-Agent": "Mozilla/5.0" }, redirect: "manual" });
-              status.push(`${m.split("/")[0].slice(0, 10)}:${rr.status}`);
-              if (rr.status === 200) {
-                const bb = await rr.text();
-                for (const mm of bb.matchAll(/["'`]((?:https?:\/\/[^"'` ]{2,40})?\/(?:api|v2|journals?|upload|Task|File|ctp|marks?|conduct|lesson)[a-zA-Z0-9/_\-.]{2,70})["'`]/gi)) {
-                  const u = mm[1].replace(/^https?:\/\/[^/]+/, "").split("?")[0];
-                  if (!/(\.css|\.png|\.svg|\.woff|\.ico)/i.test(u)) urls.add(u.slice(0, 44));
-                }
-                for (const mm of bb.matchAll(/["'`]([a-zA-Z][a-zA-Z0-9/_\-.]{2,50}(?:[Mm]ark|conduct|visit|upload|Ctp|task)[a-zA-Z0-9/_\-.]{0,30})["'`]/g)) {
-                  const u = mm[1];
-                  if (u.includes("/") && !/(Popup|Settings|Button|Icon|css|png)/.test(u)) urls.add(u.slice(0, 44));
-                }
-              }
-            } catch {
-              status.push(`${m.slice(0, 10)}:x`);
-            }
-          }
-          (out as Record<string, unknown>).ju3 = [...urls].slice(0, 4).join(" ").slice(0, 170) || "-";
-          (out as Record<string, unknown>).jm3 = status.join(" ").slice(0, 120);
+          const jw = `https://emaktab.uz/journal/school/${encodeURIComponent(result.session.active.schoolId)}/group/2524942980748797372/week/26/10`;
+          const hj = await pageGet(result.session.cookies, jw);
+          const cfg = hj.match(/require(?:js)?\.config\(\s*\{[\s\S]{0,700}/);
+          (out as Record<string, unknown>).jcfg = (cfg?.[0] ?? "-").replace(/\s+/g, " ").slice(0, 320);
         } catch (e11) {
-          (out as Record<string, unknown>).ju3 = "xato " + String(e11).slice(0, 25);
+          (out as Record<string, unknown>).jcfg = "xato " + String(e11).slice(0, 25);
         }
 
       // ?check=1 — ma'lumot oqimlarini ham sinaymiz (menyu funksiyalari).
