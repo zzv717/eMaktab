@@ -157,41 +157,46 @@ export async function GET(req: NextRequest) {
             check[label] = `xato ${String(error).slice(0, 25)}`;
           }
         }
-        // Jurnal kashfiyoti: upload URL + ish-reja formasi + yozuv kontekstlari
+        // Jurnal kashfiyoti 3: sahifa tuzilishi + requirejs paths + modul IDlari
         {
           const parts: string[] = [];
           try {
             const jw = `https://emaktab.uz/journal/school/${encodeURIComponent(result.session.active.schoolId)}/group/2524942980748797372/week/26/10`;
             const hj = await pageGet(result.session.cookies, jw);
-            const kv = (k: string): string => {
-              const m = hj.match(new RegExp(`"${k}"\\s*:\\s*"([^"]{4,180})"`)) ?? hj.match(new RegExp(`\\b${k}\\s*:\\s*"([^"]{4,180})"`));
-              return m ? m[1].replace(/\\u0026/g, "&").replace(/&amp;/g, "&") : "-";
-            };
-            (out as Record<string, unknown>).jurl = [kv("fileUploadApiUrl"), kv("planningUrl")].map((x) => x.slice(0, 80)).join(" ");
-            // Ish-reja (CTP) sahifasi — forma action + input nomlari
+            // Jurnal sahifasidagi havolalar (app URL naqshlari)
+            const hrefs = [...new Set([...hj.matchAll(/href="([^"]{6,110})"/gi)].map((m) => m[1]))]
+              .filter((h) => /journal|lesson|plan|task|ctp|week/i.test(h))
+              .slice(0, 4);
+            (out as Record<string, unknown>).jhref = hrefs.map((h) => h.slice(0, 42)).join(" ").slice(0, 170) || "-";
+            // Ish-reja sahifasi tuzilishi
             const pu = `https://schools.emaktab.uz/journals/?school=${encodeURIComponent(result.session.active.schoolId)}&group=2524942980748797372&subject=1856018561884296245&period=2525707862884565213`;
             const hp = await pageGet(result.session.cookies, pu);
-            const forms = [...hp.matchAll(/<form[^>]*action="([^"]{2,120})"/gi)].map((m) => m[1]);
-            const inputs = [...new Set([...hp.matchAll(/<input[^>]+name="([^"]{2,60})"/gi)].map((m) => m[1]))].slice(0, 8);
-            const hrefs = [...new Set([...hp.matchAll(/href="([^"]*(?:upload|ctp|plan|excel|xls)[^"]{0,60})"/gi)].map((m) => m[1]))].slice(0, 3);
-            (out as Record<string, unknown>).jform =
-              `act:${(forms[0] ?? "-").slice(0, 40)} in:${inputs.join(",").slice(0, 60)} h:${hrefs.join(" ").slice(0, 40)}`.slice(0, 180);
-            // blocks.js — yozuv atrofidagi satrlar (kontekst)
-            const contexts: string[] = [];
-            for (const s2 of ["/blocks/blocks.js?v=3", "/assets/scripts/modules/main-redesign.min.js"]) {
+            const title = (hp.match(/<title>([^<]{1,60})/i) ?? [])[1] ?? "-";
+            const h1 = (hp.match(/<h1[^>]*>([\s\S]{1,80}?)<\/h1>/i) ?? [])[1]?.replace(/<[^>]+>/g, "").trim() ?? "-";
+            const scripts = [...new Set([...hp.matchAll(/<script[^>]+src="([^"]+)"/gi)].map((m) => m[1]))].slice(0, 3);
+            const forms = [...new Set([...hp.matchAll(/<form[^>]*action="([^"]{2,120})"/gi)].map((m) => m[1]))].slice(0, 3);
+            (out as Record<string, unknown>).jp =
+              `${title.slice(0, 22)}|${h1.slice(0, 22)}|f:${forms.map((f) => f.slice(0, 24)).join(",")}|s:${scripts.map((x) => x.slice(0, 26)).join(",")}`.slice(0, 180);
+            // requirejs paths + modul ID namunalari
+            let pathsSnip = "-";
+            let defSnip = "-";
+            for (const s2 of ["/assets/scripts/modules/redesign.min.js", "/assets/scripts/modules/main-redesign.min.js", "/blocks/blocks.js?v=3"]) {
               try {
                 const rr = await fetch(`https://emaktab.uz${s2}`, { headers: { "User-Agent": "Mozilla/5.0" }, redirect: "manual" });
                 const bb = await rr.text();
-                const re = /["'`]([^"'\`]{0,60}(?:[Mm]ark|conduct|Conduct|visited|attended|upload|Upload)[^"'\`]{0,60})["'`]/g;
-                for (const mm of bb.matchAll(re)) {
-                  const u = mm[1];
-                  if (u.includes("/") && !/(Popup|Settings|Message|Button|Icon|Label|css|png)/.test(u) && contexts.length < 4) contexts.push(u.slice(0, 56));
+                if (pathsSnip === "-") {
+                  const pm = bb.match(/paths\s*:\s*\{[^}]{0,120}/);
+                  if (pm) pathsSnip = pm[0].slice(0, 80);
+                }
+                if (defSnip === "-") {
+                  const defs = [...bb.matchAll(/define\(\s*["']([^"']{3,50})["']/g)].slice(0, 3).map((m) => m[1]);
+                  if (defs.length > 0) defSnip = defs.join(" ").slice(0, 70);
                 }
               } catch {
                 /* o'tkazib yuboramiz */
               }
             }
-            (out as Record<string, unknown>).jctx = contexts.join(" | ").slice(0, 180) || "-";
+            (out as Record<string, unknown>).jdef = `${pathsSnip} || ${defSnip}`.slice(0, 180);
             parts.push("ok");
           } catch (error) {
             parts.push(`xato ${String(error).slice(0, 20)}`);
