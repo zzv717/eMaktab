@@ -104,15 +104,16 @@ export async function GET(req: NextRequest) {
         } catch (e9) {
           (out as Record<string, unknown>).jreq = "xato " + String(e9).slice(0, 25);
         }
-        // "odo/" qardosh yollari + hostni aniqlash
+        // "odo/" konteksti + host/prefiks variantlari
         try {
           const jw = `https://emaktab.uz/journal/school/${encodeURIComponent(result.session.active.schoolId)}/group/2524942980748797372/week/26/10`;
           const hj = await pageGet(result.session.cookies, jw);
-          const srcs = [...new Set([...hj.matchAll(/<script[^>]+src="([^"]+)"/gi)].map((m) => m[1]))].slice(0, 5);
-          const paths = new Set<string>();
+          const srcs = [...new Set([...hj.matchAll(/<script[^>]+src="([^"]+)"/gi)].map((m) => m[1]))].slice(0, 3);
+          const hits: string[] = [];
           const scan = (bb: string): void => {
-            for (const mm of bb.matchAll(/["'`]([^"'\`]{0,24}odo\/[^"'\`]{0,70})["'`]/g)) {
-              paths.add(mm[1].split("?")[0].slice(0, 48));
+            for (const mm of bb.matchAll(/odo\//g)) {
+              const i = mm.index ?? 0;
+              hits.push(bb.slice(Math.max(0, i - 40), i + 55).replace(/\s+/g, " "));
             }
           };
           scan(hj);
@@ -125,27 +126,35 @@ export async function GET(req: NextRequest) {
               /* o'tkazib yuboramiz */
             }
           }
-          (out as Record<string, unknown>).ju4 = [...paths].slice(0, 4).join(" ").slice(0, 180) || "-";
-          // host sinovi — GET + bo'sh POST (endpoint mavjudligi)
+          (out as Record<string, unknown>).ju4 = hits.slice(0, 3).join(" || ").slice(0, 300) || "-";
+          // host/prefiks variantlari — bo'sh POST (endpoint mavjudligi)
           const ck = Object.entries(result.session.cookies).map(([k, v]) => `${k}=${v}`).join("; ");
           const res: string[] = [];
-          for (const host of ["https://smarty.emaktab.uz", "https://api.emaktab.uz", "https://emaktab.uz", "https://schools.emaktab.uz"]) {
-            for (const method of ["GET", "POST"]) {
-              try {
-                const rr = await fetch(`${host}/odo/journals/journalmark/editmark/`, {
-                  method,
-                  headers: { "User-Agent": "Mozilla/5.0", Cookie: ck, "Content-Type": "application/json" },
-                  body: method === "POST" ? "{}" : undefined,
-                  redirect: "manual",
-                });
-                const bt = (await rr.text()).replace(/\s+/g, " ").slice(0, 40);
-              res.push(`${host.slice(8, 13)}${method[0]}${rr.status}«${bt}»`);
-              } catch {
-                res.push("x");
-              }
+          const targets: Array<[string, string]> = [
+            ["https://schools.emaktab.uz", "/odo/journals/journalmark/editmark/"],
+            ["https://emaktab.uz", "/odo/journals/journalmark/editmark/"],
+            ["https://odo.emaktab.uz", "/odo/journals/journalmark/editmark/"],
+            ["https://smarty.emaktab.uz", "/webapi/odo/journals/journalmark/editmark/"],
+            ["https://emaktab.uz", "/webapi/odo/journals/journalmark/editmark/"],
+            ["https://emaktab.uz", "/uz/odo/journals/journalmark/editmark/"],
+            ["https://schools.emaktab.uz", "/v2/odo/journals/journalmark/editmark/"],
+            ["https://smarty.emaktab.uz", "/api/odo/journals/journalmark/editmark/"],
+          ];
+          for (const [host, path] of targets) {
+            try {
+              const rr = await fetch(`${host}${path}`, {
+                method: "POST",
+                headers: { "User-Agent": "Mozilla/5.0", Cookie: ck, "Content-Type": "application/json" },
+                body: "{}",
+                redirect: "manual",
+              });
+              const bt = (await rr.text()).replace(/\s+/g, " ").slice(0, 18);
+              res.push(`${host.slice(8, 13)}${path.slice(1, 7)}:${rr.status}«${bt}»`);
+            } catch {
+              res.push("x");
             }
           }
-          (out as Record<string, unknown>).jhost = res.join(" ").slice(0, 260);
+          (out as Record<string, unknown>).jhost = res.join(" ").slice(0, 340);
         } catch (e12) {
           (out as Record<string, unknown>).ju4 = "xato " + String(e12).slice(0, 25);
         }
