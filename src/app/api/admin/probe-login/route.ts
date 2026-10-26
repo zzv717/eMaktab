@@ -1481,9 +1481,13 @@ export async function GET(req: NextRequest) {
           out.push(
             `s2req=${esc((p2.match(/require\(\s*\[[^\]]{0,300}\]/g) ?? []).slice(0, 4).join(" | ").slice(0, 600))}`,
           );
-          const fIdx = p2.indexOf("fileimporttuner");
+          const fIdx = p2.lastIndexOf("fileimporttuner.js");
           out.push(
-            `s2init=${esc(fIdx >= 0 ? p2.slice(Math.max(0, fIdx - 200), fIdx + 1800).replace(/\s+/g, " ") : "-").slice(0, 1500)}`,
+            `s2init=${esc(fIdx >= 0 ? p2.slice(Math.max(0, fIdx - 100), fIdx + 2200).replace(/\s+/g, " ") : "-").slice(0, 1800)}`,
+          );
+          const ddIdx = p2.lastIndexOf("DropdownContainer");
+          out.push(
+            `s2dd=${esc(ddIdx >= 0 ? p2.slice(Math.max(0, ddIdx - 400), ddIdx + 900).replace(/\s+/g, " ") : "-").slice(0, 900)}`,
           );
           out.push(`s2inputs=${f2.fields.map((x) => `${x.name}=${x.value}${x.checked ? "*" : ""}`).join(" ").slice(0, 180)}`);
           // 3-bosqichga POST — sozlamalar (sinf/fan/chorak tanlab, mapping default)
