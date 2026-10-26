@@ -35,6 +35,8 @@ import {
   scheduleFromDiaryDays,
   setLessonConducted,
   uploadCtpFile,
+  fetchHomeworkRows,
+  setHomeworkMaqom,
   sessionFromCookies,
   submitCaptchaLogin,
   type LoginFormState,
@@ -1054,6 +1056,10 @@ async function handleMessage(message: TelegramMessage) {
       if (isTeacher(user)) await sendCtpStart(chatId, user);
       return;
     }
+    if (text === MENU_TEXT.maqom) {
+      if (isTeacher(user)) await sendMaqomStart(chatId, user);
+      return;
+    }
     if (text === MENU_TEXT.profile) {
       await sendProfileView(chatId, user);
       return;
@@ -1246,6 +1252,22 @@ async function sendCtpStart(chatId: number, user: BotUser) {
   );
 }
 
+/** Maqom berish — uy vazifasi maqomi (1-sinf tanlash). */
+async function sendMaqomStart(chatId: number, user: BotUser) {
+  const classes = await teacherLoad(user);
+  if (classes.length === 0) {
+    await sendMessage(chatId, "⚠️ Sinflar topilmadi. Keyinroq qayta urinib ko'ring.", { replyMarkup: menuFor(user) });
+    return;
+  }
+  const rows = classes.map((c) => [{ text: `🏫 ${c.className}`, callback_data: `maqom:${c.classId}` }]);
+  rows.push([{ text: "🏠 Asosiy menyu", callback_data: "menu:home" }]);
+  await sendMessage(
+    chatId,
+    `📝 <b>Maqom berish</b>\n\n1️⃣ Sinifni tanlang:`,
+    { replyMarkup: kb(rows) },
+  );
+}
+
 /** Sinf va fan tanlovi uchun callback konteksti. */
 async function classSubjects(user: BotUser, classId: string): Promise<ClassLink | null> {
   const classes = await teacherLoad(user);
@@ -1406,6 +1428,107 @@ async function handleConductCallback(chatId: number, user: BotUser, data: string
       `📄 <b>Ish reja joylashtirish</b>\n\n3️⃣ Endi <b>.xls</b> yoki <b>.xlsx</b> faylni shu chatga yuboring.\n\n⏳ <i>Fayl kelganda bot "Iltimos kuting…" deb javob beradi.</i>`,
       kb([[{ text: "❌ Bekor qilish", callback_data: "menu:cancel" }]]),
     );
+    return;
+  }
+}
+
+/** Maqom berish oqimi: sinf → fan → uy vazifasi sanasi → avtomatik zanjir. */
+async function handleMaqomCallback(
+  chatId: number,
+  user: BotUser,
+  data: string,
+  editTo: (text: string, markup: ReturnType<typeof kb>) => Promise<void>,
+) {
+  if (data === "t:maqom") {
+    await sendMaqomStart(chatId, user);
+    return;
+  }
+  // maqom:{classId} — fan tanlash
+  if (/^maqom:\d+$/.test(data)) {
+    const classId = data.slice(6);
+    const cl = await classSubjects(user, classId);
+    if (!cl) {
+      await sendMessage(chatId, "⚠️ Sinf topilmadi.", { replyMarkup: menuFor(user) });
+      return;
+    }
+    const subjects = cl.subjects ?? [];
+    if (subjects.length === 0) {
+      await sendMessage(chatId, "⚠️ Bu sinf uchun fanlar topilmadi.", { replyMarkup: menuFor(user) });
+      return;
+    }
+    const rows = subjects.map((s, i) => [{ text: `📖 ${s}`, callback_data: `maqoms:${classId}:${i}` }]);
+    rows.push([{ text: "🏠 Asosiy menyu", callback_data: "menu:home" }]);
+    await editTo(`📝 <b>Maqom berish</b> — ${escapeHtml(cl.className)}\n\n2️⃣ Fanni tanlang:`, kb(rows));
+    return;
+  }
+  // maqoms:{classId}:{subjIdx} — uy vazifasi sanalari ro'yxati
+  if (/^maqoms:\d+:\d+$/.test(data)) {
+    const [classId, subjIdxS] = data.slice(7).split(":");
+    const cl = await classSubjects(user, classId);
+    const subject = cl?.subjects?.[Number(subjIdxS)] ?? "";
+    if (!cl || !subject) {
+      await sendMessage(chatId, "⚠️ Fan topilmadi.", { replyMarkup: menuFor(user) });
+      return;
+    }
+    const res = await withSession(user, (s) =>
+      fetchHomeworkRows(s, {
+        schoolId: s.active.schoolId,
+        className: cl.className,
+        subjectName: subject,
+        teacherName: s.fullName,
+      }),
+    );
+    if (res.reason) {
+      await sendMessage(chatId, `⚠️ ${escapeHtml(res.reason)}`, { replyMarkup: menuFor(user) });
+      return;
+    }
+    if (res.rows.length === 0) {
+      await sendMessage(chatId, "⚠️ Bu fan bo'yicha uy vazifasi topilmadi.", { replyMarkup: menuFor(user) });
+      return;
+    }
+    const rows = res.rows.slice(0, 12).map((r) => [
+      {
+        text: `${r.maqomDone ? "🟢" : "🔴"} ${r.dateText} — ${r.description.slice(0, 24)}`.slice(0, 62),
+        callback_data: `maqomw:${classId}:${subjIdxS}:${r.workId}:${r.lessonId}`,
+      },
+    ]);
+    rows.push([{ text: "🏠 Asosiy menyu", callback_data: "menu:home" }]);
+    await editTo(
+      `📝 <b>Maqom berish</b> — ${escapeHtml(cl.className)} · ${escapeHtml(subject)}\n\n3️⃣ Uy vazifasi sanasini tanlang:\n\n🔴 — maqom berilmagan · 🟢 — yakunlangan`,
+      kb(rows),
+    );
+    return;
+  }
+  // maqomw:{classId}:{subjIdx}:{workId}:{lessonId} — zanjirni bajarish
+  if (/^maqomw:\d+:\d+:\d+:\d+$/.test(data)) {
+    const m = data.match(/^maqomw:(\d+):(\d+):(\d+):(\d+)$/)!;
+    const [, classId, subjIdxS, workId, lessonId] = m;
+    const cl = await classSubjects(user, classId);
+    const subject = cl?.subjects?.[Number(subjIdxS)] ?? "";
+    const progress = await startProgress(chatId, "Maqom belgilanmoqda");
+    try {
+      const result = await withSession(user, (s) =>
+        setHomeworkMaqom(s, { schoolId: s.active.schoolId, workId, lessonId }),
+      );
+      if (result.ok) {
+        await finishProgress(chatId, progress, "Maqom");
+        await sendMessage(
+          chatId,
+          `✅ <b>Muvaffaqiyatli!</b>\n\n📝 Uy vazifasi maqomi berildi — <b>Bajarildi</b>\n🏫 ${escapeHtml(cl?.className ?? "")}${subject ? ` · ${escapeHtml(subject)}` : ""}`,
+          { replyMarkup: menuFor(user) },
+        );
+      } else {
+        await failProgress(chatId, progress, "Maqom");
+        await sendMessage(chatId, `❌ <b>Maqomni belgilab bo'lmadi.</b>${adminFailNote(result.reason)}`, {
+          replyMarkup: menuFor(user),
+        });
+      }
+    } catch (error) {
+      await failProgress(chatId, progress, "Maqom");
+      await sendMessage(chatId, `❌ <b>Maqomni belgilab bo'lmadi.</b>${adminFailNote(String(error).slice(0, 120))}`, {
+        replyMarkup: menuFor(user),
+      });
+    }
     return;
   }
 }
@@ -2058,17 +2181,24 @@ async function handleCallback(cb: TelegramCallbackQuery) {
 
   const fresh = (await getUser(cb.from.id)) ?? user;
 
-  // --- Darsni o'tildi qilish / Ish reja oqimlari (o'qituvchi) ---
+  // --- Darsni o'tildi qilish / Ish reja / Maqom oqimlari (o'qituvchi) ---
   if (
     data === "t:conduct" ||
     data === "t:ctp" ||
+    data === "t:maqom" ||
     data.startsWith("cond") ||
-    data.startsWith("ctp")
+    data.startsWith("ctp") ||
+    data.startsWith("maqom")
   ) {
-    await handleConductCallback(chatId, fresh, data, async (text, markup) => {
+    const editTo = async (text: string, markup: ReturnType<typeof kb>) => {
       if (messageId) await editMessageText(chatId, messageId, text, { replyMarkup: markup });
       else await sendMessage(chatId, text, { replyMarkup: markup });
-    });
+    };
+    if (data === "t:maqom" || data.startsWith("maqom")) {
+      await handleMaqomCallback(chatId, fresh, data, editTo);
+    } else {
+      await handleConductCallback(chatId, fresh, data, editTo);
+    }
     return;
   }
 

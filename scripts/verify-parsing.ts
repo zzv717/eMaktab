@@ -29,6 +29,10 @@ import {
   mergeTeacherGroups,
   lessonMatchesTeacherLoad,
   dedupeShiftLessons,
+  parseHomeworkRows,
+  parseHomeworkSelects,
+  parseHomeworkEditForm,
+  parseHomeworkDetailModel,
   looksLikeName,
   shiftDayKey,
   tashkentDayKey,
@@ -378,6 +382,72 @@ check("looksLikeName: ko'rish rad", !looksLikeName("Ko'rish"), true);
   check("smena: kunduzgi ikki dars (takror emas) — ikkalasi qoladi", doubles.length === 2, doubles);
   const noTime = dedupeShiftLessons([mk(1, "Alifbe", "08:30"), mk(1, "Alifbe", "")]);
   check("smena: vaqtsiz duplikat tushmaydi, ertasi qoladi", noTime.length === 1 && noTime[0].startTime === "08:30", noTime);
+}
+
+// ==========================================================================
+// Uy vazifasi maqomi parserlari (schools.emaktab.uz/v2/homework — haqiqiy namunalar)
+// ==========================================================================
+{
+  const rowHtml = `<table><tr><th>Ish ta'rifi</th><th>Fan</th></tr><tr> <td class="breakword"> <a href="https://schools.emaktab.uz/v2/homework?school=1000006039552&work=2534033476599269526" title="Uy vazifasi sahifasiga"> S tovush va S s harflari </a> </td> <td class="tac light"> Alifbe </td> <td class="tac"> <a href="https://schools.emaktab.uz/v2/class?class=2524942980748797372" title="Sinf sahifasiga" class="orange"> <strong>1-A</strong> </a> </td> <td class="tac"> <a href="https://schools.emaktab.uz/v2/lesson?school=1000006039552&lesson=2533832673993276697" title="Dars sahifasiga"> <strong>3 noyabr 2026</strong><br> 1 dars </a> </td> <td class="tac s2 nowrap"> <strong class="red">29</strong> / <strong class="orange">0</strong> / <strong class="green">0</strong> </td> <td class="tac nowrap bgR">berilgan </td> </tr></table>`;
+  const rows = parseHomeworkRows(rowHtml);
+  check("hw qator: bitta qator topildi", rows.length === 1, rows.length);
+  const r = rows[0];
+  check("hw qator: workId", r?.workId === "2534033476599269526", r?.workId);
+  check("hw qator: lessonId", r?.lessonId === "2533832673993276697", r?.lessonId);
+  check("hw qator: sana matni", r?.dateText === "3 noyabr 2026", r?.dateText);
+  check("hw qator: dars raqami", r?.lessonNo === "1 dars", r?.lessonNo);
+  check("hw qator: tavsif", r?.description === "S tovush va S s harflari", r?.description);
+  check("hw qator: fan", r?.subject === "Alifbe", r?.subject);
+  check("hw qator: sinf", r?.className === "1-A", r?.className);
+  check("hw qator: hisobot", r?.hisobot === "29 / 0 / 0", r?.hisobot);
+  check("hw qator: maqom (berilgan)", r?.maqom === "berilgan", r?.maqom);
+  check("hw qator: qizil = bajarilmagan", r?.maqomDone === false);
+  const green = parseHomeworkRows(rowHtml.replace(/bgR/g, "bgG").replace(/>berilgan </, ">Bajarildi <"));
+  check("hw qator: yashil = yakunlangan", green[0]?.maqomDone === true);
+  check("hw qator: sarlavha qatori e'tiborsiz", parseHomeworkRows("<tr><th>Ish ta'rifi</th></tr>").length === 0);
+}
+
+{
+  const selHtml = `<form><select name="studyYear"> <option value="2020"> 2020/2021 </option><option value="2026"> 2026/2027 </option></select><select name="group"><option value="">- tanlang -</option><option value="2524942980748797372"> 1-A </option></select><select name="subject"><option value="1809292770857577475"> Adabiyot </option></select><select name="teacher"><option value="1000007887895"> Sattarova Mavluda Raxmatullayevna </option></select></form>`;
+  const opts = parseHomeworkSelects(selHtml);
+  check("hw select: studyYear qiymati", opts.studyYears[1]?.value === "2026", opts.studyYears);
+  check("hw select: group nomi", opts.groups[1]?.label === "1-A", opts.groups);
+  check("hw select: group gid", opts.groups[1]?.value === "2524942980748797372");
+  check("hw select: subject", opts.subjects[0]?.label === "Adabiyot");
+  check("hw select: teacher", opts.teachers[0]?.value === "1000007887895");
+}
+
+{
+  const editHtml = `
+    <script>var m = { editWork: { url: 'https://schools.emaktab.uz/v2/ajax?xss=467e89e15b9005a257cacd936460cb5057ebf9b302f2163a4e986042427c9c2c' } };</script>
+    <input name="__RequestVerificationToken" type="hidden" value="CfDJ8">
+    <input type="radio" id="marktype2" name="marktype" value="2" checked="checked">
+    <input type="radio" id="marktype-1" name="marktype" value="-1">
+    <input type="radio" id="journalVisible0" name="journalVisible" value="1">
+    <input type="radio" id="journalVisible1" name="journalVisible" value="0" checked="checked">
+    <input type="checkbox" id="withCheck" name="withCheck" value="1" checked="checked">
+    <input type="checkbox" id="attachRequired" name="attachRequired" value="1">
+    <input type="text" name="timeToExecute" id="timeToExecute" maxlength="3" value="">
+    <textarea id="description">Kichik q harfi yozishni mustahkamlash</textarea>`;
+  const f = parseHomeworkEditForm(editHtml);
+  check("hw edit: xss token", f?.xss === "467e89e15b9005a257cacd936460cb5057ebf9b302f2163a4e986042427c9c2c", f?.xss);
+  check("hw edit: tavsif", f?.description === "Kichik q harfi yozishni mustahkamlash", f?.description);
+  check("hw edit: marktype=2", f?.marktype === "2", f?.marktype);
+  check("hw edit: withCheck=true", f?.withCheck === true);
+  check("hw edit: attachRequired=false", f?.attachRequired === false);
+  check("hw edit: journalVisible=false", f?.journalVisible === false);
+  check("hw edit: timetoexecute bo'sh", f?.timetoexecute === "");
+  check("hw edit: forma bo'lmasa null", parseHomeworkEditForm("<html></html>") === null);
+}
+
+{
+  const detHtml = `<script>require(['x'], function(dep0) { $(function () { dep0({"url":"https://schools.emaktab.uz/v2/homeworks/completeall-cmd?xss=467e89e15b9005a257cacd936460cb5057ebf9b302f2163a4e986042427c9c2c&school=1000006039552&work=2534034219628613169","workId":"2534034219628613169","css":"tac tse bgG","status":6,"text":"Bajarildi","changeStatusUrl":"https://schools.emaktab.uz/v2/ajax?xss=1&a=tse&sid=1000006039552","studentsCount":29}); }); });</script>`;
+  const model = parseHomeworkDetailModel(detHtml);
+  check("hw model: completeall-cmd url", (model?.url ?? "").includes("completeall-cmd?xss=467e"), model?.url);
+  check("hw model: work param", (model?.url ?? "").includes("work=2534034219628613169"));
+  check("hw model: text", model?.text === "Bajarildi", model?.text);
+  check("hw model: status", model?.status === 6, model?.status);
+  check("hw model: model bo'lmasa null", parseHomeworkDetailModel("<html></html>") === null);
 }
 
 console.log(`\nNatija: ${passed} o'tdi, ${failed} yiqildi`);

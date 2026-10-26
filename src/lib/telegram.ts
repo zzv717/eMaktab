@@ -163,6 +163,7 @@ export const MENU_TEXT = {
   week: "📆 Haftalik jadval",
   conduct: "✅ Darsni o'tildi qilish",
   ctp: "📄 Ish reja joylashtirish",
+  maqom: "📝 Maqom berish",
   myClass: "🏫 Sinfim — O'quvchilar",
   parents: "👪 Ota-onalar faolligi",
   checkAll: "⚡ Barchani tekshirish",
@@ -179,6 +180,7 @@ export function teacherReplyKeyboard(isClassTeacher: boolean) {
   const rows: ReplyButton[][] = [
     [{ text: MENU_TEXT.today }, { text: MENU_TEXT.week }],
     [{ text: MENU_TEXT.conduct }, { text: MENU_TEXT.ctp }],
+    [{ text: MENU_TEXT.maqom }],
   ];
   if (isClassTeacher) {
     rows.push([{ text: MENU_TEXT.myClass }, { text: MENU_TEXT.parents }]);

@@ -1798,6 +1798,293 @@ export async function uploadCtpFile(
   };
 }
 
+// ==========================================================================
+// Uy vazifasi maqomi (schools.emaktab.uz/v2/homework) — HAQIQIY shartnoma
+// (homeworkDetails.js + homeworkeditforteacher.js dan olingan):
+//   1) GET  /v2/homework?school&studyYear&group&subject&teacher&datefrom&dateto — ro'yxat
+//   2) GET  /v2/lesson?school&lesson — dars sahifasi (rasmdagi tartib)
+//   3) GET  /v2/homework?school&work&view=Edit — tahrirlash formasi
+//   4) POST /v2/ajax?xss=… — "Saqlash" (editWork.url, x-www-form-urlencoded)
+//   5) GET  /v2/homework?school&work — model (completeall-cmd manzili)
+//   6) POST /v2/homeworks/completeall-cmd?xss=…&school&work — "+ (Maqom)"
+// ==========================================================================
+
+const HW_BASE = "https://schools.emaktab.uz/v2/homework";
+
+export interface HomeworkRow {
+  workId: string;
+  lessonId: string;
+  /** "3 noyabr 2026" */
+  dateText: string;
+  /** "1 dars" */
+  lessonNo: string;
+  description: string;
+  subject: string;
+  className: string;
+  /** "29 / 0 / 0" */
+  hisobot: string;
+  /** "berilgan" | "Bajarildi" | ... */
+  maqom: string;
+  /** true = yopilgan/Bajarildi (yashil) */
+  maqomDone: boolean;
+}
+
+export interface HomeworkSelectValue {
+  label: string;
+  value: string;
+}
+
+function decodeEntities(s: string): string {
+  return s
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&#(\d+);/g, (_, c) => String.fromCharCode(Number(c)));
+}
+
+function htmlText2(s: string): string {
+  return decodeEntities(stripTags(s)).replace(/\s+/g, " ").trim();
+}
+
+/** Filtr formasi select'lari: label → value (yil/sinf/fan/o'qituvchi). */
+export function parseHomeworkSelects(html: string): {
+  studyYears: HomeworkSelectValue[];
+  groups: HomeworkSelectValue[];
+  subjects: HomeworkSelectValue[];
+  teachers: HomeworkSelectValue[];
+} {
+  const grab = (name: string): HomeworkSelectValue[] => {
+    const block = (
+      html.match(new RegExp(`<select[^>]*name="${name}"[^>]*>([\\s\\S]*?)</select>`, "i")) ?? []
+    )[1];
+    if (!block) return [];
+    const out: HomeworkSelectValue[] = [];
+    for (const m of block.matchAll(/<option[^>]*value="([^"]*)"[^>]*>([\s\S]*?)<\/option>/gi)) {
+      out.push({ value: m[1], label: htmlText2(m[2]) });
+    }
+    return out;
+  };
+  return {
+    studyYears: grab("studyYear"),
+    groups: grab("group"),
+    subjects: grab("subject"),
+    teachers: grab("teacher"),
+  };
+}
+
+/** Ro'yxat jadvalidagi uy vazifasi qatorlari (rasmdagi "berilgan"/"Bajarildi" bilan). */
+export function parseHomeworkRows(html: string): HomeworkRow[] {
+  const rows: HomeworkRow[] = [];
+  for (const m of html.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/gi)) {
+    const row = m[1];
+    const workId = (row.match(/homework\?[^"]*work=(\d+)/) ?? row.match(/work=(\d+)/) ?? [])[1];
+    const lessonId = (row.match(/lesson\?[^"]*lesson=(\d+)/) ?? row.match(/lesson=(\d+)/) ?? [])[1];
+    if (!workId || !lessonId) continue;
+    const descM = (row.match(/work=\d+[^>]*>([\s\S]*?)<\/a>/) ?? [])[1] ?? "";
+    const dateM = (row.match(/lesson=\d+[^>]*>([\s\S]*?)<\/a>/) ?? [])[1] ?? "";
+    const strong = (dateM.match(/<strong>([\s\S]*?)<\/strong>/) ?? [])[1] ?? "";
+    const lessonNo = htmlText2(dateM.replace(/<strong>[\s\S]*?<\/strong>/, " "));
+    const tds = [...row.matchAll(/<td([^>]*)>([\s\S]*?)<\/td>/gi)];
+    const maqomTag = tds[5]?.[1] ?? "";
+    const maqom = tds[5] ? htmlText2(tds[5][2]) : "";
+    rows.push({
+      workId,
+      lessonId,
+      dateText: htmlText2(strong),
+      lessonNo,
+      description: htmlText2(descM),
+      subject: tds[1] ? htmlText2(tds[1][2]) : "",
+      className: tds[2] ? htmlText2(tds[2][2]) : "",
+      hisobot: tds[4] ? htmlText2(tds[4][2]) : "",
+      maqom,
+      maqomDone: /bgG/.test(maqomTag) || /bajarildi/i.test(maqom),
+    });
+  }
+  return rows;
+}
+
+export interface HomeworkEditForm {
+  xss: string;
+  description: string;
+  timetoexecute: string;
+  attachRequired: boolean;
+  withCheck: boolean;
+  marktype: string;
+  journalVisible: boolean;
+}
+
+/** Tahrirlash sahifasi formasi (Saqlash shu qiymatlarni o'zgarmasdan yuboradi). */
+export function parseHomeworkEditForm(html: string): HomeworkEditForm | null {
+  const xss = (html.match(/[?&]xss=([0-9a-f]{16,})/i) ?? [])[1];
+  const desc = (html.match(/<textarea[^>]*id="description"[^>]*>([\s\S]*?)<\/textarea>/) ?? [])[1];
+  if (!xss || desc === undefined) return null;
+  const tagById = (id: string): string =>
+    (html.match(new RegExp(`<input[^>]*id="${id}"[^>]*>`, "i")) ?? [])[0] ?? "";
+  const valueOf = (tag: string): string => (tag.match(/value="([^"]*)"/) ?? [])[1] ?? "";
+  const checkedOf = (tag: string): boolean => /\bchecked\b/i.test(tag);
+  let marktype = "2";
+  for (const m of html.matchAll(/<input[^>]*name="marktype"[^>]*>/gi)) {
+    if (/\bchecked\b/i.test(m[0])) marktype = valueOf(m[0]) || marktype;
+  }
+  return {
+    xss,
+    description: decodeEntities(desc),
+    timetoexecute: valueOf(tagById("timeToExecute")),
+    attachRequired: checkedOf(tagById("attachRequired")),
+    withCheck: checkedOf(tagById("withCheck")),
+    marktype,
+    journalVisible: checkedOf(tagById("journalVisible0")),
+  };
+}
+
+/** homeworkDetails.js modeli: "+ (Maqom)" — completeall-cmd manzili. */
+export function parseHomeworkDetailModel(html: string): {
+  url: string;
+  text: string;
+  status: number;
+} | null {
+  const raw = (html.match(/"(https:[^"]*completeall-cmd[^"]*)"/) ?? [])[1];
+  if (!raw) return null;
+  const url = decodeEntities(raw.replace(/\\\//g, "/"));
+  const text = (html.match(/"text":"([^"]*)"/) ?? [])[1] ?? "Bajarildi";
+  const status = Number((html.match(/"status":(\d+)/) ?? [])[1] ?? "6");
+  return { url, text, status };
+}
+
+async function hwPost(
+  cookies: Record<string, string>,
+  url: string,
+  body: string,
+): Promise<{ status: number; text: string }> {
+  const ck = Object.entries(cookies)
+    .map(([k, v]) => `${k}=${v}`)
+    .join("; ");
+  const rr = await fetch(url, {
+    method: "POST",
+    headers: {
+      "User-Agent": "Mozilla/5.0",
+      Cookie: ck,
+      Accept: "application/json, text/javascript, */*; q=0.01",
+      "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+      "X-Requested-With": "XMLHttpRequest",
+      Referer: HW_BASE,
+    },
+    body,
+    redirect: "manual",
+  });
+  return { status: rr.status, text: (await rr.text()).slice(0, 600) };
+}
+
+function studyYearStartValue(): string {
+  const k = tashkentDayKey();
+  const y = Number(k.slice(0, 4));
+  const m = Number(k.slice(5, 7));
+  return String(m >= 8 ? y : y - 1);
+}
+
+/** Filtrlangan uy vazifasi ro'yxati (sinf/fan/o'qituvchi select'lari bo'yicha aniqlanadi). */
+export async function fetchHomeworkRows(
+  s: EmaktabSession,
+  p: {
+    schoolId: string;
+    className: string;
+    subjectName: string;
+    teacherName?: string;
+  },
+): Promise<{ rows: HomeworkRow[]; reason?: string }> {
+  const norm = (t: string) => t.replace(/\s+/g, " ").trim().toLowerCase();
+  const bare = await pageGet(s.cookies, `${HW_BASE}?school=${p.schoolId}`);
+  const opts = parseHomeworkSelects(bare);
+  const findVal = (arr: HomeworkSelectValue[], label: string): string =>
+    arr.find((o) => norm(o.label) === norm(label))?.value ?? "";
+  const gid = findVal(opts.groups, p.className);
+  const subj = findVal(opts.subjects, p.subjectName);
+  const teacher = p.teacherName ? findVal(opts.teachers, p.teacherName) : "";
+  if (!gid) return { rows: [], reason: `sinf filtrda topilmadi (${p.className})` };
+  if (!subj) return { rows: [], reason: `fan filtrda topilmadi (${p.subjectName})` };
+  const y = studyYearStartValue();
+  const yearVal = findVal(opts.studyYears, `${y}/${Number(y) + 1}`) || y;
+  const qs = new URLSearchParams({
+    school: p.schoolId,
+    studyYear: String(yearVal),
+    group: gid,
+    subject: subj,
+    datefrom: `${y}-08-01`,
+    dateto: `${Number(y) + 1}-07-31`,
+  });
+  if (teacher) qs.set("teacher", teacher);
+  const html = await pageGet(s.cookies, `${HW_BASE}?${qs.toString()}`);
+  return { rows: parseHomeworkRows(html) };
+}
+
+/**
+ * Uy vazifasi maqomini berish — rasmlardagi to'liq zanjir:
+ * dars sahifasi → tahrirlash → Saqlash → uy vazifasi sahifasi → "+ (Maqom)".
+ */
+export async function setHomeworkMaqom(
+  s: EmaktabSession,
+  p: { schoolId: string; workId: string; lessonId?: string },
+): Promise<WriteResult> {
+  const school = p.schoolId;
+  try {
+    if (p.lessonId) {
+      await pageGet(
+        s.cookies,
+        `https://schools.emaktab.uz/v2/lesson?school=${school}&lesson=${p.lessonId}`,
+      );
+    }
+    const edit = await pageGet(s.cookies, `${HW_BASE}?school=${school}&work=${p.workId}&view=Edit`);
+    const form = parseHomeworkEditForm(edit);
+    if (!form) return { ok: false, reason: "tahrirlash formasi topilmadi" };
+    const saveBody = new URLSearchParams({
+      school,
+      work: p.workId,
+      description: form.description,
+      timetoexecute: form.timetoexecute,
+      attachRequired: String(form.attachRequired),
+      marktype: form.marktype,
+      markcount: "2",
+      withCheck: String(form.withCheck),
+      journalVisible: String(form.journalVisible),
+      linkUrl: "",
+      shouldDeleteLink: "false",
+    }).toString();
+    const save = await hwPost(s.cookies, `https://schools.emaktab.uz/v2/ajax?xss=${form.xss}`, saveBody);
+    if (save.status < 200 || save.status >= 300) {
+      return { ok: false, reason: `saqlash: HTTP ${save.status}` };
+    }
+    try {
+      const sj = JSON.parse(save.text) as { errors?: string[] };
+      if (Array.isArray(sj.errors) && sj.errors.length) {
+        return { ok: false, reason: `saqlash: ${sj.errors.join("; ").slice(0, 120)}` };
+      }
+    } catch {
+      /* bo'sh/javobsiz javob — davom etamiz */
+    }
+    const det = await pageGet(s.cookies, `${HW_BASE}?school=${school}&work=${p.workId}`);
+    const model = parseHomeworkDetailModel(det);
+    if (!model) return { ok: false, reason: "maqom (completeall-cmd) topilmadi" };
+    const gv = await hwPost(s.cookies, model.url, "");
+    if (gv.status < 200 || gv.status >= 300) {
+      return { ok: false, reason: `maqom: HTTP ${gv.status}` };
+    }
+    try {
+      const gj = JSON.parse(gv.text) as Record<string, unknown>;
+      if (gj && typeof gj === "object" && !Array.isArray(gj) && gj.error) {
+        return { ok: false, reason: `maqom: ${String(gj.error).slice(0, 120)}` };
+      }
+    } catch {
+      /* JSON emas javob — 200 yetarli */
+    }
+    return { ok: true, reason: null };
+  } catch (error) {
+    return { ok: false, reason: String(error).slice(0, 140) };
+  }
+}
+
 function dayKeyFromDiaryDate(value: string | number | undefined): string {
   if (value === undefined || value === null || value === "") return tashkentDayKey();
   const n = Number(value);
