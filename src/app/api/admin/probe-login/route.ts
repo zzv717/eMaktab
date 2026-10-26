@@ -1474,8 +1474,10 @@ export async function GET(req: NextRequest) {
           );
           const perRaw = (p2.match(/<select[^>]*name="period"[\s\S]*?<\/select>/i) ?? [""])[0];
           out.push(`s2period=${esc(perRaw.slice(0, 400))}`);
-          const perJs = (p2.match(/.{0,80}period.{0,180}/i) ?? [""])[0];
-          out.push(`s2perjs=${esc(perJs.replace(/\s+/g, " ").slice(0, 260))}`);
+          const perIdx = p2.indexOf("periodselect");
+          out.push(
+            `s2perjs=${esc(perIdx >= 0 ? p2.slice(Math.max(0, perIdx - 100), perIdx + 700).replace(/\s+/g, " ") : "-").slice(0, 450)}`,
+          );
           out.push(`s2inputs=${f2.fields.map((x) => `${x.name}=${x.value}${x.checked ? "*" : ""}`).join(" ").slice(0, 180)}`);
           // 3-bosqichga POST — sozlamalar (sinf/fan/chorak tanlab, mapping default)
           const fd2 = new FormData();
@@ -1499,7 +1501,8 @@ export async function GET(req: NextRequest) {
               chosen =
                 sl.options.find((o) =>
                   wantPeriod === "0" ? /yil/i.test(o.label) : o.label.includes(`${wantPeriod}-chorak`),
-                )?.value ?? chosen;
+                )?.value;
+              if (!chosen) chosen = wantPeriod; // variant bo'lmasa — qiymatni majburan yuboramiz
             }
             fd2.append(sl.name, chosen ?? "");
           }
