@@ -1217,6 +1217,45 @@ export async function GET(req: NextRequest) {
           headers: { "Content-Type": "text/plain; charset=utf-8" },
         });
       }
+      // ?hwlinks=1&lesson=… — dars sahifasidagi havolalar (Dars rejasi/ish reja yuklash).
+      if (sp.get("hwlinks")) {
+        const lines: string[] = [];
+        const school = sp.get("school") ?? "1000006039552";
+        const lesson = sp.get("lesson") ?? "2533832673993276697";
+        try {
+          const page = await pageGet(
+            result.session.cookies,
+            `https://schools.emaktab.uz/v2/lesson?school=${school}&lesson=${lesson}`,
+          );
+          lines.push(`len=${page.length}`);
+          const links = [...page.matchAll(/<a[^>]*href="([^"]{2,160})"[^>]*>([\s\S]{0,80}?)<\/a>/gi)];
+          const seen = new Set<string>();
+          for (const m of links) {
+            const href = m[1].replace(/&amp;/g, "&");
+            const label = m[2].replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim().slice(0, 40);
+            const key = `${href}|${label}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            if (/plan|reja|ctp|ktp|ish|import|upload|jurnal|lesson/i.test(`${href} ${label}`)) {
+              lines.push(`L ${label} -> ${href.slice(0, 120)}`);
+            }
+            if (lines.length > 40) break;
+          }
+          const forms = [...page.matchAll(/<form[^>]*>/gi)].slice(0, 6);
+          for (const f of forms) {
+            lines.push(`F ${f[0].slice(0, 140)}`);
+          }
+          const files = [...page.matchAll(/<input[^>]*type="file"[^>]*>/gi)].slice(0, 5);
+          for (const f of files) {
+            lines.push(`FILE ${f[0].slice(0, 140)}`);
+          }
+        } catch (e) {
+          lines.push(`err=${String(e).slice(0, 100)}`);
+        }
+        return new NextResponse(lines.join("\n").slice(0, 5500), {
+          headers: { "Content-Type": "text/plain; charset=utf-8" },
+        });
+      }
     } else if (result.status === "captcha_required") {
       out.captcha = true;
       out.captchaUrl = result.captchaUrl ? "bor" : "yo'q";
