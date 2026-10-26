@@ -1974,7 +1974,7 @@ async function hwPost(
   const rr = await fetch(url, {
     method: "POST",
     headers: {
-      "User-Agent": "Mozilla/5.0",
+      "User-Agent": USER_AGENT,
       Cookie: ck,
       Accept: "application/json, text/javascript, */*; q=0.01",
       "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",

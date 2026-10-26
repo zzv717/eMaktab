@@ -865,21 +865,15 @@ export async function GET(req: NextRequest) {
             method: "POST",
             headers: {
               "User-Agent":
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
               Cookie: ck,
               Accept: "application/json, text/javascript, */*; q=0.01",
-              "Accept-Language": "uz-UZ,uz;q=0.9,en;q=0.8,ru;q=0.7",
               "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
               "X-Requested-With": "XMLHttpRequest",
               Origin: "https://schools.emaktab.uz",
               Referer: `https://schools.emaktab.uz/v2/homework?school=${school}&work=${work}&view=Edit`,
-              RequestVerificationToken: token,
-              "X-CSRF-TOKEN": token,
-              "sec-fetch-site": "same-origin",
-              "sec-fetch-mode": "cors",
-              "sec-fetch-dest": "empty",
             },
-            body: token ? `${body}&__RequestVerificationToken=${encodeURIComponent(token)}` : body,
+            body,
             redirect: "manual",
           });
           steps.saveStatus = save.status;
@@ -896,7 +890,8 @@ export async function GET(req: NextRequest) {
             const gv = await fetch(modelUrl, {
               method: "POST",
               headers: {
-                "User-Agent": "Mozilla/5.0",
+                "User-Agent":
+                  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
                 Cookie: ck,
                 Accept: "application/json, text/javascript, */*; q=0.01",
                 "X-Requested-With": "XMLHttpRequest",
