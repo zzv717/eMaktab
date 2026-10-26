@@ -419,7 +419,7 @@ check("looksLikeName: ko'rish rad", !looksLikeName("Ko'rish"), true);
 
 {
   const editHtml = `
-    <script>var m = { editWork: { url: 'https://schools.emaktab.uz/v2/ajax?xss=467e89e15b9005a257cacd936460cb5057ebf9b302f2163a4e986042427c9c2c' } };</script>
+    <script>var m = { editWork: { url: 'https://schools.emaktab.uz/v2/ajax?xss=467e89e15b9005a257cacd936460cb5057ebf9b302f2163a4e986042427c9c2c&a=editwork&sid=1000006039552' } };</script>
     <input name="__RequestVerificationToken" type="hidden" value="CfDJ8">
     <input type="radio" id="marktype2" name="marktype" value="2" checked="checked">
     <input type="radio" id="marktype-1" name="marktype" value="-1">
@@ -431,6 +431,7 @@ check("looksLikeName: ko'rish rad", !looksLikeName("Ko'rish"), true);
     <textarea id="description">Kichik q harfi yozishni mustahkamlash</textarea>`;
   const f = parseHomeworkEditForm(editHtml);
   check("hw edit: xss token", f?.xss === "467e89e15b9005a257cacd936460cb5057ebf9b302f2163a4e986042427c9c2c", f?.xss);
+  check("hw edit: to'liq saveUrl (a=&sid= bilan)", (f?.saveUrl ?? "").includes("&a=editwork&sid=1000006039552"), f?.saveUrl);
   check("hw edit: tavsif", f?.description === "Kichik q harfi yozishni mustahkamlash", f?.description);
   check("hw edit: marktype=2", f?.marktype === "2", f?.marktype);
   check("hw edit: withCheck=true", f?.withCheck === true);
