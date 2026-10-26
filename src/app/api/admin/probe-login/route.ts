@@ -1059,6 +1059,82 @@ export async function GET(req: NextRequest) {
           headers: { "Content-Type": "text/plain; charset=utf-8" },
         });
       }
+      // ?hwbi=1 — 403 sababini bisect qilish: real body vs ortiqcha headerlar.
+      if (sp.get("hwbi")) {
+        const lines: string[] = [];
+        const school = sp.get("school") ?? "1000006039552";
+        const work = sp.get("work") ?? "2534034219628613169";
+        try {
+          const edit = await pageGet(
+            result.session.cookies,
+            `https://schools.emaktab.uz/v2/homework?school=${school}&work=${work}&view=Edit`,
+          );
+          const saveUrl = (
+            (edit.match(/'(https?:[^']*\/v2\/ajax\?[^']*)'/) ?? [])[1] ?? ""
+          ).replace(/\\\//g, "/");
+          const xss = (saveUrl.match(/[?&]xss=([0-9a-f]{16,})/i) ?? [])[1] ?? "";
+          const desc = (edit.match(/<textarea[^>]*id="description"[^>]*>([\s\S]*?)<\/textarea>/) ?? [])[1] ?? "";
+          const ck = Object.entries(result.session.cookies)
+            .map(([k, v]) => `${k}=${v}`)
+            .join("; ");
+          const fullBody = new URLSearchParams({
+            school,
+            work,
+            description: desc,
+            timetoexecute: "",
+            attachRequired: "false",
+            marktype: "2",
+            markcount: "2",
+            withCheck: "true",
+            journalVisible: "false",
+            linkUrl: "",
+            shouldDeleteLink: "false",
+          }).toString();
+          const cleanH = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+            Cookie: ck,
+            Accept: "application/json, text/javascript, */*; q=0.01",
+            "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+            "X-Requested-With": "XMLHttpRequest",
+            Origin: "https://schools.emaktab.uz",
+            Referer: `https://schools.emaktab.uz/v2/homework?school=${school}&work=${work}&view=Edit`,
+          };
+          const run = async (label: string, body: string, headers: Record<string, string>) => {
+            const r = await fetch(saveUrl, {
+              method: "POST",
+              headers,
+              body,
+              redirect: "manual",
+            });
+            const raw = await r.text();
+            lines.push(
+              `${label}=${r.status}/${raw.length}/${raw.replace(/[^\x20-\x7E]/g, ".").slice(0, 90)}`,
+            );
+          };
+          // A: real body + toza headerlar (bot shu variantni ishlatadi)
+          await run("A_realbody_cleanH", fullBody, cleanH);
+          // B: real body + v139 headerlari (token/sec-fetch/Accept-Language)
+          await run(
+            "B_realbody_fullH",
+            `${fullBody}&__RequestVerificationToken=CfDJ8`,
+            {
+              ...cleanH,
+              "Accept-Language": "uz-UZ,uz;q=0.9,en;q=0.8,ru;q=0.7",
+              "sec-fetch-site": "same-origin",
+              "sec-fetch-mode": "cors",
+              "sec-fetch-dest": "empty",
+            },
+          );
+          // C: kichik body + toza headerlar (nazorat — yuqorida 200 edi)
+          await run("C_smallbody_cleanH", `school=${school}&work=${work}&marktype=2&markcount=2`, cleanH);
+          lines.push(`xss=${xss.slice(0, 8)} desc=${desc.slice(0, 20)}`);
+        } catch (e) {
+          lines.push(`err=${String(e).slice(0, 100)}`);
+        }
+        return new NextResponse(lines.join("\n"), {
+          headers: { "Content-Type": "text/plain; charset=utf-8" },
+        });
+      }
     } else if (result.status === "captcha_required") {
       out.captcha = true;
       out.captchaUrl = result.captchaUrl ? "bor" : "yo'q";
