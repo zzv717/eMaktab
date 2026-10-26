@@ -972,7 +972,7 @@ export async function GET(req: NextRequest) {
                 body,
                 redirect: "manual",
               });
-              const bodyText = (await r.text()).replace(/\s+/g, " ").slice(0, 220);
+              const bodyText = (await r.text()).replace(/\s+/g, " ").slice(0, 80);
               const srv = r.headers.get("server") ?? "";
               const ray = r.headers.get("cf-ray") ?? "";
               t[label] = `${r.status} srv=${srv} ray=${ray ? "bor" : "yo'q"} :: ${bodyText}`;
@@ -993,7 +993,7 @@ export async function GET(req: NextRequest) {
               headers: { "User-Agent": ua, Cookie: ck, Accept: "text/html,*/*" },
               redirect: "manual",
             });
-            t.t5_get = `${g.status} :: ${(await g.text()).replace(/\s+/g, " ").slice(0, 120)}`;
+            t.t5_get = `${g.status} :: ${(await g.text()).replace(/\s+/g, " ").slice(0, 80)}`;
           } catch (e) {
             t.t5_get = `xato ${String(e).slice(0, 60)}`;
           }
