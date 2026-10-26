@@ -1908,6 +1908,8 @@ export function parseHomeworkRows(html: string): HomeworkRow[] {
 
 export interface HomeworkEditForm {
   xss: string;
+  /** To'liq Saqlash manzili (editWork.url — a=…&sid=… parametrlari bilan). */
+  saveUrl: string;
   description: string;
   timetoexecute: string;
   attachRequired: boolean;
@@ -1918,7 +1920,12 @@ export interface HomeworkEditForm {
 
 /** Tahrirlash sahifasi formasi (Saqlash shu qiymatlarni o'zgarmasdan yuboradi). */
 export function parseHomeworkEditForm(html: string): HomeworkEditForm | null {
-  const xss = (html.match(/[?&]xss=([0-9a-f]{16,})/i) ?? [])[1];
+  const saveUrlRaw =
+    (html.match(/'(https?:[^']*\/v2\/ajax\?[^']*)'/) ?? [])[1] ??
+    (html.match(/"(https?:[^"]*\/v2\/ajax\?[^"]*)"/) ?? [])[1] ??
+    "";
+  const saveUrl = decodeEntities(saveUrlRaw.replace(/\\\//g, "/"));
+  const xss = ((saveUrl || html).match(/[?&]xss=([0-9a-f]{16,})/i) ?? [])[1];
   const desc = (html.match(/<textarea[^>]*id="description"[^>]*>([\s\S]*?)<\/textarea>/) ?? [])[1];
   if (!xss || desc === undefined) return null;
   const tagById = (id: string): string =>
@@ -1931,6 +1938,7 @@ export function parseHomeworkEditForm(html: string): HomeworkEditForm | null {
   }
   return {
     xss,
+    saveUrl,
     description: decodeEntities(desc),
     timetoexecute: valueOf(tagById("timeToExecute")),
     attachRequired: checkedOf(tagById("attachRequired")),
@@ -1958,6 +1966,7 @@ async function hwPost(
   cookies: Record<string, string>,
   url: string,
   body: string,
+  referer?: string,
 ): Promise<{ status: number; text: string }> {
   const ck = Object.entries(cookies)
     .map(([k, v]) => `${k}=${v}`)
@@ -1970,7 +1979,8 @@ async function hwPost(
       Accept: "application/json, text/javascript, */*; q=0.01",
       "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
       "X-Requested-With": "XMLHttpRequest",
-      Referer: HW_BASE,
+      Origin: "https://schools.emaktab.uz",
+      Referer: referer ?? HW_BASE,
     },
     body,
     redirect: "manual",
@@ -2031,12 +2041,17 @@ export async function setHomeworkMaqom(
   const school = p.schoolId;
   try {
     if (p.lessonId) {
-      await pageGet(
-        s.cookies,
-        `https://schools.emaktab.uz/v2/lesson?school=${school}&lesson=${p.lessonId}`,
-      );
+      try {
+        await pageGet(
+          s.cookies,
+          `https://schools.emaktab.uz/v2/lesson?school=${school}&lesson=${p.lessonId}`,
+        );
+      } catch {
+        /* dars sahifasi — faqat ko'rish qadami, xato bo'lsa zanjir davom etadi */
+      }
     }
-    const edit = await pageGet(s.cookies, `${HW_BASE}?school=${school}&work=${p.workId}&view=Edit`);
+    const editUrl = `${HW_BASE}?school=${school}&work=${p.workId}&view=Edit`;
+    const edit = await pageGet(s.cookies, editUrl);
     const form = parseHomeworkEditForm(edit);
     if (!form) return { ok: false, reason: "tahrirlash formasi topilmadi" };
     const saveBody = new URLSearchParams({
@@ -2052,7 +2067,7 @@ export async function setHomeworkMaqom(
       linkUrl: "",
       shouldDeleteLink: "false",
     }).toString();
-    const save = await hwPost(s.cookies, `https://schools.emaktab.uz/v2/ajax?xss=${form.xss}`, saveBody);
+    const save = await hwPost(s.cookies, form.saveUrl, saveBody, editUrl);
     if (save.status < 200 || save.status >= 300) {
       return { ok: false, reason: `saqlash: HTTP ${save.status}` };
     }
@@ -2067,7 +2082,7 @@ export async function setHomeworkMaqom(
     const det = await pageGet(s.cookies, `${HW_BASE}?school=${school}&work=${p.workId}`);
     const model = parseHomeworkDetailModel(det);
     if (!model) return { ok: false, reason: "maqom (completeall-cmd) topilmadi" };
-    const gv = await hwPost(s.cookies, model.url, "");
+    const gv = await hwPost(s.cookies, model.url, "", `${HW_BASE}?school=${school}&work=${p.workId}`);
     if (gv.status < 200 || gv.status >= 300) {
       return { ok: false, reason: `maqom: HTTP ${gv.status}` };
     }

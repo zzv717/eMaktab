@@ -805,11 +805,15 @@ export async function GET(req: NextRequest) {
         const fire = sp.get("fire") === "1";
         try {
           if (lesson) {
-            const les = await pageGet(
-              result.session.cookies,
-              `https://schools.emaktab.uz/v2/lesson?school=${school}&lesson=${lesson}`,
-            );
-            steps.lessonLen = les.length;
+            try {
+              const les = await pageGet(
+                result.session.cookies,
+                `https://schools.emaktab.uz/v2/lesson?school=${school}&lesson=${lesson}`,
+              );
+              steps.lessonLen = les.length;
+            } catch (e2) {
+              steps.lessonErr = String(e2).slice(0, 60);
+            }
           }
           const edit = await pageGet(
             result.session.cookies,
@@ -825,6 +829,12 @@ export async function GET(req: NextRequest) {
             if (/\bchecked\b/i.test(mm[0])) marktype = val(mm[0]) || marktype;
           }
           steps.xss = xss ? `${xss.slice(0, 8)}…` : "yo'q";
+          const saveUrlRaw =
+            (edit.match(/'(https?:[^']*\/v2\/ajax\?[^']*)'/) ?? [])[1] ??
+            (edit.match(/"(https?:[^"]*\/v2\/ajax\?[^"]*)"/) ?? [])[1] ??
+            "";
+          const saveUrl = saveUrlRaw.replace(/\\\//g, "/");
+          steps.saveUrl = saveUrl ? saveUrl.slice(0, 170) : "topilmadi";
           steps.desc = desc.slice(0, 40);
           steps.marktype = marktype;
           steps.withCheck = chk(tagById("withCheck"));
@@ -847,7 +857,7 @@ export async function GET(req: NextRequest) {
           const ck = Object.entries(result.session.cookies)
             .map(([k, v]) => `${k}=${v}`)
             .join("; ");
-          const save = await fetch(`https://schools.emaktab.uz/v2/ajax?xss=${xss}`, {
+          const save = await fetch(saveUrl || `https://schools.emaktab.uz/v2/ajax?xss=${xss}`, {
             method: "POST",
             headers: {
               "User-Agent": "Mozilla/5.0",
@@ -855,7 +865,8 @@ export async function GET(req: NextRequest) {
               Accept: "application/json, text/javascript, */*; q=0.01",
               "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
               "X-Requested-With": "XMLHttpRequest",
-              Referer: "https://schools.emaktab.uz/v2/homework",
+              Origin: "https://schools.emaktab.uz",
+              Referer: `https://schools.emaktab.uz/v2/homework?school=${school}&work=${work}&view=Edit`,
             },
             body,
             redirect: "manual",
@@ -878,6 +889,7 @@ export async function GET(req: NextRequest) {
                 Cookie: ck,
                 Accept: "application/json, text/javascript, */*; q=0.01",
                 "X-Requested-With": "XMLHttpRequest",
+                Origin: "https://schools.emaktab.uz",
                 Referer: `https://schools.emaktab.uz/v2/homework?school=${school}&work=${work}`,
               },
               redirect: "manual",
