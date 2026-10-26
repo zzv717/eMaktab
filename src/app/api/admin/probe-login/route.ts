@@ -732,6 +732,18 @@ export async function GET(req: NextRequest) {
           ]
             .map((x) => pick(x, 150))
             .slice(0, 14);
+          hw.detScripts = [...new Set((det.match(/<script[^>]*src="[^"]{0,140}"/gi) ?? []))].map((x) => pick(x, 150)).slice(0, 14);
+          hw.detRequire = [...new Set((det.match(/(?:require|define)\(\s*\[[^\]]{0,220}\]/g) ?? []))].map((x) => pick(x, 240)).slice(0, 6);
+          hw.detAjax = [...new Set((det.match(/\$\.(?:post|get|ajax|getJSON)\([\s\S]{0,260}/g) ?? []))].map((x) => pick(x, 300)).slice(0, 6);
+          const gis: number[] = [];
+          let gp = 0;
+          while (gis.length < 3 && gp < det.length) {
+            const gi = det.indexOf("giveaway", gp);
+            if (gi < 0) break;
+            gis.push(gi);
+            gp = gi + 8;
+          }
+          hw.giveawayCtx = gis.map((i) => pick(det.slice(Math.max(0, i - 400), i + 900).replace(/\s+/g, " "), 1150));
         } catch (e) {
           hw.detErr = pick(String(e), 100);
         }
@@ -743,8 +755,33 @@ export async function GET(req: NextRequest) {
           hw.edSelects = [...new Set((ed.match(/<select[^>]*>/gi) ?? []).map((x) => pick(x, 130)))].slice(0, 10);
           const si = ed.search(/Saqlash/i);
           hw.saveCtx = si >= 0 ? pick(ed.slice(Math.max(0, si - 600), si + 300).replace(/\s+/g, " "), 800) : "Saqlash topilmadi";
+          hw.edScripts = [...new Set((ed.match(/<script[^>]*src="[^"]{0,140}"/gi) ?? []))].map((x) => pick(x, 150)).slice(0, 14);
+          hw.edRequire = [...new Set((ed.match(/(?:require|define)\(\s*\[[^\]]{0,220}\]/g) ?? []))].map((x) => pick(x, 240)).slice(0, 6);
+          hw.edAjax = [...new Set((ed.match(/\$\.(?:post|get|ajax|getJSON)\([\s\S]{0,260}/g) ?? []))].map((x) => pick(x, 300)).slice(0, 6);
+          const svs: number[] = [];
+          let svp = 0;
+          const edLow = ed.toLowerCase();
+          while (svs.length < 4 && svp < ed.length) {
+            const si2 = edLow.indexOf("save", svp);
+            if (si2 < 0) break;
+            svs.push(si2);
+            svp = si2 + 4;
+          }
+          hw.saveCtxAll = svs.map((i) => pick(ed.slice(Math.max(0, i - 450), i + 850).replace(/\s+/g, " "), 1150));
         } catch (e) {
           hw.edErr = pick(String(e), 100);
+        }
+        // 4) Per-student maqom sahifasi (person=) — holat lug'ati va forma.
+        try {
+          const per = await pageGet(result.session.cookies, `${base}&work=${work}&person=1000022728595`);
+          hw.perLen = per.length;
+          hw.perForms = [...new Set((per.match(/<form[^>]*>/gi) ?? []).map((x) => pick(x, 180)))].slice(0, 6);
+          hw.perInputs = [...new Set((per.match(/<(?:input|select|option|textarea)[^>]*>/gi) ?? []).map((x) => pick(x, 150)))].slice(0, 30);
+          const pi = per.search(/Maqom/i);
+          hw.perCtx = pi >= 0 ? pick(per.slice(Math.max(0, pi - 400), pi + 900).replace(/\s+/g, " "), 1150) : "-";
+          hw.perAjax = [...new Set((per.match(/\$\.(?:post|get|ajax|getJSON)\([\s\S]{0,260}/g) ?? []))].map((x) => pick(x, 300))).slice(0, 6);
+        } catch (e) {
+          hw.perErr = pick(String(e), 100);
         }
         return NextResponse.json({ ...out, hw });
       }
