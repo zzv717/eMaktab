@@ -976,10 +976,8 @@ export async function GET(req: NextRequest) {
               const bodyText = raw
                 .replace(/[^\x20-\x7E]/g, ".")
                 .replace(/\s+/g, " ")
-                .slice(0, 70);
-              const srv = r.headers.get("server") ?? "";
-              const ray = r.headers.get("cf-ray") ?? "";
-              t[label] = `${r.status} srv=${srv} ray=${ray ? "bor" : "yoq"} n=${raw.length} :: ${bodyText}`;
+                .slice(0, 40);
+              t[label] = `${r.status}/${raw.length}/${bodyText}`;
             } catch (e) {
               t[label] = `xato ${String(e).slice(0, 60)}`;
             }
@@ -1007,7 +1005,13 @@ export async function GET(req: NextRequest) {
         } catch (e) {
           t.err = String(e).slice(0, 120);
         }
-        return NextResponse.json({ ...out, hwtest: t });
+        return new NextResponse(
+          Object.entries(t)
+            .map(([k, v]) => `${k}=${String(v).slice(0, 80)}`)
+            .join(" || ")
+            .slice(0, 1500),
+          { headers: { "Content-Type": "text/plain; charset=utf-8" } },
+        );
       }
     } else if (result.status === "captcha_required") {
       out.captcha = true;
