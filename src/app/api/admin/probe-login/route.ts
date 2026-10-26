@@ -660,6 +660,74 @@ export async function GET(req: NextRequest) {
           news: check.news,
         };
       }
+      // ?hw=1 — uy vazifasi (schools.emaktab.uz/v2/homework) shartnoma kashfiyoti:
+      // 1) ro'yxat sahifasi (filtr formasi, qatorlar), 2) uy vazifasi sahifasi (+ Maqom),
+      // 3) tahrirlash sahifasi (Saqlash formasi). Qo'shimcha: school=, work=.
+      if (sp.get("hw")) {
+        const hw: Record<string, unknown> = {};
+        const school = sp.get("school") ?? "1000006039552";
+        const work = sp.get("work") ?? "2534034219628613169";
+        const base = `https://schools.emaktab.uz/v2/homework?school=${school}`;
+        const pick = (s: string | null, n: number) => (s ?? "").slice(0, n);
+        try {
+          const list = await pageGet(result.session.cookies, base);
+          hw.listLen = list.length;
+          hw.listForms = [...new Set((list.match(/<form[^>]*>/gi) ?? []).map((x) => pick(x, 180)))].slice(0, 6);
+          const sels = [...list.matchAll(/<select[^>]*name="([^"]{1,40})"[^>]*>/gi)].slice(0, 8);
+          hw.listSelects = sels.map((m) => {
+            const tail = list.slice((m.index ?? 0) + m[0].length, (m.index ?? 0) + m[0].length + 300);
+            return `${m[1]} :: ${pick(tail.replace(/\s+/g, " "), 240)}`;
+          });
+          hw.listInputs = [
+            ...new Set((list.match(/<(?:input|textarea)[^>]*>/gi) ?? []).map((x) => pick(x, 150))),
+          ].slice(0, 18);
+          hw.listLinks = [
+            ...new Set((list.match(/(?:href|action)="[^"]{0,140}"/gi) ?? []).filter((h) => /homework|lesson|maqom/i.test(h))),
+          ]
+            .map((h) => pick(h, 150))
+            .slice(0, 12);
+          const tr = (list.match(/<tr[^>]*>[\s\S]{0,1500}?(?:berilgan|Bajarildi)[\s\S]{0,500}?<\/tr>/i) ?? [])[0];
+          hw.listRow = tr ? pick(tr.replace(/\s+/g, " "), 900) : "qator topilmadi";
+          hw.listJs = [
+            ...new Set((list.match(/["'][^"']{0,70}(?:homework|maqom)[^"']{0,70}["']/gi) ?? []).map((x) => pick(x, 110))),
+          ].slice(0, 10);
+        } catch (e) {
+          hw.listErr = pick(String(e), 100);
+        }
+        try {
+          const det = await pageGet(result.session.cookies, `${base}&work=${work}`);
+          hw.detLen = det.length;
+          const low = det.toLowerCase();
+          const idxs: number[] = [];
+          let p = 0;
+          while (idxs.length < 3 && p < low.length) {
+            const i = low.indexOf("maqom", p);
+            if (i < 0) break;
+            idxs.push(i);
+            p = i + 5;
+          }
+          hw.maqomHits = idxs.length;
+          hw.maqomCtx = idxs.map((i) => pick(det.slice(Math.max(0, i - 350), i + 700).replace(/\s+/g, " "), 850));
+          hw.detForms = [...new Set((det.match(/<form[^>]*>/gi) ?? []).map((x) => pick(x, 180)))].slice(0, 6);
+          hw.detJs = [
+            ...new Set((det.match(/["'][^"']{0,70}(?:maqom|homework)[^"']{0,70}["']/gi) ?? []).map((x) => pick(x, 110))),
+          ].slice(0, 10);
+        } catch (e) {
+          hw.detErr = pick(String(e), 100);
+        }
+        try {
+          const ed = await pageGet(result.session.cookies, `${base}&work=${work}&view=Edit`);
+          hw.edLen = ed.length;
+          hw.edForms = [...new Set((ed.match(/<form[^>]*>/gi) ?? []).map((x) => pick(x, 180)))].slice(0, 6);
+          hw.edInputs = [...new Set((ed.match(/<input[^>]*>/gi) ?? []).map((x) => pick(x, 150)))].slice(0, 26);
+          hw.edSelects = [...new Set((ed.match(/<select[^>]*>/gi) ?? []).map((x) => pick(x, 130)))].slice(0, 10);
+          const si = ed.search(/Saqlash/i);
+          hw.saveCtx = si >= 0 ? pick(ed.slice(Math.max(0, si - 600), si + 300).replace(/\s+/g, " "), 800) : "Saqlash topilmadi";
+        } catch (e) {
+          hw.edErr = pick(String(e), 100);
+        }
+        return NextResponse.json({ ...out, hw });
+      }
     } else if (result.status === "captcha_required") {
       out.captcha = true;
       out.captchaUrl = result.captchaUrl ? "bor" : "yo'q";
