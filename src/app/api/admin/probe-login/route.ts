@@ -691,6 +691,8 @@ export async function GET(req: NextRequest) {
             .slice(0, 12);
           const tr = (list.match(/<tr[^>]*>[\s\S]{0,1500}?(?:berilgan|Bajarildi)[\s\S]{0,500}?<\/tr>/i) ?? [])[0];
           hw.listRow = tr ? pick(tr.replace(/\s+/g, " "), 900) : "qator topilmadi";
+          const wri = list.indexOf("work=");
+          hw.listRowCtx = wri >= 0 ? pick(list.slice(Math.max(0, wri - 700), wri + 1500).replace(/\s+/g, " "), 2100) : "-";
           hw.listJs = [
             ...new Set((list.match(/["'][^"']{0,70}(?:homework|maqom)[^"']{0,70}["']/gi) ?? []).map((x) => pick(x, 110))),
           ].slice(0, 10);
@@ -744,6 +746,10 @@ export async function GET(req: NextRequest) {
             gp = gi + 8;
           }
           hw.giveawayCtx = gis.map((i) => pick(det.slice(Math.max(0, i - 400), i + 900).replace(/\s+/g, " "), 1150));
+          const hwi = det.indexOf("homeworkDetails");
+          hw.detModelCtx = hwi >= 0 ? pick(det.slice(Math.max(0, hwi - 200), hwi + 2500).replace(/\s+/g, " "), 2600) : "-";
+          const csi = det.indexOf("changeStatusUrl");
+          hw.detChangeCtx = csi >= 0 ? pick(det.slice(Math.max(0, csi - 200), csi + 1300).replace(/\s+/g, " "), 1450) : "-";
         } catch (e) {
           hw.detErr = pick(String(e), 100);
         }
@@ -768,6 +774,8 @@ export async function GET(req: NextRequest) {
             svp = si2 + 4;
           }
           hw.saveCtxAll = svs.map((i) => pick(ed.slice(Math.max(0, i - 450), i + 850).replace(/\s+/g, " "), 1150));
+          const hmi = ed.indexOf("homeworkeditforteacherModel");
+          hw.edModelCtx = hmi >= 0 ? pick(ed.slice(Math.max(0, hmi - 200), hmi + 2500).replace(/\s+/g, " "), 2600) : "-";
         } catch (e) {
           hw.edErr = pick(String(e), 100);
         }
