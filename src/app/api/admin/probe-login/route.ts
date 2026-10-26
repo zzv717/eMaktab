@@ -1387,7 +1387,7 @@ export async function GET(req: NextRequest) {
             const attrs = fm[1];
             const inner = fm[2];
             const hasFile = /type="file"/i.test(inner);
-            const hasNext = /Keyingi/i.test(inner);
+            const hasNext = /Keyingi/i.test(inner) || /name="step3"|Import qilish/i.test(inner);
             if (!hasFile && !hasNext) continue;
             const action = (attrs.match(/action="([^"]*)"/i) ?? [])[1] ?? "";
             const method = (attrs.match(/method="([^"]*)"/i) ?? [])[1] ?? "get";
@@ -1468,10 +1468,14 @@ export async function GET(req: NextRequest) {
           out.push(`s2form=${f2.method} ${esc(f2.action.slice(0, 110))}`);
           out.push(
             `s2selects=${f2.selects
-              .map((s) => `${s.name}[${s.options.slice(0, 5).map((o) => `${o.value}:${o.label}${o.selected ? "*" : ""}`).join(",")}]`)
+              .map((s) => `${s.name}[${s.options.map((o) => `${o.value}:${o.label}${o.selected ? "*" : ""}`).join(",")}]`)
               .join(" ")
-              .slice(0, 420)}`,
+              .slice(0, 700)}`,
           );
+          const perRaw = (p2.match(/<select[^>]*name="period"[\s\S]*?<\/select>/i) ?? [""])[0];
+          out.push(`s2period=${esc(perRaw.slice(0, 400))}`);
+          const perJs = (p2.match(/.{0,80}period.{0,180}/i) ?? [""])[0];
+          out.push(`s2perjs=${esc(perJs.replace(/\s+/g, " ").slice(0, 260))}`);
           out.push(`s2inputs=${f2.fields.map((x) => `${x.name}=${x.value}${x.checked ? "*" : ""}`).join(" ").slice(0, 180)}`);
           // 3-bosqichga POST — sozlamalar (sinf/fan/chorak tanlab, mapping default)
           const fd2 = new FormData();
@@ -1483,13 +1487,15 @@ export async function GET(req: NextRequest) {
           }
           for (const sl of f2.selects) {
             let chosen = sl.options.find((o) => o.selected && o.value)?.value;
-            if (/group|sinf/i.test(sl.name)) {
+            if (/^select_\d+$/i.test(sl.name)) {
+              // ustun mapping: 1,2,3 → 0,1,2 (Dars raqami, mavzu, uy vazifasi)
+              const idx = Number(sl.name.replace("select_", ""));
+              chosen = sl.options.find((o) => o.value === String(idx))?.value ?? chosen;
+            } else if (/group|sinf/i.test(sl.name)) {
               chosen = sl.options.find((o) => norm(o.label) === norm(wantClass))?.value ?? chosen;
-            }
-            if (/subject|fan/i.test(sl.name)) {
+            } else if (/subject|fan/i.test(sl.name)) {
               chosen = sl.options.find((o) => norm(o.label) === norm(wantSubj))?.value ?? chosen;
-            }
-            if (/period|davr/i.test(sl.name)) {
+            } else if (/period|davr/i.test(sl.name)) {
               chosen =
                 sl.options.find((o) =>
                   wantPeriod === "0" ? /yil/i.test(o.label) : o.label.includes(`${wantPeriod}-chorak`),
@@ -1515,6 +1521,8 @@ export async function GET(req: NextRequest) {
           out.push(`s3green=${esc(greenM ? greenM[0].slice(0, 180) : "-")}`);
           const impM = p3.match(/<(?:input|button)[^>]*(?:Ko'chirib|Ko\u2018chirib|import)[^>]*>/i);
           out.push(`s3importBtn=${esc(impM ? impM[0].slice(0, 180) : "-")}`);
+          const chkIdx = p3.search(/Oldindan tekshirish|Harakat/i);
+          out.push(`s3check=${esc(chkIdx >= 0 ? txt(p3.slice(Math.max(0, chkIdx - 200), chkIdx + 1400)).slice(0, 600) : "-")}`);
           const f3 = parseWizForm(p3);
           if (f3) {
             out.push(`s3form=${f3.method} ${esc(f3.action.slice(0, 110))}`);
