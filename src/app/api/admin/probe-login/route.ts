@@ -668,7 +668,10 @@ export async function GET(req: NextRequest) {
         const school = sp.get("school") ?? "1000006039552";
         const work = sp.get("work") ?? "2534034219628613169";
         const base = `https://schools.emaktab.uz/v2/homework?school=${school}`;
-        const pick = (s: string | null, n: number) => (s ?? "").slice(0, n);
+        // Diqqat: fetch_page HTML→markdown konvertatsiyasi <...> teglarini yutadi —
+        // burchak qavslarni ‹ › ga almashtiramiz, markup shu tariqa saqlanib qoladi.
+        const pick = (s: string | null, n: number) =>
+          (s ?? "").slice(0, n).replace(/</g, "\u2039").replace(/>/g, "\u203a");
         try {
           const list = await pageGet(result.session.cookies, base);
           hw.listLen = list.length;
@@ -691,6 +694,14 @@ export async function GET(req: NextRequest) {
           hw.listJs = [
             ...new Set((list.match(/["'][^"']{0,70}(?:homework|maqom)[^"']{0,70}["']/gi) ?? []).map((x) => pick(x, 110))),
           ].slice(0, 10);
+          hw.listEndpoints = [
+            ...new Set([
+              ...(list.match(/\$\.(?:post|get|ajax)\([^)]{0,120}/gi) ?? []),
+              ...(list.match(/(?:url|action)\s*[:=]\s*['"][^'"]{0,100}/gi) ?? []),
+            ]),
+          ]
+            .map((x) => pick(x, 150))
+            .slice(0, 14);
         } catch (e) {
           hw.listErr = pick(String(e), 100);
         }
@@ -712,6 +723,15 @@ export async function GET(req: NextRequest) {
           hw.detJs = [
             ...new Set((det.match(/["'][^"']{0,70}(?:maqom|homework)[^"']{0,70}["']/gi) ?? []).map((x) => pick(x, 110))),
           ].slice(0, 10);
+          hw.detEndpoints = [
+            ...new Set([
+              ...(det.match(/(?:href|action|onclick)="[^"]{0,140}"/gi) ?? []).filter((h) => /maqom|result|status|check/i.test(h)),
+              ...(det.match(/\$\.(?:post|get|ajax)\([^)]{0,120}/gi) ?? []),
+              ...(det.match(/(?:url|action)\s*[:=]\s*['"][^'"]{0,100}/gi) ?? []),
+            ]),
+          ]
+            .map((x) => pick(x, 150))
+            .slice(0, 14);
         } catch (e) {
           hw.detErr = pick(String(e), 100);
         }
