@@ -1431,8 +1431,11 @@ export async function GET(req: NextRequest) {
           const f1 = parseWizForm(p1);
           if (!f1) throw new Error("1-bosqich formasi topilmadi");
           out.push(`s1form=${f1.method} ${esc(f1.action.slice(0, 110))}`);
-          out.push(`s1fields=${f1.fields.map((x) => `${x.name}=${x.value}${x.checked ? "*" : ""}`).join(" ").slice(0, 200)}`);
+          out.push(`s1fields=${f1.fields.map((x) => x.name).join(",")}`);
           out.push(`s1file=${f1.fileField}`);
+          out.push(
+            `s1head=${esc(txt(p1).match(/(?:Ma\u2018lumotlar manbasi|Sozlamalar|Ma\u2018lumotlarni tekshirish|Ko\u2018chirib o\u2018tkazish)[^.]{0,40}/i)?.[0] ?? "-")}`,
+          );
           // 2-bosqichga POST (fayl bilan)
           const fd = new FormData();
           for (const fl of f1.fields) {
@@ -1441,6 +1444,8 @@ export async function GET(req: NextRequest) {
             if (fl.type === "submit") continue;
             fd.append(fl.name, fl.value);
           }
+          const s1next = f1.fields.find((x) => x.type === "submit" && /Keyingi/i.test(x.value));
+          if (s1next) fd.append(s1next.name, s1next.value);
           fd.append(
             f1.fileField,
             new Blob([new Uint8Array(xlsx)], {
@@ -1451,6 +1456,10 @@ export async function GET(req: NextRequest) {
           const p2r = await fetchFollowing(f1.action, { method: "POST", body: fd }, result.session.cookies);
           const p2 = p2r.body;
           out.push(`s2len=${p2.length} final=${esc(p2r.finalUrl.slice(0, 110))}`);
+          out.push(
+            `s2head=${esc(txt(p2).match(/(?:Ma\u2018lumotlar manbasi|Sozlamalar|Ma\u2018lumotlarni tekshirish|Ko\u2018chirib o\u2018tkazish)[^.]{0,40}/i)?.[0] ?? "-")}`,
+          );
+          out.push(`s2msg=${esc((txt(p2).match(/(?:kerak|tanlang|Xatol|xato|Fayl)[^.]{0,90}/i) ?? ["-"])[0])}`);
           const f2 = parseWizForm(p2);
           if (!f2) {
             out.push(`s2err=${esc(txt(p2).slice(0, 200))}`);
@@ -1493,6 +1502,9 @@ export async function GET(req: NextRequest) {
           const p3r = await fetchFollowing(f2.action, { method: "POST", body: fd2 }, result.session.cookies);
           const p3 = p3r.body;
           out.push(`s3len=${p3.length} final=${esc(p3r.finalUrl.slice(0, 110))}`);
+          out.push(
+            `s3head=${esc(txt(p3).match(/(?:Ma\u2018lumotlar manbasi|Sozlamalar|Ma\u2018lumotlarni tekshirish|Ko\u2018chirib o\u2018tkazish)[^.]{0,40}/i)?.[0] ?? "-")}`,
+          );
           // 4-rasmdagi nazorat: yashil/qizil matnlar
           const bodyTxt = txt(p3);
           const xatol = (p3.match(/Xatol/gi) ?? []).length;
