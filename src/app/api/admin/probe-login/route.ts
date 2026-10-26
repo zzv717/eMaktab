@@ -834,7 +834,11 @@ export async function GET(req: NextRequest) {
             (edit.match(/"(https?:[^"]*\/v2\/ajax\?[^"]*)"/) ?? [])[1] ??
             "";
           const saveUrl = saveUrlRaw.replace(/\\\//g, "/");
-          steps.saveUrl = saveUrl ? saveUrl.slice(0, 170) : "topilmadi";
+          steps.saveUrl = saveUrl ? saveUrl.slice(0, 250) : "topilmadi";
+          const token = (edit.match(/name="__RequestVerificationToken"[^>]*value="([^"]*)"/) ?? [])[1]
+            ?? (edit.match(/value="([^"]*)"[^>]*name="__RequestVerificationToken"/) ?? [])[1]
+            ?? "";
+          steps.tokenLen = token.length;
           steps.desc = desc.slice(0, 40);
           steps.marktype = marktype;
           steps.withCheck = chk(tagById("withCheck"));
@@ -860,19 +864,26 @@ export async function GET(req: NextRequest) {
           const save = await fetch(saveUrl || `https://schools.emaktab.uz/v2/ajax?xss=${xss}`, {
             method: "POST",
             headers: {
-              "User-Agent": "Mozilla/5.0",
+              "User-Agent":
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
               Cookie: ck,
               Accept: "application/json, text/javascript, */*; q=0.01",
+              "Accept-Language": "uz-UZ,uz;q=0.9,en;q=0.8,ru;q=0.7",
               "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
               "X-Requested-With": "XMLHttpRequest",
               Origin: "https://schools.emaktab.uz",
               Referer: `https://schools.emaktab.uz/v2/homework?school=${school}&work=${work}&view=Edit`,
+              RequestVerificationToken: token,
+              "X-CSRF-TOKEN": token,
+              "sec-fetch-site": "same-origin",
+              "sec-fetch-mode": "cors",
+              "sec-fetch-dest": "empty",
             },
-            body,
+            body: token ? `${body}&__RequestVerificationToken=${encodeURIComponent(token)}` : body,
             redirect: "manual",
           });
           steps.saveStatus = save.status;
-          steps.saveBody = (await save.text()).replace(/\s+/g, " ").slice(0, 150);
+          steps.saveBody = (await save.text()).replace(/\s+/g, " ").slice(0, 350);
           const det = await pageGet(
             result.session.cookies,
             `https://schools.emaktab.uz/v2/homework?school=${school}&work=${work}`,
