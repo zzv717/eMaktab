@@ -5,6 +5,7 @@ import { memberAccounts } from "@/db/schema";
 import { decryptSecret } from "@/lib/crypto";
 import {
   extractTeacherJournals,
+  fetchFollowing,
   fetchClassMembers,
   fetchDiaryDays,
   fetchNews,
@@ -1253,6 +1254,284 @@ export async function GET(req: NextRequest) {
           lines.push(`err=${String(e).slice(0, 100)}`);
         }
         return new NextResponse(lines.join("\n").slice(0, 5500), {
+          headers: { "Content-Type": "text/plain; charset=utf-8" },
+        });
+      }
+      // ?pwiz=1 — "Tayyor rejani import qilish" sehrgarini jonli yuritish.
+      // Standart = dry (1–3 qadam: fayl yuklash → sozlamalar → tekshirish).
+      // &fire=1 — 4-qadam ("Ko'chirib o'tkazish") ham bajariladi.
+      // Qo'shimcha: school=, class=1-A, subj=Alifbe, period=1 (chorak) yoki 0 (yil).
+      if (sp.get("pwiz")) {
+        const out: string[] = [];
+        const school = sp.get("school") ?? "1000006039552";
+        const wantClass = sp.get("class") ?? "1-A";
+        const wantSubj = sp.get("subj") ?? "Alifbe";
+        const wantPeriod = sp.get("period") ?? "0";
+        const fire = sp.get("fire") === "1";
+        const esc = (s: string) => s.replace(/</g, "\u2039").replace(/>/g, "\u203a");
+        const txt = (s: string) =>
+          s.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+        // --- mini XLSX (stored ZIP) yaratuvchi ---
+        const crc32 = (buf: Uint8Array): number => {
+          let c = -1;
+          for (let i = 0; i < buf.length; i++) {
+            c ^= buf[i];
+            for (let k = 0; k < 8; k++) c = (c >>> 1) ^ (0xedb88320 & -(c & 1));
+          }
+          return ~c >>> 0;
+        };
+        const zipStore = (files: Array<{ name: string; data: string }>): Uint8Array => {
+          const enc = new TextEncoder();
+          const parts: Uint8Array[] = [];
+          const central: Uint8Array[] = [];
+          let offset = 0;
+          for (const f of files) {
+            const nb = enc.encode(f.name);
+            const db = enc.encode(f.data);
+            const crc = crc32(db);
+            const local = new Uint8Array(30 + nb.length + db.length);
+            const dv = new DataView(local.buffer);
+            dv.setUint32(0, 0x04034b50, true);
+            dv.setUint16(4, 20, true);
+            dv.setUint32(14, crc, true);
+            dv.setUint32(18, db.length, true);
+            dv.setUint32(22, db.length, true);
+            dv.setUint16(26, nb.length, true);
+            local.set(nb, 30);
+            local.set(db, 30 + nb.length);
+            parts.push(local);
+            const cen = new Uint8Array(46 + nb.length);
+            const cv = new DataView(cen.buffer);
+            cv.setUint32(0, 0x02014b50, true);
+            cv.setUint16(4, 20, true);
+            cv.setUint16(6, 20, true);
+            cv.setUint32(16, crc, true);
+            cv.setUint32(20, db.length, true);
+            cv.setUint32(24, db.length, true);
+            cv.setUint16(28, nb.length, true);
+            cv.setUint32(42, offset, true);
+            cen.set(nb, 46);
+            central.push(cen);
+            offset += local.length;
+          }
+          const cdSize = central.reduce((s, c) => s + c.length, 0);
+          const eocd = new Uint8Array(22);
+          const ev = new DataView(eocd.buffer);
+          ev.setUint32(0, 0x06054b50, true);
+          ev.setUint16(8, files.length, true);
+          ev.setUint16(10, files.length, true);
+          ev.setUint32(12, cdSize, true);
+          ev.setUint32(16, offset, true);
+          const all = [...parts, ...central, eocd];
+          const total = all.reduce((s, x) => s + x.length, 0);
+          const res = new Uint8Array(total);
+          let p = 0;
+          for (const x of all) {
+            res.set(x, p);
+            p += x.length;
+          }
+          return res;
+        };
+        const row = (cells: string[]) =>
+          `<row>${cells
+            .map((v) => `<c t="inlineStr"><is><t>${v}</t></is></c>`)
+            .join("")}</row>`;
+        const xlsx = zipStore([
+          {
+            name: "[Content_Types].xml",
+            data: `<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>`,
+          },
+          {
+            name: "_rels/.rels",
+            data: `<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`,
+          },
+          {
+            name: "xl/workbook.xml",
+            data: `<?xml version="1.0"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets></workbook>`,
+          },
+          {
+            name: "xl/_rels/workbook.xml.rels",
+            data: `<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>`,
+          },
+          {
+            name: "xl/worksheets/sheet1.xml",
+            data: `<?xml version="1.0"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${row([
+              "Dars raqami",
+              "Dars mavzusi",
+              "Uyga vazifa",
+            ])}${row(["1", "Z tovush va Z z harflari", "Z tovush va Z z harflari"])}${row([
+              "2",
+              "Z tovush va Z z harflarini mustahkamlash",
+              "Takrorlash",
+            ])}${row(["3", "V tovush va Vv harflari", "Takrorlash"])}</sheetData></worksheet>`,
+          },
+        ]);
+        // --- sehrgar formalarini parser ---
+        interface WizField {
+          name: string;
+          value: string;
+          type: string;
+          checked: boolean;
+        }
+        interface WizForm {
+          action: string;
+          method: string;
+          fields: WizField[];
+          selects: Array<{ name: string; options: Array<{ value: string; label: string; selected: boolean }> }>;
+          fileField: string;
+          raw: string;
+        }
+        const parseWizForm = (html: string): WizForm | null => {
+          const forms = [...html.matchAll(/<form([^>]*)>([\s\S]*?)<\/form>/gi)];
+          for (const fm of forms) {
+            const attrs = fm[1];
+            const inner = fm[2];
+            const hasFile = /type="file"/i.test(inner);
+            const hasNext = /Keyingi/i.test(inner);
+            if (!hasFile && !hasNext) continue;
+            const action = (attrs.match(/action="([^"]*)"/i) ?? [])[1] ?? "";
+            const method = (attrs.match(/method="([^"]*)"/i) ?? [])[1] ?? "get";
+            const fields: WizField[] = [];
+            for (const im of inner.matchAll(/<input([^>]*)>/gi)) {
+              const a = im[1];
+              const name = (a.match(/name="([^"]*)"/i) ?? [])[1];
+              if (!name) continue;
+              const type = (a.match(/type="([^"]*)"/i) ?? [])[1] ?? "text";
+              const value = (a.match(/value="([^"]*)"/i) ?? [])[1] ?? "";
+              fields.push({ name, value, type, checked: /\bchecked\b/i.test(a) });
+            }
+            const selects = [...inner.matchAll(/<select([^>]*)>([\s\S]*?)<\/select>/gi)].map((sm) => ({
+              name: (sm[1].match(/name="([^"]*)"/i) ?? [])[1] ?? "",
+              options: [...sm[2].matchAll(/<option([^>]*)>([\s\S]*?)<\/option>/gi)].map((om) => ({
+                value: (om[1].match(/value="([^"]*)"/i) ?? [])[1] ?? "",
+                label: txt(om[2]).slice(0, 30),
+                selected: /\bselected\b/i.test(om[1]),
+              })),
+            }));
+            const fileField =
+              ((inner.match(/<input[^>]*type="file"[^>]*>/i) ?? [])[0] ?? "").match(
+                /name="([^"]*)"/i,
+              )?.[1] ?? "";
+            return {
+              action: action.replace(/&amp;/g, "&"),
+              method,
+              fields,
+              selects,
+              fileField,
+              raw: esc(inner).slice(0, 300),
+            };
+          }
+          return null;
+        };
+        try {
+          // 1-bosqich: Ma'lumotlar manbasi (fayl)
+          const u1 = `https://schools.emaktab.uz/v2/journals/planning/import?period=0&subject=0&group=0&school=${school}&year=2026&teacher=0&subgroup=0`;
+          const p1 = await pageGet(result.session.cookies, u1);
+          out.push(`s1len=${p1.length}`);
+          const f1 = parseWizForm(p1);
+          if (!f1) throw new Error("1-bosqich formasi topilmadi");
+          out.push(`s1form=${f1.method} ${esc(f1.action.slice(0, 110))}`);
+          out.push(`s1fields=${f1.fields.map((x) => `${x.name}=${x.value}${x.checked ? "*" : ""}`).join(" ").slice(0, 200)}`);
+          out.push(`s1file=${f1.fileField}`);
+          // 2-bosqichga POST (fayl bilan)
+          const fd = new FormData();
+          for (const fl of f1.fields) {
+            if (fl.name === f1.fileField || fl.type === "file") continue;
+            if ((fl.type === "radio" || fl.type === "checkbox") && !fl.checked) continue;
+            if (fl.type === "submit") continue;
+            fd.append(fl.name, fl.value);
+          }
+          fd.append(
+            f1.fileField,
+            new Blob([new Uint8Array(xlsx)], {
+              type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            }),
+            "ish-reja.xlsx",
+          );
+          const p2r = await fetchFollowing(f1.action, { method: "POST", body: fd }, result.session.cookies);
+          const p2 = p2r.body;
+          out.push(`s2len=${p2.length} final=${esc(p2r.finalUrl.slice(0, 110))}`);
+          const f2 = parseWizForm(p2);
+          if (!f2) {
+            out.push(`s2err=${esc(txt(p2).slice(0, 200))}`);
+            throw new Error("2-bosqich formasi topilmadi");
+          }
+          out.push(`s2form=${f2.method} ${esc(f2.action.slice(0, 110))}`);
+          out.push(
+            `s2selects=${f2.selects
+              .map((s) => `${s.name}[${s.options.slice(0, 5).map((o) => `${o.value}:${o.label}${o.selected ? "*" : ""}`).join(",")}]`)
+              .join(" ")
+              .slice(0, 420)}`,
+          );
+          out.push(`s2inputs=${f2.fields.map((x) => `${x.name}=${x.value}${x.checked ? "*" : ""}`).join(" ").slice(0, 180)}`);
+          // 3-bosqichga POST — sozlamalar (sinf/fan/chorak tanlab, mapping default)
+          const fd2 = new FormData();
+          const norm = (t: string) => t.replace(/\s+/g, " ").trim().toLowerCase();
+          for (const fl of f2.fields) {
+            if ((fl.type === "radio" || fl.type === "checkbox") && !fl.checked) continue;
+            if (fl.type === "submit") continue;
+            fd2.append(fl.name, fl.value);
+          }
+          for (const sl of f2.selects) {
+            let chosen = sl.options.find((o) => o.selected && o.value)?.value;
+            if (/group|sinf/i.test(sl.name)) {
+              chosen = sl.options.find((o) => norm(o.label) === norm(wantClass))?.value ?? chosen;
+            }
+            if (/subject|fan/i.test(sl.name)) {
+              chosen = sl.options.find((o) => norm(o.label) === norm(wantSubj))?.value ?? chosen;
+            }
+            if (/period|davr/i.test(sl.name)) {
+              chosen =
+                sl.options.find((o) =>
+                  wantPeriod === "0" ? /yil/i.test(o.label) : o.label.includes(`${wantPeriod}-chorak`),
+                )?.value ?? chosen;
+            }
+            fd2.append(sl.name, chosen ?? "");
+          }
+          const nextBtn = f2.fields.find((x) => x.type === "submit" && /Keyingi/i.test(x.value));
+          if (nextBtn) fd2.append(nextBtn.name, nextBtn.value);
+          const p3r = await fetchFollowing(f2.action, { method: "POST", body: fd2 }, result.session.cookies);
+          const p3 = p3r.body;
+          out.push(`s3len=${p3.length} final=${esc(p3r.finalUrl.slice(0, 110))}`);
+          // 4-rasmdagi nazorat: yashil/qizil matnlar
+          const bodyTxt = txt(p3);
+          const xatol = (p3.match(/Xatol/gi) ?? []).length;
+          out.push(`s3xatol=${xatol}`);
+          const redM = bodyTxt.match(/[^.]{0,120}(?:oshib ketgan|Xatol|yaroqsiz|mavjud emas)[^.]{0,80}/i);
+          out.push(`s3red=${esc(redM ? redM[0].slice(0, 200) : "-")}`);
+          const greenM = bodyTxt.match(/[^.]{0,90}(?:ko'chirish mumkin|ko\u2018chirish mumkin|import qilishga tayyor|tayyor)[^.]{0,60}/i);
+          out.push(`s3green=${esc(greenM ? greenM[0].slice(0, 180) : "-")}`);
+          const impM = p3.match(/<(?:input|button)[^>]*(?:Ko'chirib|Ko\u2018chirib|import)[^>]*>/i);
+          out.push(`s3importBtn=${esc(impM ? impM[0].slice(0, 180) : "-")}`);
+          const f3 = parseWizForm(p3);
+          if (f3) {
+            out.push(`s3form=${f3.method} ${esc(f3.action.slice(0, 110))}`);
+            out.push(`s3fields=${f3.fields.map((x) => `${x.name}=${x.value}${x.checked ? "*" : ""}`).join(" ").slice(0, 160)}`);
+            if (fire) {
+              const fd3 = new FormData();
+              for (const fl of f3.fields) {
+                if ((fl.type === "radio" || fl.type === "checkbox") && !fl.checked) continue;
+                if (fl.type === "submit") continue;
+                fd3.append(fl.name, fl.value);
+              }
+              for (const sl of f3.selects) {
+                fd3.append(sl.name, sl.options.find((o) => o.selected)?.value ?? sl.options[0]?.value ?? "");
+              }
+              const impBtn = f3.fields.find((x) => x.type === "submit" && /Ko|import/i.test(x.value));
+              if (impBtn) fd3.append(impBtn.name, impBtn.value);
+              const p4r = await fetchFollowing(f3.action, { method: "POST", body: fd3 }, result.session.cookies);
+              out.push(`s4len=${p4r.body.length} final=${esc(p4r.finalUrl.slice(0, 110))}`);
+              out.push(`s4txt=${esc(txt(p4r.body).slice(0, 200))}`);
+            } else {
+              out.push("s4=dry");
+            }
+          } else {
+            out.push("s3form=topilmadi");
+          }
+        } catch (e) {
+          out.push(`err=${String(e).slice(0, 120)}`);
+        }
+        return new NextResponse(out.join("\n").slice(0, 5500), {
           headers: { "Content-Type": "text/plain; charset=utf-8" },
         });
       }

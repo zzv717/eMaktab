@@ -359,9 +359,9 @@ type FollowedResponse = { status: number; body: string; finalUrl: string };
  * avtomatik redirect'da Set-Cookie'larni yo'qotadi (cookie jar yo'q).
  * Har bir qadamda cookie'lar yig'iladi.
  */
-async function fetchFollowing(
+export async function fetchFollowing(
   url: string,
-  init: { method?: string; body?: string; headers?: Record<string, string> },
+  init: { method?: string; body?: BodyInit; headers?: Record<string, string> },
   jar: Record<string, string>,
   maxHops = 10,
 ): Promise<FollowedResponse> {
