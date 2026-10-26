@@ -1515,8 +1515,13 @@ async function handleMaqomCallback(
         await finishProgress(chatId, progress, "Maqom");
         await sendMessage(
           chatId,
-          `✅ <b>Muvaffaqiyatli!</b>\n\n📝 Uy vazifasi maqomi berildi — <b>Bajarildi</b>\n🏫 ${escapeHtml(cl?.className ?? "")}${subject ? ` · ${escapeHtml(subject)}` : ""}`,
-          { replyMarkup: menuFor(user) },
+          `✅ <b>Muvaffaqiyatli!</b>\n\n📝 Uy vazifasi maqomi berildi — <b>Bajarildi</b>\n🏫 ${escapeHtml(cl?.className ?? "")}${subject ? ` · ${escapeHtml(subject)}` : ""}\n\n❓ <b>Maqom berishni davom ettirasizmi?</b>`,
+          {
+            replyMarkup: kb([
+              [{ text: "➡️ Keyingisi", callback_data: `maqoms:${classId}:${subjIdxS}` }],
+              [{ text: "❌ Bekor qilish", callback_data: "menu:home" }],
+            ]),
+          },
         );
       } else {
         await failProgress(chatId, progress, "Maqom");
