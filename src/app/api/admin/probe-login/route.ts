@@ -794,6 +794,110 @@ export async function GET(req: NextRequest) {
         }
         return NextResponse.json({ ...out, hw });
       }
+      // ?hwrun=1&work=… — maqom zanjirini jonli bajarish (rasmlardagi tartib).
+      // Standart = dry (1–5-qadam, shu jumladan Saqlash; final completeall-cmd O'TKAZILMAYDI).
+      // &fire=1 — final qadam ham bajariladi + natija qayta tekshiriladi.
+      if (sp.get("hwrun")) {
+        const steps: Record<string, unknown> = {};
+        const school = sp.get("school") ?? "1000006039552";
+        const work = sp.get("work") ?? "2534034219628613169";
+        const lesson = sp.get("lesson") ?? "";
+        const fire = sp.get("fire") === "1";
+        try {
+          if (lesson) {
+            const les = await pageGet(
+              result.session.cookies,
+              `https://schools.emaktab.uz/v2/lesson?school=${school}&lesson=${lesson}`,
+            );
+            steps.lessonLen = les.length;
+          }
+          const edit = await pageGet(
+            result.session.cookies,
+            `https://schools.emaktab.uz/v2/homework?school=${school}&work=${work}&view=Edit`,
+          );
+          const xss = (edit.match(/[?&]xss=([0-9a-f]{16,})/i) ?? [])[1] ?? "";
+          const desc = (edit.match(/<textarea[^>]*id="description"[^>]*>([\s\S]*?)<\/textarea>/) ?? [])[1] ?? "";
+          const tagById = (id: string) => (edit.match(new RegExp(`<input[^>]*id="${id}"[^>]*>`, "i")) ?? [])[0] ?? "";
+          const val = (t: string) => (t.match(/value="([^"]*)"/) ?? [])[1] ?? "";
+          const chk = (t: string) => /\bchecked\b/i.test(t);
+          let marktype = "2";
+          for (const mm of edit.matchAll(/<input[^>]*name="marktype"[^>]*>/gi)) {
+            if (/\bchecked\b/i.test(mm[0])) marktype = val(mm[0]) || marktype;
+          }
+          steps.xss = xss ? `${xss.slice(0, 8)}…` : "yo'q";
+          steps.desc = desc.slice(0, 40);
+          steps.marktype = marktype;
+          steps.withCheck = chk(tagById("withCheck"));
+          steps.attachRequired = chk(tagById("attachRequired"));
+          steps.journalVisible = chk(tagById("journalVisible0"));
+          if (!xss) throw new Error("xss topilmadi");
+          const body = new URLSearchParams({
+            school,
+            work,
+            description: desc,
+            timetoexecute: val(tagById("timeToExecute")),
+            attachRequired: String(chk(tagById("attachRequired"))),
+            marktype,
+            markcount: "2",
+            withCheck: String(chk(tagById("withCheck"))),
+            journalVisible: String(chk(tagById("journalVisible0"))),
+            linkUrl: "",
+            shouldDeleteLink: "false",
+          }).toString();
+          const ck = Object.entries(result.session.cookies)
+            .map(([k, v]) => `${k}=${v}`)
+            .join("; ");
+          const save = await fetch(`https://schools.emaktab.uz/v2/ajax?xss=${xss}`, {
+            method: "POST",
+            headers: {
+              "User-Agent": "Mozilla/5.0",
+              Cookie: ck,
+              Accept: "application/json, text/javascript, */*; q=0.01",
+              "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+              "X-Requested-With": "XMLHttpRequest",
+              Referer: "https://schools.emaktab.uz/v2/homework",
+            },
+            body,
+            redirect: "manual",
+          });
+          steps.saveStatus = save.status;
+          steps.saveBody = (await save.text()).replace(/\s+/g, " ").slice(0, 150);
+          const det = await pageGet(
+            result.session.cookies,
+            `https://schools.emaktab.uz/v2/homework?school=${school}&work=${work}`,
+          );
+          const modelUrl = ((det.match(/"(https:[^"]*completeall-cmd[^"]*)"/) ?? [])[1] ?? "").replace(/\\\//g, "/");
+          steps.modelUrl = modelUrl ? modelUrl.slice(0, 130) : "topilmadi";
+          steps.redBefore = (det.match(/tse bgR/g) ?? []).length;
+          steps.greenBefore = (det.match(/tse bgG/g) ?? []).length;
+          if (fire && modelUrl) {
+            const gv = await fetch(modelUrl, {
+              method: "POST",
+              headers: {
+                "User-Agent": "Mozilla/5.0",
+                Cookie: ck,
+                Accept: "application/json, text/javascript, */*; q=0.01",
+                "X-Requested-With": "XMLHttpRequest",
+                Referer: `https://schools.emaktab.uz/v2/homework?school=${school}&work=${work}`,
+              },
+              redirect: "manual",
+            });
+            steps.giveawayStatus = gv.status;
+            steps.giveawayBody = (await gv.text()).replace(/\s+/g, " ").slice(0, 220);
+            const det2 = await pageGet(
+              result.session.cookies,
+              `https://schools.emaktab.uz/v2/homework?school=${school}&work=${work}`,
+            );
+            steps.redAfter = (det2.match(/tse bgR/g) ?? []).length;
+            steps.greenAfter = (det2.match(/tse bgG/g) ?? []).length;
+          } else {
+            steps.final = "dry — completeall-cmd o'tkazildi";
+          }
+        } catch (e) {
+          steps.err = String(e).slice(0, 120);
+        }
+        return NextResponse.json({ ...out, hwrun: steps });
+      }
     } else if (result.status === "captcha_required") {
       out.captcha = true;
       out.captchaUrl = result.captchaUrl ? "bor" : "yo'q";
