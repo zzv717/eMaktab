@@ -972,13 +972,14 @@ export async function GET(req: NextRequest) {
                 body,
                 redirect: "manual",
               });
-              const bodyText = (await r.text())
+              const raw = await r.text();
+              const bodyText = raw
+                .replace(/[^\x20-\x7E]/g, ".")
                 .replace(/\s+/g, " ")
-                .replace(/['‘’ʼ]/g, "")
-                .slice(0, 80);
+                .slice(0, 70);
               const srv = r.headers.get("server") ?? "";
               const ray = r.headers.get("cf-ray") ?? "";
-              t[label] = `${r.status} srv=${srv} ray=${ray ? "bor" : "yoq"} :: ${bodyText}`;
+              t[label] = `${r.status} srv=${srv} ray=${ray ? "bor" : "yoq"} n=${raw.length} :: ${bodyText}`;
             } catch (e) {
               t[label] = `xato ${String(e).slice(0, 60)}`;
             }
@@ -997,9 +998,9 @@ export async function GET(req: NextRequest) {
               redirect: "manual",
             });
             t.t5_get = `${g.status} :: ${(await g.text())
+              .replace(/[^\x20-\x7E]/g, ".")
               .replace(/\s+/g, " ")
-              .replace(/['‘’ʼ]/g, "")
-              .slice(0, 80)}`;
+              .slice(0, 70)}`;
           } catch (e) {
             t.t5_get = `xato ${String(e).slice(0, 60)}`;
           }
