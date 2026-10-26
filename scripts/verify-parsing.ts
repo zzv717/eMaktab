@@ -33,6 +33,10 @@ import {
   parseHomeworkSelects,
   parseHomeworkEditForm,
   parseHomeworkDetailModel,
+  parseImportMappingRows,
+  mapImportColumn,
+  parseImportCheck,
+  parseWizFormSimple,
   looksLikeName,
   shiftDayKey,
   tashkentDayKey,
@@ -449,6 +453,45 @@ check("looksLikeName: ko'rish rad", !looksLikeName("Ko'rish"), true);
   check("hw model: text", model?.text === "Bajarildi", model?.text);
   check("hw model: status", model?.status === 6, model?.status);
   check("hw model: model bo'lmasa null", parseHomeworkDetailModel("<html></html>") === null);
+}
+
+// ==========================================================================
+// Ish reja import sehrgari parserlari (v2/journals/planning/import)
+// ==========================================================================
+{
+  const mapHtml = `<table><tr><td>Dars raqami</td><td><select name="select_0"><option value="-1" selected>Import qilish mumkin emas</option><option value="0">Dars raqami</option></select></td></tr><tr><td>Dars mavzusi</td><td><select name="select_1"><option value="-1">Import qilish mumkin emas</option><option value="1" selected>dars mavzusi</option></select></td></tr><tr><td>Uyga vazifa</td><td><select name="select_2"><option value="2" selected>Uy vazifasi</option></select></td></tr></table>`;
+  const rows = parseImportMappingRows(mapHtml);
+  check("ish reja mapping: 3 qator", rows.length === 3, rows.length);
+  check("ish reja mapping: header 1", rows[0]?.header === "Dars raqami", rows[0]);
+  check("ish reja mapping: select_N", rows[1]?.selectName === "select_1");
+  check("ish reja map: raqam→0", mapImportColumn("Dars raqami") === "0");
+  check("ish reja map: mavzu→1", mapImportColumn("dars mavzusi") === "1");
+  check("ish reja map: vazifa→2", mapImportColumn("Uyga vazifa") === "2");
+  check("ish reja map: noma'lum→-1", mapImportColumn("Boshqa") === "-1");
+}
+
+{
+  const redHtml = `<table><tr><td>1</td><td>Xato!</td><td>Z tovush</td><td>Import qilish mumkin emas</td><td>Dars soni fan bo'yicha umumiy dars soatlaridan oshib ketgan.</td></tr></table>`;
+  const red = parseImportCheck(redHtml);
+  check("ish reja check: qizil aniqlanadi", red.ok === false && red.redCount > 0, red);
+  check("ish reja check: qizil matn", /oshib ketgan/.test(red.redText ?? ""), red.redText);
+  const greenHtml = `<table><tr><td>1</td><td>1</td><td>Z tovush</td><td>Ko'chirish mumkin</td><td>Import qilish mumkin</td></tr></table>`;
+  const green = parseImportCheck(greenHtml);
+  check("ish reja check: yashil — ok", green.ok === true && green.greenCount > 0, green);
+  const empty = parseImportCheck("<html>bo'sh</html>");
+  check("ish reja check: noaniq — rad", empty.ok === false);
+}
+
+{
+  const wiz = parseWizFormSimple(
+    `<form action="/v2/journals/planning/import" method="post"><input name="__RequestVerificationToken" type="hidden" value="T"><input type="radio" name="firstRow" value="0" checked><input type="file" name="multifile1"><input type="submit" name="step1" value="Keyingi qadam"></form>`,
+  );
+  check("ish reja form: action", wiz?.action === "/v2/journals/planning/import");
+  check("ish reja form: fileField", wiz?.fileField === "multifile1");
+  check("ish reja form: token bor", wiz?.fields.some((f) => f.name === "__RequestVerificationToken") === true);
+  check("ish reja form: step1 submit", wiz?.fields.find((f) => f.name === "step1")?.value === "Keyingi qadam");
+  check("ish reja form: firstRow checked", wiz?.fields.find((f) => f.name === "firstRow")?.checked === true);
+  check("ish reja form: bo'sh html — null", parseWizFormSimple("<html></html>") === null);
 }
 
 console.log(`\nNatija: ${passed} o'tdi, ${failed} yiqildi`);
