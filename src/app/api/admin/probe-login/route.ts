@@ -779,7 +779,8 @@ export async function GET(req: NextRequest) {
           hw.perInputs = [...new Set((per.match(/<(?:input|select|option|textarea)[^>]*>/gi) ?? []).map((x) => pick(x, 150)))].slice(0, 30);
           const pi = per.search(/Maqom/i);
           hw.perCtx = pi >= 0 ? pick(per.slice(Math.max(0, pi - 400), pi + 900).replace(/\s+/g, " "), 1150) : "-";
-          hw.perAjax = [...new Set((per.match(/\$\.(?:post|get|ajax|getJSON)\([\s\S]{0,260}/g) ?? []))].map((x) => pick(x, 300))).slice(0, 6);
+          const perAjaxRaw = per.match(/\$\.(?:post|get|ajax|getJSON)\([\s\S]{0,260}/g) ?? [];
+          hw.perAjax = [...new Set(perAjaxRaw.map((x) => pick(x, 300)))].slice(0, 6);
         } catch (e) {
           hw.perErr = pick(String(e), 100);
         }
