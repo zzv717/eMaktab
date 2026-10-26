@@ -13,6 +13,8 @@ import {
   fetchTeacherGroups,
   loginEmaktab,
   pageGet,
+  parseHomeworkRows,
+  parseHomeworkSelects,
   probeLogin,
   tashkentDayKey,
 } from "@/lib/emaktab";
@@ -1123,6 +1125,57 @@ export async function GET(req: NextRequest) {
           // C: kichik body + toza headerlar (nazorat — yuqorida 200 edi)
           await run("C_smallbody_cleanH", `school=${school}&work=${work}&marktype=2&markcount=2`, cleanH);
           lines.push(`xss=${xss.slice(0, 8)} desc=${desc.slice(0, 20)}`);
+        } catch (e) {
+          lines.push(`err=${String(e).slice(0, 100)}`);
+        }
+        return new NextResponse(lines.join("\n"), {
+          headers: { "Content-Type": "text/plain; charset=utf-8" },
+        });
+      }
+      // ?hwlist=1&class=1-A&subj=Alifbe — filtrlangan ro'yxatni jonli tekshirish
+      // (ISO vs DD/MM/YYYY sana formatlari solishtiriladi).
+      if (sp.get("hwlist")) {
+        const lines: string[] = [];
+        const school = sp.get("school") ?? "1000006039552";
+        const wantClass = sp.get("class") ?? "1-A";
+        const wantSubj = sp.get("subj") ?? "Alifbe";
+        try {
+          const bare = await pageGet(
+            result.session.cookies,
+            `https://schools.emaktab.uz/v2/homework?school=${school}`,
+          );
+          const opts = parseHomeworkSelects(bare);
+          const norm = (t: string) => t.replace(/\s+/g, " ").trim().toLowerCase();
+          const findVal = (arr: Array<{ label: string; value: string }>, label: string) =>
+            arr.find((o) => norm(o.label) === norm(label))?.value ?? "";
+          const gid = findVal(opts.groups, wantClass);
+          const subj = findVal(opts.subjects, wantSubj);
+          const teacher = findVal(opts.teachers, result.session.fullName);
+          const year = findVal(opts.studyYears, "2026/2027") || "2026";
+          lines.push(`gid=${gid} subj=${subj} teacher=${teacher} year=${year}`);
+          const runQ = async (label: string, from: string, to: string) => {
+            const qs = new URLSearchParams({
+              school,
+              studyYear: String(year),
+              group: gid,
+              subject: subj,
+              datefrom: from,
+              dateto: to,
+            });
+            if (teacher) qs.set("teacher", teacher);
+            const html = await pageGet(
+              result.session.cookies,
+              `https://schools.emaktab.uz/v2/homework?${qs.toString()}`,
+            );
+            const rows = parseHomeworkRows(html);
+            const sample = rows
+              .slice(0, 3)
+              .map((r) => `${r.dateText}|${r.maqom}|${r.workId}`)
+              .join(" ;; ");
+            lines.push(`${label}=${rows.length} :: ${sample}`);
+          };
+          await runQ("iso", "2026-08-01", "2027-07-31");
+          await runQ("dmY", "01/08/2026", "31/07/2027");
         } catch (e) {
           lines.push(`err=${String(e).slice(0, 100)}`);
         }
