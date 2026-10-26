@@ -1478,6 +1478,9 @@ export async function GET(req: NextRequest) {
           out.push(
             `s2perjs=${esc(perIdx >= 0 ? p2.slice(Math.max(0, perIdx - 100), perIdx + 700).replace(/\s+/g, " ") : "-").slice(0, 450)}`,
           );
+          out.push(
+            `s2req=${esc((p2.match(/require\(\s*\[[^\]]{0,300}\]/g) ?? []).slice(0, 4).join(" | ").slice(0, 600))}`,
+          );
           out.push(`s2inputs=${f2.fields.map((x) => `${x.name}=${x.value}${x.checked ? "*" : ""}`).join(" ").slice(0, 180)}`);
           // 3-bosqichga POST — sozlamalar (sinf/fan/chorak tanlab, mapping default)
           const fd2 = new FormData();
@@ -1514,6 +1517,7 @@ export async function GET(req: NextRequest) {
           out.push(
             `s3head=${esc(txt(p3).match(/(?:Ma\u2018lumotlar manbasi|Sozlamalar|Ma\u2018lumotlarni tekshirish|Ko\u2018chirib o\u2018tkazish)[^.]{0,40}/i)?.[0] ?? "-")}`,
           );
+          out.push(`s3msg=${esc((txt(p3).match(/(?:kerak|tanlang|Xatol|xato|Fayl|davr)[^.]{0,110}/i) ?? ["-"])[0])}`);
           // 4-rasmdagi nazorat: yashil/qizil matnlar
           const bodyTxt = txt(p3);
           const xatol = (p3.match(/Xatol/gi) ?? []).length;
