@@ -1489,7 +1489,8 @@ async function handleMaqomCallback(
     const rows = res.rows.slice(0, 12).map((r) => [
       {
         text: `${r.maqomDone ? "🟢" : "🔴"} ${r.dateText} — ${r.description.slice(0, 24)}`.slice(0, 62),
-        callback_data: `maqomw:${classId}:${subjIdxS}:${r.workId}:${r.lessonId}`,
+        // Diqqat: callback_data ≤ 64 bayt — shuning uchun lessonId kiritilmaydi.
+        callback_data: `maqomw:${classId}:${subjIdxS}:${r.workId}`,
       },
     ]);
     rows.push([{ text: "🏠 Asosiy menyu", callback_data: "menu:home" }]);
@@ -1499,16 +1500,16 @@ async function handleMaqomCallback(
     );
     return;
   }
-  // maqomw:{classId}:{subjIdx}:{workId}:{lessonId} — zanjirni bajarish
-  if (/^maqomw:\d+:\d+:\d+:\d+$/.test(data)) {
-    const m = data.match(/^maqomw:(\d+):(\d+):(\d+):(\d+)$/)!;
-    const [, classId, subjIdxS, workId, lessonId] = m;
+  // maqomw:{classId}:{subjIdx}:{workId} — zanjirni bajarish
+  if (/^maqomw:\d+:\d+:\d+$/.test(data)) {
+    const m = data.match(/^maqomw:(\d+):(\d+):(\d+)$/)!;
+    const [, classId, subjIdxS, workId] = m;
     const cl = await classSubjects(user, classId);
     const subject = cl?.subjects?.[Number(subjIdxS)] ?? "";
     const progress = await startProgress(chatId, "Maqom belgilanmoqda");
     try {
       const result = await withSession(user, (s) =>
-        setHomeworkMaqom(s, { schoolId: s.active.schoolId, workId, lessonId }),
+        setHomeworkMaqom(s, { schoolId: s.active.schoolId, workId }),
       );
       if (result.ok) {
         await finishProgress(chatId, progress, "Maqom");
