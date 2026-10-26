@@ -984,7 +984,6 @@ export async function GET(req: NextRequest) {
               t[label] = `xato ${String(e).slice(0, 60)}`;
             }
           };
-          await probePost("t1_xssBody", saveUrl, `${baseBody}&xss=${xss}`);
           await probePost("t2_xssAction", saveUrl, `${baseBody}&xss=${xss}&a=ework`);
           await probePost("t3_empty", saveUrl, "");
           await probePost(
@@ -992,6 +991,7 @@ export async function GET(req: NextRequest) {
             `https://schools.emaktab.uz/v2/ajax?xss=${xss}&a=tse&sid=${school}`,
             `wid=${work}&pid=0&act=bogus`,
           );
+          await probePost("t1_xssBody", saveUrl, `${baseBody}&xss=${xss}`);
           try {
             const g = await fetch(saveUrl, {
               headers: { "User-Agent": ua, Cookie: ck, Accept: "text/html,*/*" },
