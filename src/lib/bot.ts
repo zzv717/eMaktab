@@ -34,7 +34,10 @@ import {
   loginEmaktab,
   scheduleFromDiaryDays,
   setLessonConducted,
-  uploadCtpFile,
+  fetchPlanImportOptions,
+  resolvePlanSubjectId,
+  importLessonPlan,
+  type PlanOption,
   fetchHomeworkRows,
   setHomeworkMaqom,
   sessionFromCookies,
@@ -1420,12 +1423,56 @@ async function handleConductCallback(chatId: number, user: BotUser, data: string
   }
   if (/^ctps:\d+:\d+$/.test(data)) {
     const [classId, subjIdxS] = data.slice(5).split(":");
+    const opts = await withSession(user, (s) => fetchPlanImportOptions(s, { groupId: classId })).catch(
+      () => ({ periods: [] as PlanOption[], subgroups: [] as PlanOption[] }),
+    );
+    const periods = opts.periods.length ? opts.periods : [{ value: "0", name: "Yil davomida" }];
+    const rows = periods.slice(0, 10).map((p, i) => [
+      {
+        text: `📆 ${p.name || (p.value === "0" ? "Yil davomida" : p.value)}`.slice(0, 60),
+        callback_data: `ctpq:${classId}:${subjIdxS}:${i}`,
+      },
+    ]);
+    rows.push([{ text: "🏠 Asosiy menyu", callback_data: "menu:home" }]);
+    await editTo(`📄 <b>Ish reja joylashtirish</b>\n\n3️⃣ O'quv davrini (chorak) tanlang:`, kb(rows));
+    return;
+  }
+  // ctpq:{classId}:{subjIdx}:{pIdx} — chorak tanlandi → guruh yoki fayl
+  if (/^ctpq:\d+:\d+:\d+$/.test(data)) {
+    const m = data.match(/^ctpq:(\d+):(\d+):(\d+)$/)!;
+    const [, classId, subjIdxS, pIdxS] = m;
+    const opts = await withSession(user, (s) => fetchPlanImportOptions(s, { groupId: classId })).catch(
+      () => ({ periods: [] as PlanOption[], subgroups: [] as PlanOption[] }),
+    );
+    const subgroups = opts.subgroups.length ? opts.subgroups : [];
+    if (subgroups.length > 1) {
+      const rows = subgroups.slice(0, 10).map((g, i) => [
+        { text: `👥 ${g.name}`.slice(0, 60), callback_data: `ctpsg:${classId}:${subjIdxS}:${pIdxS}:${i}` },
+      ]);
+      rows.push([{ text: "🏠 Asosiy menyu", callback_data: "menu:home" }]);
+      await editTo(`📄 <b>Ish reja joylashtirish</b>\n\n4️⃣ O'quv guruhini tanlang:`, kb(rows));
+      return;
+    }
     await db
       .update(botUsers)
-      .set({ state: `ctp_file:${classId}:${subjIdxS}`, updatedAt: new Date() })
+      .set({ state: `ctp_file:${classId}:${subjIdxS}:${pIdxS}:-1`, updatedAt: new Date() })
       .where(eq(botUsers.telegramId, user.telegramId));
     await editTo(
-      `📄 <b>Ish reja joylashtirish</b>\n\n3️⃣ Endi <b>.xls</b> yoki <b>.xlsx</b> faylni shu chatga yuboring.\n\n⏳ <i>Fayl kelganda bot "Iltimos kuting…" deb javob beradi.</i>`,
+      `📄 <b>Ish reja joylashtirish</b>\n\n5️⃣ Endi <b>.xls</b> yoki <b>.xlsx</b> faylni shu chatga yuboring.\n\n⏳ <i>Fayl kelganda bot "Iltimos kuting…" deb javob beradi.</i>`,
+      kb([[{ text: "❌ Bekor qilish", callback_data: "menu:cancel" }]]),
+    );
+    return;
+  }
+  // ctpsg:{classId}:{subjIdx}:{pIdx}:{sgIdx} — guruh tanlandi → fayl
+  if (/^ctpsg:\d+:\d+:\d+:\d+$/.test(data)) {
+    const m = data.match(/^ctpsg:(\d+):(\d+):(\d+):(\d+)$/)!;
+    const [, classId, subjIdxS, pIdxS, sgIdxS] = m;
+    await db
+      .update(botUsers)
+      .set({ state: `ctp_file:${classId}:${subjIdxS}:${pIdxS}:${sgIdxS}`, updatedAt: new Date() })
+      .where(eq(botUsers.telegramId, user.telegramId));
+    await editTo(
+      `📄 <b>Ish reja joylashtirish</b>\n\n5️⃣ Endi <b>.xls</b> yoki <b>.xlsx</b> faylni shu chatga yuboring.\n\n⏳ <i>Fayl kelganda bot "Iltimos kuting…" deb javob beradi.</i>`,
       kb([[{ text: "❌ Bekor qilish", callback_data: "menu:cancel" }]]),
     );
     return;
@@ -1544,54 +1591,76 @@ async function handleCtpDocument(chatId: number, user: BotUser, message: Telegra
   const doc = message.document!;
   const fileName = (doc.file_name ?? "ish-reja").toLowerCase();
   const st = user.state ?? "";
-  const m = st.match(/^ctp_file:(\d+):(\d+)$/);
+  const m = st.match(/^ctp_file:(\d+):(\d+):(\d+)(?::(-?\d+))?$/);
   if (!m) return;
   if (!fileName.endsWith(".xls") && !fileName.endsWith(".xlsx")) {
     await sendMessage(chatId, "⚠️ Faqat <b>.xls</b> yoki <b>.xlsx</b> fayl yuboring.", { replyMarkup: menuFor(user) });
     return;
   }
-  const [, classId, subjIdxS] = m;
+  const [, classId, subjIdxS, pIdxS, sgIdxS] = m;
   const cl = await classSubjects(user, classId);
   const subjectName = cl?.subjects?.[Number(subjIdxS)] ?? "";
+  const afterButtons = kb([
+    [{ text: "➡️ Davom etish", callback_data: `ctp:${classId}` }],
+    [{ text: "❌ Bekor qilish", callback_data: "menu:home" }],
+  ]);
   const progress = await startProgress(chatId, "Iltimos kuting…");
   try {
-    // ikkinchi bosqich xabari
     await sendMessage(chatId, "⏳ <b>Ish reja joylanmoqda…</b>");
     const file = await downloadTelegramFile(doc.file_id);
     if (!file) {
       await failProgress(chatId, progress, "Ish reja");
-      await sendMessage(chatId, `❌ <b>Ish reja muvaffaqiyatsiz joylashtirildi.</b>${adminFailNote("Telegram faylini yuklab bo'lmadi")}`, {
-        replyMarkup: menuFor(user),
-      });
-    } else {
-      const result = await withSession(user, (s) =>
-        uploadCtpFile(s, {
-          classId,
-          className: cl?.className ?? "",
-          subjectName,
-          fileName: doc.file_name ?? "ish-reja.xlsx",
-          bytes: file.bytes,
-        }),
+      await sendMessage(
+        chatId,
+        `❌ <b>Ish reja joylashtirilmadi.</b>\n\n⚠️ Telegram faylini yuklab bo'lmadi.\n<i>Iltimos, tekshirib qaytadan joylashtiring.</i>${adminFailNote("faylni yuklab bo'lmadi")}`,
+        { replyMarkup: afterButtons },
       );
-      if (result.ok) {
-        await finishProgress(chatId, progress, "Ish reja");
-        await sendMessage(
-          chatId,
-          `✅ <b>Ish reja muvaffaqiyatli joylandi!</b>\n\n🏫 ${escapeHtml(cl?.className ?? "")} — 📖 ${escapeHtml(subjectName)}\n📄 ${escapeHtml(doc.file_name ?? "")}`,
-          { replyMarkup: menuFor(user) },
-        );
-      } else {
-        await failProgress(chatId, progress, "Ish reja");
-        await sendMessage(chatId, `❌ <b>Ish reja muvaffaqiyatsiz joylashtirildi.</b>${adminFailNote(result.reason)}`, {
-          replyMarkup: menuFor(user),
-        });
-      }
+      return;
+    }
+    const tk = tashkentDayKey();
+    const year = Number(tk.slice(0, 4)) + (Number(tk.slice(5, 7)) >= 8 ? 0 : -1);
+    const result = await withSession(user, async (s) => {
+      const schoolId = s.active.schoolId;
+      const subjectId = await resolvePlanSubjectId(s, { schoolId, groupId: classId, subjectName });
+      if (!subjectId) return { ok: false, reason: `fan ID topilmadi (${subjectName})` };
+      const opts = await fetchPlanImportOptions(s, { groupId: classId });
+      const period = opts.periods[Number(pIdxS)]?.value ?? "0";
+      const sgIdx = Number(sgIdxS ?? "-1");
+      const subgroup = sgIdx >= 0 ? opts.subgroups[sgIdx]?.value ?? "" : "";
+      return importLessonPlan(s, {
+        schoolId,
+        groupId: classId,
+        subjectId,
+        subjectName,
+        period,
+        subgroup,
+        year,
+        fileName: doc.file_name ?? "ish-reja.xlsx",
+        bytes: file.bytes,
+      });
+    });
+    if (result.ok) {
+      await finishProgress(chatId, progress, "Ish reja");
+      await sendMessage(
+        chatId,
+        `✅ <b>Muvaffaqiyatli!</b>\n\n📄 Ish reja joylandi (ko'chirib o'tkazildi)\n🏫 ${escapeHtml(cl?.className ?? "")} — 📖 ${escapeHtml(subjectName)}\n📄 ${escapeHtml(doc.file_name ?? "")}\n\n❓ <b>Yangi fan uchun ish reja joylashtirasizmi?</b>`,
+        { replyMarkup: afterButtons },
+      );
+    } else {
+      await failProgress(chatId, progress, "Ish reja");
+      await sendMessage(
+        chatId,
+        `❌ <b>Ish reja joylashtirilmadi.</b>\n\n⚠️ ${escapeHtml(result.reason ?? "Noma'lum xato")}\n\n<i>Iltimos, tekshirib qaytadan joylashtiring.</i>${adminFailNote(result.reason)}`,
+        { replyMarkup: afterButtons },
+      );
     }
   } catch (error) {
     await failProgress(chatId, progress, "Ish reja");
-    await sendMessage(chatId, `❌ <b>Ish reja muvaffaqiyatsiz joylashtirildi.</b>${adminFailNote(String(error).slice(0, 120))}`, {
-      replyMarkup: menuFor(user),
-    });
+    await sendMessage(
+      chatId,
+      `❌ <b>Ish reja joylashtirilmadi.</b>\n\n<i>Iltimos, tekshirib qaytadan joylashtiring.</i>${adminFailNote(String(error).slice(0, 120))}`,
+      { replyMarkup: afterButtons },
+    );
   } finally {
     await db
       .update(botUsers)

@@ -2100,6 +2100,275 @@ export async function setHomeworkMaqom(
   }
 }
 
+// ==========================================================================
+// "Tayyor rejani import qilish" sehrgari — REAL shartnoma
+// (fileuploader.js + fileimporttuner.js dan olingan):
+//   GET  /v2/journals/planning/getperiods-cmd?group=    — choraklar
+//   GET  /v2/journals/planning/getsubjects-cmd?school&group= — fanlar (ID)
+//   GET  /v2/journals/planning/getsubgroups-cmd?group=  — guruhlar (1/2/Butun)
+//   1) GET  /v2/journals/planning/import?...            — sehrgar (1-bosqich)
+//   2) POST multipart (multifile1 + firstRow + step1)   — fayl yuklash
+//   3) POST sozlamalar (select_N mapping + step2)       — 2-bosqich
+//   4) Tekshirish jadvali (yashil/qizil nazorat)        — 3-bosqich
+//   5) POST step3="Import qilish"                       — ko'chirib o'tkazish
+// ==========================================================================
+
+const WIZ_BASE = "https://schools.emaktab.uz/v2/journals/planning";
+
+export interface PlanOption {
+  value: string;
+  name: string;
+}
+
+async function wizGetJson(cookies: Record<string, string>, path: string, q: Record<string, string>): Promise<PlanOption[]> {
+  const qs = new URLSearchParams(q).toString();
+  const r = await fetchFollowing(`${WIZ_BASE}/${path}?${qs}`, {}, cookies);
+  try {
+    const arr = JSON.parse(r.body) as Array<{ value?: unknown; name?: unknown }>;
+    return Array.isArray(arr)
+      ? arr.map((x) => ({ value: String(x.value ?? ""), name: String(x.name ?? "") }))
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Sehrgar yordamchi ma'lumotlari: choraklar, guruhlar. */
+export async function fetchPlanImportOptions(
+  s: EmaktabSession,
+  p: { groupId: string },
+): Promise<{ periods: PlanOption[]; subgroups: PlanOption[] }> {
+  const periods = await wizGetJson(s.cookies, "getperiods-cmd", { group: p.groupId });
+  const subgroups = await wizGetJson(s.cookies, "getsubgroups-cmd", { group: p.groupId });
+  return { periods, subgroups };
+}
+
+/** Fan nomidan sehrgar subjectId'sini topish (getsubjects-cmd). */
+export async function resolvePlanSubjectId(
+  s: EmaktabSession,
+  p: { schoolId: string; groupId: string; subjectName: string },
+): Promise<string> {
+  const subs = await wizGetJson(s.cookies, "getsubjects-cmd", { school: p.schoolId, group: p.groupId });
+  const norm = (t: string) => t.replace(/\s+/g, " ").trim().toLowerCase();
+  return subs.find((o) => norm(o.name) === norm(p.subjectName))?.value ?? "";
+}
+
+interface WizFormRow {
+  header: string;
+  selectName: string;
+}
+
+/** 2-bosqich: fayl ustunlari jadvali (header → select_N). */
+export function parseImportMappingRows(html: string): WizFormRow[] {
+  const rows: WizFormRow[] = [];
+  for (const m of html.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/gi)) {
+    const inner = m[1];
+    const sel = (inner.match(/<select[^>]*name="(select_\d+)"/i) ?? [])[1];
+    if (!sel) continue;
+    const tds = [...inner.matchAll(/<td[^>]*>([\s\S]*?)<\/td>/gi)];
+    const header = tds[0] ? htmlText2(tds[0][1]) : "";
+    rows.push({ header, selectName: sel });
+  }
+  return rows;
+}
+
+/** Ustun sarlavhasidan eMaktab maydonini tanlash: 0=raqam, 1=mavzu, 2=vazifa, -1=yo'q. */
+export function mapImportColumn(header: string): string {
+  const h = header.toLowerCase();
+  if (/raqam/.test(h)) return "0";
+  if (/mavzu|tema/.test(h)) return "1";
+  if (/vazif/.test(h)) return "2";
+  return "-1";
+}
+
+export interface PlanCheckResult {
+  ok: boolean;
+  /** Birinchi qizil xabar (bo'lsa). */
+  redText: string | null;
+  /** Yashil (tayyor/ko'chirish mumkin) belgilar soni. */
+  greenCount: number;
+  redCount: number;
+}
+
+/** 3-bosqich tekshirish jadvali: yashil/qizil nazorat (4-rasm). */
+export function parseImportCheck(html: string): PlanCheckResult {
+  const body = html
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&#39;/g, "'")
+    .replace(/&quot;/g, '"')
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/\s+/g, " ");
+  const msgMatch = body.match(/[^.!?]{0,140}(?:oshib ketgan|yaroqsiz|mavjud emas|kechiktirilgan)[^.!?]{0,80}/i);
+  const xatoMatch = body.match(/[^.!?]{0,100}Xato[^.!?]{0,80}/i);
+  const redText = msgMatch ? msgMatch[0].trim() : xatoMatch ? xatoMatch[0].trim() : "Noma'lum xato";
+  const redCount = (body.match(/Xato|mumkin emas|oshib ketgan/gi) ?? []).length;
+  const greenCount = (body.match(/ko'chirish mumkin|import qilishga[^.]{0,20}tayyor|import qilish mumkin(?! emas)/gi) ?? []).length;
+  return {
+    ok: redCount === 0 && greenCount > 0,
+    redText: redCount > 0 ? redText.slice(0, 180) : null,
+    greenCount,
+    redCount,
+  };
+}
+
+/**
+ * Ish reja (tayyor reja) importi — sehrgarning to'liq zanjiri.
+ * Xavfsizlik: faqat yashil (tayyor) belgilar bo'lsa import bajariladi.
+ */
+export async function importLessonPlan(
+  s: EmaktabSession,
+  p: {
+    schoolId: string;
+    groupId: string;
+    subjectId: string;
+    subjectName: string;
+    period: string;
+    subgroup: string;
+    year: number;
+    fileName: string;
+    bytes: Buffer;
+  },
+): Promise<WriteResult & { check?: PlanCheckResult }> {
+  try {
+    const u1 = `${WIZ_BASE}/import?period=0&subject=0&group=0&school=${p.schoolId}&year=${p.year}&teacher=0&subgroup=0`;
+    const p1 = await pageGet(s.cookies, u1);
+    const form = parseWizFormSimple(p1);
+    if (!form) return { ok: false, reason: "sehrgar 1-bosqich formasi topilmadi" };
+    // 1→2: fayl yuklash
+    const fd = new FormData();
+    for (const fl of form.fields) {
+      if (fl.name === form.fileField || fl.type === "file") continue;
+      if ((fl.type === "radio" || fl.type === "checkbox") && !fl.checked) continue;
+      if (fl.type === "submit") continue;
+      fd.append(fl.name, fl.value);
+    }
+    const firstRow = form.fields.find((x) => x.name === "firstRow" && x.checked);
+    if (firstRow) fd.append("firstRow", firstRow.value);
+    fd.append(
+      form.fileField,
+      new Blob([new Uint8Array(p.bytes)], {
+        type: p.fileName.toLowerCase().endsWith(".xlsx")
+          ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+          : "application/vnd.ms-excel",
+      }),
+      p.fileName,
+    );
+    const s1next = form.fields.find((x) => x.type === "submit" && /Keyingi/i.test(x.value));
+    if (s1next) fd.append(s1next.name, s1next.value);
+    const p2r = await fetchFollowing(form.action, { method: "POST", body: fd }, s.cookies);
+    const p2 = p2r.body;
+    const f2 = parseWizFormSimple(p2);
+    if (!f2) return { ok: false, reason: "sehrgar 2-bosqich formasi topilmadi" };
+    // 2→3: sozlamalar + ustun mapping
+    const fd2 = new FormData();
+    for (const fl of f2.fields) {
+      if ((fl.type === "radio" || fl.type === "checkbox") && !fl.checked) continue;
+      if (fl.type === "submit") continue;
+      fd2.append(fl.name, fl.value);
+    }
+    const mapping: Record<string, string> = {};
+    for (const row of parseImportMappingRows(p2)) {
+      mapping[row.selectName] = mapImportColumn(row.header);
+    }
+    for (const sl of f2.selects) {
+      let chosen = sl.options.find((o) => o.selected && o.value)?.value;
+      if (/^select_\d+$/i.test(sl.name)) {
+        chosen = mapping[sl.name] ?? chosen ?? "-1";
+      } else if (/year/i.test(sl.name)) {
+        chosen = String(p.year);
+      } else if (/group/i.test(sl.name)) {
+        chosen = p.groupId;
+      } else if (/subject/i.test(sl.name)) {
+        chosen = p.subjectId;
+      } else if (/subgroup/i.test(sl.name)) {
+        chosen = p.subgroup || chosen || "";
+      } else if (/period/i.test(sl.name)) {
+        chosen = p.period;
+      }
+      fd2.append(sl.name, chosen ?? "");
+    }
+    const s2next = f2.fields.find((x) => x.type === "submit" && /Keyingi/i.test(x.value));
+    if (s2next) fd2.append(s2next.name, s2next.value);
+    const p3r = await fetchFollowing(f2.action, { method: "POST", body: fd2 }, s.cookies);
+    const p3 = p3r.body;
+    const check = parseImportCheck(p3);
+    if (!check.ok) {
+      return {
+        ok: false,
+        reason: check.redText ?? "tekshiruvdan o'tmadi",
+        check,
+      };
+    }
+    // 4-qadam: import
+    const f3 = parseWizFormSimple(p3);
+    if (!f3) return { ok: false, reason: "import formasi topilmadi", check };
+    const fd3 = new FormData();
+    for (const fl of f3.fields) {
+      if ((fl.type === "radio" || fl.type === "checkbox") && !fl.checked) continue;
+      if (fl.type === "submit") continue;
+      fd3.append(fl.name, fl.value);
+    }
+    for (const sl of f3.selects) {
+      fd3.append(sl.name, sl.options.find((o) => o.selected)?.value ?? sl.options[0]?.value ?? "");
+    }
+    const impBtn = f3.fields.find((x) => x.type === "submit" && /Import/i.test(x.value));
+    if (impBtn) fd3.append(impBtn.name, impBtn.value);
+    const p4r = await fetchFollowing(f3.action, { method: "POST", body: fd3 }, s.cookies);
+    const p4txt = p4r.body.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ");
+    if (/xato|error/i.test(p4txt) && !/muvaffaq|tayyor|ko'chirildi/i.test(p4txt)) {
+      return { ok: false, reason: "import xatosi", check };
+    }
+    return { ok: true, reason: null, check };
+  } catch (error) {
+    return { ok: false, reason: String(error).slice(0, 140) };
+  }
+}
+
+/** Sehrgar formasi (oddiy parser — input/select/submit). */
+export function parseWizFormSimple(html: string): {
+  action: string;
+  method: string;
+  fields: Array<{ name: string; value: string; type: string; checked: boolean }>;
+  selects: Array<{ name: string; options: Array<{ value: string; label: string; selected: boolean }> }>;
+  fileField: string;
+} | null {
+  for (const fm of html.matchAll(/<form([^>]*)>([\s\S]*?)<\/form>/gi)) {
+    const attrs = fm[1];
+    const inner = fm[2];
+    const hasFile = /type="file"/i.test(inner);
+    const hasNext = /Keyingi|name="step3"|Import qilish/i.test(inner);
+    if (!hasFile && !hasNext) continue;
+    const action = (attrs.match(/action="([^"]*)"/i) ?? [])[1]?.replace(/&amp;/g, "&") ?? "";
+    const method = (attrs.match(/method="([^"]*)"/i) ?? [])[1] ?? "get";
+    const fields: Array<{ name: string; value: string; type: string; checked: boolean }> = [];
+    for (const im of inner.matchAll(/<input([^>]*)>/gi)) {
+      const a = im[1];
+      const name = (a.match(/name="([^"]*)"/i) ?? [])[1];
+      if (!name) continue;
+      fields.push({
+        name,
+        value: (a.match(/value="([^"]*)"/i) ?? [])[1] ?? "",
+        type: (a.match(/type="([^"]*)"/i) ?? [])[1] ?? "text",
+        checked: /\bchecked\b/i.test(a),
+      });
+    }
+    const selects = [...inner.matchAll(/<select([^>]*)>([\s\S]*?)<\/select>/gi)].map((sm) => ({
+      name: (sm[1].match(/name="([^"]*)"/i) ?? [])[1] ?? "",
+      options: [...sm[2].matchAll(/<option([^>]*)>([\s\S]*?)<\/option>/gi)].map((om) => ({
+        value: (om[1].match(/value="([^"]*)"/i) ?? [])[1] ?? "",
+        label: htmlText2(om[2]),
+        selected: /\bselected\b/i.test(om[1]),
+      })),
+    }));
+    const fileField =
+      ((inner.match(/<input[^>]*type="file"[^>]*>/i) ?? [])[0] ?? "").match(/name="([^"]*)"/i)?.[1] ?? "";
+    return { action, method, fields, selects, fileField };
+  }
+  return null;
+}
+
 function dayKeyFromDiaryDate(value: string | number | undefined): string {
   if (value === undefined || value === null || value === "") return tashkentDayKey();
   const n = Number(value);
