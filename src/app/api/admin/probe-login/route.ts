@@ -1183,6 +1183,40 @@ export async function GET(req: NextRequest) {
           headers: { "Content-Type": "text/plain; charset=utf-8" },
         });
       }
+      // ?jgrep=1&k=a|b|c — journal.js'ni serverda grep (kontekstlar bilan).
+      if (sp.get("jgrep")) {
+        const ks =
+          sp.get("k") ??
+          "editLessonHeld|importKtp|/ctp/|getLastCtpCourse|updateMarkComment|editMark|planningPeriodId|planningPeriods";
+        const out: string[] = [];
+        try {
+          const js = await fetch("https://static.emaktab.uz/client/journal.js").then((r) => r.text());
+          out.push(`len=${js.length}`);
+          for (const kw of ks.split("|").slice(0, 10)) {
+            let idx = 0;
+            let found = 0;
+            while (found < 3) {
+              const i = js.indexOf(kw, idx);
+              if (i < 0) break;
+              const ctx = js
+                .slice(Math.max(0, i - 120), i + 220)
+                .replace(/</g, "\u2039")
+                .replace(/>/g, "\u203a")
+                .replace(/[\x00-\x1F]/g, " ")
+                .replace(/\s+/g, " ");
+              out.push(`[${kw}#${found}] ${ctx}`);
+              found++;
+              idx = i + kw.length;
+            }
+            if (!found) out.push(`[${kw}]-topilmadi`);
+          }
+        } catch (e) {
+          out.push(`err=${String(e).slice(0, 100)}`);
+        }
+        return new NextResponse(out.join("\n").slice(0, 5500), {
+          headers: { "Content-Type": "text/plain; charset=utf-8" },
+        });
+      }
     } else if (result.status === "captcha_required") {
       out.captcha = true;
       out.captchaUrl = result.captchaUrl ? "bor" : "yo'q";
