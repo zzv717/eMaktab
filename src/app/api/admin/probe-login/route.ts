@@ -1013,6 +1013,52 @@ export async function GET(req: NextRequest) {
           { headers: { "Content-Type": "text/plain; charset=utf-8" } },
         );
       }
+      // ?hwwhy=1 — 403 sahifasining matni (sababi) + cookie ro'yxati.
+      if (sp.get("hwwhy")) {
+        const lines: string[] = [];
+        const school = sp.get("school") ?? "1000006039552";
+        const work = sp.get("work") ?? "2534034219628613169";
+        try {
+          const edit = await pageGet(
+            result.session.cookies,
+            `https://schools.emaktab.uz/v2/homework?school=${school}&work=${work}&view=Edit`,
+          );
+          lines.push(`cookies=${Object.keys(result.session.cookies).join(",")}`);
+          const saveUrl = (
+            (edit.match(/'(https?:[^']*\/v2\/ajax\?[^']*)'/) ?? [])[1] ?? ""
+          ).replace(/\\\//g, "/");
+          const ck = Object.entries(result.session.cookies)
+            .map(([k, v]) => `${k}=${v}`)
+            .join("; ");
+          const r = await fetch(saveUrl, {
+            method: "POST",
+            headers: {
+              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+              Cookie: ck,
+              Accept: "application/json, text/javascript, */*; q=0.01",
+              "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+              "X-Requested-With": "XMLHttpRequest",
+              Origin: "https://schools.emaktab.uz",
+              Referer: `https://schools.emaktab.uz/v2/homework?school=${school}&work=${work}&view=Edit`,
+            },
+            body: "school=" + school + "&work=" + work + "&marktype=2&markcount=2",
+            redirect: "manual",
+          });
+          const raw = await r.text();
+          const txt = raw
+            .replace(/<[^>]*>/g, " ")
+            .replace(/\s+/g, " ")
+            .trim()
+            .slice(0, 300);
+          lines.push(`status=${r.status} n=${raw.length}`);
+          lines.push(`page=${txt}`);
+        } catch (e) {
+          lines.push(`err=${String(e).slice(0, 100)}`);
+        }
+        return new NextResponse(lines.join("\n"), {
+          headers: { "Content-Type": "text/plain; charset=utf-8" },
+        });
+      }
     } else if (result.status === "captcha_required") {
       out.captcha = true;
       out.captchaUrl = result.captchaUrl ? "bor" : "yo'q";
