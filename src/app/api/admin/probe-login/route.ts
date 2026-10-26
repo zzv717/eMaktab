@@ -921,6 +921,87 @@ export async function GET(req: NextRequest) {
         }
         return NextResponse.json({ ...out, hwrun: steps });
       }
+      // ?hwtest=1 — Saqlash 403 diagnostikasi: javob headerlari + variantlar.
+      if (sp.get("hwtest")) {
+        const t: Record<string, unknown> = {};
+        const school = sp.get("school") ?? "1000006039552";
+        const work = sp.get("work") ?? "2534034219628613169";
+        const ck = Object.entries(result.session.cookies)
+          .map(([k, v]) => `${k}=${v}`)
+          .join("; ");
+        const ua =
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+        try {
+          const edit = await pageGet(
+            result.session.cookies,
+            `https://schools.emaktab.uz/v2/homework?school=${school}&work=${work}&view=Edit`,
+          );
+          const saveUrl =
+            ((edit.match(/'(https?:[^']*\/v2\/ajax\?[^']*)'/) ?? [])[1] ?? "").replace(/\\\//g, "/");
+          const xss = (saveUrl.match(/[?&]xss=([0-9a-f]{16,})/i) ?? [])[1] ?? "";
+          const desc = (edit.match(/<textarea[^>]*id="description"[^>]*>([\s\S]*?)<\/textarea>/) ?? [])[1] ?? "";
+          const baseBody = new URLSearchParams({
+            school,
+            work,
+            description: desc,
+            timetoexecute: "",
+            attachRequired: "false",
+            marktype: "2",
+            markcount: "2",
+            withCheck: "true",
+            journalVisible: "false",
+            linkUrl: "",
+            shouldDeleteLink: "false",
+          }).toString();
+          t.saveUrl = saveUrl.slice(0, 200);
+          const probePost = async (label: string, url: string, body: string, extraH: Record<string, string> = {}) => {
+            try {
+              const r = await fetch(url, {
+                method: "POST",
+                headers: {
+                  "User-Agent": ua,
+                  Cookie: ck,
+                  Accept: "application/json, text/javascript, */*; q=0.01",
+                  "Accept-Language": "uz-UZ,uz;q=0.9,en;q=0.8,ru;q=0.7",
+                  "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+                  "X-Requested-With": "XMLHttpRequest",
+                  Origin: "https://schools.emaktab.uz",
+                  Referer: `https://schools.emaktab.uz/v2/homework?school=${school}&work=${work}&view=Edit`,
+                  ...extraH,
+                },
+                body,
+                redirect: "manual",
+              });
+              const bodyText = (await r.text()).replace(/\s+/g, " ").slice(0, 220);
+              const srv = r.headers.get("server") ?? "";
+              const ray = r.headers.get("cf-ray") ?? "";
+              t[label] = `${r.status} srv=${srv} ray=${ray ? "bor" : "yo'q"} :: ${bodyText}`;
+            } catch (e) {
+              t[label] = `xato ${String(e).slice(0, 60)}`;
+            }
+          };
+          await probePost("t1_xssBody", saveUrl, `${baseBody}&xss=${xss}`);
+          await probePost("t2_xssAction", saveUrl, `${baseBody}&xss=${xss}&a=ework`);
+          await probePost("t3_empty", saveUrl, "");
+          await probePost(
+            "t4_tse",
+            `https://schools.emaktab.uz/v2/ajax?xss=${xss}&a=tse&sid=${school}`,
+            `wid=${work}&pid=0&act=bogus`,
+          );
+          try {
+            const g = await fetch(saveUrl, {
+              headers: { "User-Agent": ua, Cookie: ck, Accept: "text/html,*/*" },
+              redirect: "manual",
+            });
+            t.t5_get = `${g.status} :: ${(await g.text()).replace(/\s+/g, " ").slice(0, 120)}`;
+          } catch (e) {
+            t.t5_get = `xato ${String(e).slice(0, 60)}`;
+          }
+        } catch (e) {
+          t.err = String(e).slice(0, 120);
+        }
+        return NextResponse.json({ ...out, hwtest: t });
+      }
     } else if (result.status === "captcha_required") {
       out.captcha = true;
       out.captchaUrl = result.captchaUrl ? "bor" : "yo'q";
