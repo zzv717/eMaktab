@@ -240,6 +240,8 @@ export function formatAccount(user: {
   groupName?: string | null;
   connectedAt?: Date | null;
   childrenJson?: string | null;
+  plan?: string | null;
+  planUntil?: Date | null;
 }): string {
   const roleNames: Record<string, string> = {
     student: "O'quvchi 🎒",
@@ -266,6 +268,21 @@ export function formatAccount(user: {
   ];
   if (childrenCount > 1) {
     lines.push(`👶 Bog'langan farzandlar: <b>${childrenCount}</b> ta`);
+  }
+  {
+    const active =
+      user.plan === "pro" && (!user.planUntil || user.planUntil.getTime() > Date.now());
+    if (!active) {
+      lines.push(`💎 Tarif: <b>🆓 Bepul</b>`);
+    } else if (!user.planUntil) {
+      lines.push(`💎 Tarif: <b>Pro — cheksiz</b>`);
+    } else {
+      const d = user.planUntil;
+      const p2 = (n: number) => String(n).padStart(2, "0");
+      lines.push(
+        `💎 Tarif: <b>Pro</b> — ${p2(d.getDate())}.${p2(d.getMonth() + 1)}.${d.getFullYear()} gacha`,
+      );
+    }
   }
   if (user.connectedAt) {
     lines.push(`📅 Ulangan sana: <b>${escapeHtml(formatDate(user.connectedAt.toISOString().slice(0, 10)))}</b>`);

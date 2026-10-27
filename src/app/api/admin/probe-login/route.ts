@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { memberAccounts } from "@/db/schema";
+import { botUsers, memberAccounts } from "@/db/schema";
 import { decryptSecret } from "@/lib/crypto";
 import {
   extractTeacherJournals,
@@ -228,6 +228,32 @@ export async function GET(req: NextRequest) {
           }
         } catch (e) {
           (out as Record<string, unknown>).dshift = "xato " + String(e).slice(0, 40);
+        }
+        return NextResponse.json(out);
+      }
+
+      // ?ustat=1 — admin statistikasi jonli tekshiruvi (foydalanuvchilar, plan, ustunlar).
+      if (sp.get("ustat")) {
+        const ascii3 = (s: string) => s.replace(/[^\x20-\x7E]/g, ".").replace(/['"`]/g, "~");
+        try {
+          const rows = await db.select().from(botUsers).limit(12);
+          (out as Record<string, unknown>).cnt = String(rows.length);
+          (out as Record<string, unknown>).usr = rows
+            .map(
+              (r) =>
+                `${r.id}:${ascii3(r.username || r.firstName || "?")}:${r.role || "-"}:${r.emaktabLogin ? "C" : "-"}:${r.plan}`,
+            )
+            .join(" | ")
+            .slice(0, 330);
+          const cols = await db.execute(
+            sql`select column_name from information_schema.columns where table_name = 'bot_users' order by ordinal_position`,
+          );
+          const names = cols.rows.map((r) => String((r as { column_name: unknown }).column_name));
+          (out as Record<string, unknown>).cols = names
+            .filter((n) => ["plan", "plan_until", "last_seen_at", "temp_text"].includes(n))
+            .join(",") || "ESKI";
+        } catch (e) {
+          (out as Record<string, unknown>).ustat = "xato " + String(e).slice(0, 60);
         }
         return NextResponse.json(out);
       }

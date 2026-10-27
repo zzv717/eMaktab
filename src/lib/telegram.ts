@@ -162,6 +162,7 @@ export const MENU_TEXT = {
   today: "📅 Bugungi darslar",
   tomorrow: "📆 Ertangi darslar",
   week: "📆 Haftalik jadval",
+  admin: "🛠 Admin panel",
   conduct: "✅ Darsni o'tildi qilish",
   ctp: "📄 Ish reja joylashtirish",
   maqom: "📝 Maqom berish",
@@ -178,7 +179,7 @@ export const MENU_TEXT = {
 } as const;
 
 /** O'qituvchi menyusi — reply keyboard (sinf rahbariga qarab). */
-export function teacherReplyKeyboard(isClassTeacher: boolean) {
+export function teacherReplyKeyboard(isClassTeacher: boolean, admin = false) {
   const rows: ReplyButton[][] = [
     [{ text: MENU_TEXT.today }, { text: MENU_TEXT.tomorrow }],
     [{ text: MENU_TEXT.week }, { text: MENU_TEXT.conduct }],
@@ -192,17 +193,20 @@ export function teacherReplyKeyboard(isClassTeacher: boolean) {
     rows.push([{ text: MENU_TEXT.news }, { text: MENU_TEXT.profile }]);
     rows.push([{ text: MENU_TEXT.settings }]);
   }
+  if (admin) rows.push([{ text: MENU_TEXT.admin }]);
   rows.push([{ text: MENU_TEXT.guide }]);
   return replyKb(rows);
 }
 
 /** O'quvchi/ota-ona menyusi — reply keyboard. */
-export function mainReplyKeyboard() {
-  return replyKb([
+export function mainReplyKeyboard(admin = false) {
+  const rows: ReplyButton[][] = [
     [{ text: MENU_TEXT.grades }, { text: MENU_TEXT.schedule }],
     [{ text: MENU_TEXT.news }, { text: MENU_TEXT.settings }],
-    [{ text: MENU_TEXT.guide }],
-  ]);
+  ];
+  if (admin) rows.push([{ text: MENU_TEXT.admin }]);
+  rows.push([{ text: MENU_TEXT.guide }]);
+  return replyKb(rows);
 }
 
 export type ReplyMarkup = Record<string, unknown>;
@@ -210,7 +214,12 @@ export type ReplyMarkup = Record<string, unknown>;
 export async function sendMessage(
   chatId: number,
   text: string,
-  options?: { replyMarkup?: ReplyMarkup | ReturnType<typeof kb>; disablePreview?: boolean },
+  options?: {
+    replyMarkup?: ReplyMarkup | ReturnType<typeof kb>;
+    disablePreview?: boolean;
+    /** true — oqim kuzatuvi YO'Q (masalan e'lonlar: keyinchalik avto-o'chirilmaydi). */
+    untracked?: boolean;
+  },
 ): Promise<{ message_id?: number } | undefined> {
   const result = await callTelegram<{ message_id?: number }>("sendMessage", {
     chat_id: chatId,
@@ -219,7 +228,7 @@ export async function sendMessage(
     disable_web_page_preview: options?.disablePreview ?? true,
     reply_markup: options?.replyMarkup,
   });
-  if (result?.message_id !== undefined) {
+  if (result?.message_id !== undefined && !options?.untracked) {
     await trackMessage(chatId, result.message_id);
   }
   return result;
@@ -413,6 +422,87 @@ export function teacherDayKeyboard() {
       { text: "📰 Yangiliklar", callback_data: "menu:news" },
     ],
     [{ text: "🏠 Asosiy menyu", callback_data: "menu:home" }],
+  ]);
+}
+
+// ==========================================
+// 🛠 Admin panel klaviaturalari (faqat admin ko'radi)
+// ==========================================
+
+export function adminHomeKeyboard() {
+  return kb([
+    [{ text: "👥 Foydalanuvchilar", callback_data: "adm:u:0" }],
+    [
+      { text: "📢 Xabar yuborish", callback_data: "adm:bc" },
+      { text: "🚨 Jurnal", callback_data: "adm:log" },
+    ],
+    [{ text: "🔄 Yangilash", callback_data: "adm:home" }],
+    [{ text: "🏠 Asosiy sahifa", callback_data: "menu:home" }],
+  ]);
+}
+
+export function adminUsersKeyboard(
+  rows: Array<{ id: number; label: string }>,
+  page: number,
+  pages: number,
+) {
+  const kbRows: Array<Array<{ text: string; callback_data: string }>> = rows.map((r) => [
+    { text: r.label, callback_data: `adm:d:${r.id}` },
+  ]);
+  const nav: Array<{ text: string; callback_data: string }> = [];
+  if (page > 0) nav.push({ text: "⬅️", callback_data: `adm:u:${page - 1}` });
+  nav.push({ text: `${page + 1}/${Math.max(pages, 1)}`, callback_data: "adm:noop" });
+  if (page < pages - 1) nav.push({ text: "➡️", callback_data: `adm:u:${page + 1}` });
+  kbRows.push(nav);
+  kbRows.push([
+    { text: "⬅️ Admin panel", callback_data: "adm:home" },
+    { text: "🔄 Yangilash", callback_data: `adm:u:${page}` },
+  ]);
+  return kb(kbRows);
+}
+
+export function adminUserKeyboard(id: number, isPro: boolean) {
+  return kb([
+    isPro
+      ? [{ text: "💎 Pro olib tashlash", callback_data: `adm:pn:${id}` }]
+      : [{ text: "💎 Pro berish", callback_data: `adm:pr:${id}` }],
+    [
+      { text: "⬅️ Ro'yxat", callback_data: "adm:u:0" },
+      { text: "🔄 Yangilash", callback_data: `adm:d:${id}` },
+    ],
+    [{ text: "🛠 Admin panel", callback_data: "adm:home" }],
+  ]);
+}
+
+export function adminProPeriodKeyboard(id: number) {
+  return kb([
+    [
+      { text: "1 oy", callback_data: `adm:p:${id}:1m` },
+      { text: "3 oy", callback_data: `adm:p:${id}:3m` },
+    ],
+    [
+      { text: "1 yil", callback_data: `adm:p:${id}:1y` },
+      { text: "♾ Cheksiz", callback_data: `adm:p:${id}:inf` },
+    ],
+    [{ text: "⬅️ Orqaga", callback_data: `adm:d:${id}` }],
+  ]);
+}
+
+export function adminBroadcastKeyboard() {
+  return kb([
+    [{ text: "📤 Barchaga", callback_data: "adm:bca:all" }],
+    [{ text: "✅ Faqat ulanganlarga", callback_data: "adm:bca:conn" }],
+    [{ text: "💎 Faqat Pro", callback_data: "adm:bca:pro" }],
+    [{ text: "⬅️ Admin panel", callback_data: "adm:home" }],
+  ]);
+}
+
+export function adminBroadcastConfirmKeyboard() {
+  return kb([
+    [
+      { text: "✅ Yuborish", callback_data: "adm:bcs" },
+      { text: "❌ Bekor qilish", callback_data: "adm:bcx" },
+    ],
   ]);
 }
 
