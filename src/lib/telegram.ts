@@ -160,6 +160,7 @@ export function replyKb(rows: ReplyButton[][], placeholder = "Xabar yozing...") 
 /** Menyu tugmalari matnlari — bot.ts shu matnlarni qabul qiladi. */
 export const MENU_TEXT = {
   today: "📅 Bugungi darslar",
+  tomorrow: "📆 Ertangi darslar",
   week: "📆 Haftalik jadval",
   conduct: "✅ Darsni o'tildi qilish",
   ctp: "📄 Ish reja joylashtirish",
@@ -179,9 +180,9 @@ export const MENU_TEXT = {
 /** O'qituvchi menyusi — reply keyboard (sinf rahbariga qarab). */
 export function teacherReplyKeyboard(isClassTeacher: boolean) {
   const rows: ReplyButton[][] = [
-    [{ text: MENU_TEXT.today }, { text: MENU_TEXT.week }],
-    [{ text: MENU_TEXT.conduct }, { text: MENU_TEXT.ctp }],
-    [{ text: MENU_TEXT.maqom }],
+    [{ text: MENU_TEXT.today }, { text: MENU_TEXT.tomorrow }],
+    [{ text: MENU_TEXT.week }, { text: MENU_TEXT.conduct }],
+    [{ text: MENU_TEXT.ctp }, { text: MENU_TEXT.maqom }],
   ];
   if (isClassTeacher) {
     rows.push([{ text: MENU_TEXT.myClass }, { text: MENU_TEXT.parents }]);
@@ -365,7 +366,12 @@ export function teacherMenuKeyboard(connected: boolean, isClassTeacher: boolean)
     ],
   ];
   if (isClassTeacher) {
-    rows.push([{ text: "🏫 Sinf kabineti", callback_data: "cab:open" }]);
+    rows.push([
+      { text: "📆 Haftalik jadval", callback_data: "t:week" },
+      { text: "🏫 Sinf kabineti", callback_data: "cab:open" },
+    ]);
+  } else {
+    rows.push([{ text: "📆 Haftalik jadval", callback_data: "t:week" }]);
   }
   rows.push([
     { text: "📰 Yangiliklar", callback_data: "menu:news" },
@@ -397,10 +403,13 @@ export function teacherDayKeyboard() {
   return kb([
     [
       { text: "📅 Bugun", callback_data: "t:today" },
-      { text: "📆 Haftalik jadval", callback_data: "t:week" },
+      { text: "📆 Ertangi", callback_data: "t:tomorrow" },
     ],
     [
+      { text: "📆 Haftalik jadval", callback_data: "t:week" },
       { text: "🔄 Yangilash", callback_data: "t:today" },
+    ],
+    [
       { text: "📰 Yangiliklar", callback_data: "menu:news" },
     ],
     [{ text: "🏠 Asosiy menyu", callback_data: "menu:home" }],

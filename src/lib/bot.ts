@@ -30,6 +30,7 @@ import {
   fetchTeacherGroups,
   fetchDiaryDays,
   dedupeShiftLessons,
+  pickPersonForClass,
   lessonMatchesTeacherLoad,
   loginEmaktab,
   scheduleFromDiaryDays,
@@ -1043,6 +1044,11 @@ async function handleMessage(message: TelegramMessage) {
       else await sendDayView(chatId, user, 0);
       return;
     }
+    if (text === MENU_TEXT.tomorrow) {
+      if (isTeacher(user)) await sendTeacherDayView(chatId, user, 1);
+      else await sendDayView(chatId, user, 1);
+      return;
+    }
     if (text === "/news" || text === MENU_TEXT.news) {
       await sendNewsView(chatId, user);
       return;
@@ -1755,6 +1761,7 @@ async function buildTeacherWeek(user: BotUser, fromDay: string, toDay: string): 
   }
 
   const merged = new Map<string, DaySchedule>();
+  const seenLessons = new Set<string>();
   const missing: string[] = [];
   const globalSubjects = [...new Set(classes.flatMap((c) => c.subjects ?? []))];
 
@@ -1778,7 +1785,11 @@ async function buildTeacherWeek(user: BotUser, fromDay: string, toDay: string): 
         const password = decryptSecret(acc.emaktabPasswordEnc!);
         const res = await loginEmaktab(acc.emaktabLogin!, password);
         if (res.status !== "ok") continue;
-        const diaryDays = await fetchDiaryDays(res.session, fromDay, toDay);
+        // Ota-ona hisobida FARZANDLAR aralashib ketmasligi kerak:
+        // aynan shu sinfga tegishli personning diary'si olinadi.
+        const person = pickPersonForClass(res.session.persons, cl.classId, cl.className);
+        if (!person) continue;
+        const diaryDays = await fetchDiaryDays({ ...res.session, active: person }, fromDay, toDay);
         const sched = scheduleFromDiaryDays(diaryDays);
         if (sched.length === 0) {
           gotData = true; // kirildi, lekin kunlar bo'sh
@@ -1802,7 +1813,8 @@ async function buildTeacherWeek(user: BotUser, fromDay: string, toDay: string): 
     }
     if (!gotData) missing.push(cl.className);
 
-    // Saralash: avval smena aralashuvi + duplikatlar tozalanadi, keyin fan/ism mosligi.
+    // Saralash: takrorlar tozalanadi (smena ustunligi YO'Q — tushdan keyingi ham och),
+    // keyin fan/ism mosligi — faqat o'qituvchining O'Z darslari qoladi.
     const rawDays = [...perDate.entries()].map(([date, slot]) => ({
       date,
       weekday: slot.weekday,
@@ -1817,6 +1829,10 @@ async function buildTeacherWeek(user: BotUser, fromDay: string, toDay: string): 
         const unverified = !ok && subjects.length === 0 && !anyTeacherInfo && (l.teacher ?? "").trim().length === 0;
         if (!ok && !unverified) continue;
         kept++;
+        // Bir xil sinf `classes`da ikki marta kelsa — dars takrorlanmasin.
+        const lessonKey = `${day.date}|${l.number}|${l.subject}|${l.startTime ?? ""}|${cl.className}`;
+        if (seenLessons.has(lessonKey)) continue;
+        seenLessons.add(lessonKey);
         const existing = merged.get(day.date);
         if (existing) {
           existing.lessons.push({ ...l, groupName: cl.className });
@@ -1833,7 +1849,10 @@ async function buildTeacherWeek(user: BotUser, fromDay: string, toDay: string): 
   }
 
   const days = [...merged.values()].sort((a, b) => a.date.localeCompare(b.date));
-  for (const d of days) d.lessons.sort((a, b) => (a.number || 99) - (b.number || 99));
+  const byTime = (l: Lesson) => l.startTime ?? "z";
+  for (const d of days) {
+    d.lessons.sort((a, b) => byTime(a).localeCompare(byTime(b)) || (a.number || 99) - (b.number || 99));
+  }
   return { days, missing };
 }
 
@@ -1915,7 +1934,7 @@ async function sendGuideView(chatId: number, user: BotUser) {
       chatId,
       `📖 <b>Yoriqnoma — O'qituvchi uchun</b>\n\n` +
         `<b>📅 Bugungi / 📆 Ertangi / 📆 Haftalik jadval</b>\n` +
-        `Darslaringiz ro'yxati. Haftalik jadvalda faqat <b>kunduzgi smena</b> ko'rsatiladi va takrorlanuvchi darslar olib tashlanadi.\n\n` +
+        `Ushbu bo'limda darslaringiz ro'yxatini ko'rishingiz mumkin.\n\n` +
         `<b>✅ Darsni o'tildi qilish</b>\n` +
         `Sinf → fan → sana → darsni tanlab tasdiqlaysiz — dars eMaktabda <b>"o'tildi"</b> deb belgilanadi.\n\n` +
         `<b>📝 Maqom berish</b>\n` +
@@ -2371,7 +2390,8 @@ async function handleCallback(cb: TelegramCallbackQuery) {
     return;
   }
   if (data === "sched:week") {
-    await sendWeekView(chatId, fresh);
+    if (isTeacher(fresh)) await sendTeacherWeekView(chatId, fresh);
+    else await sendWeekView(chatId, fresh);
     return;
   }
   if (data === "sched:hw") {

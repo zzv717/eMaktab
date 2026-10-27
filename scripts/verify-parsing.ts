@@ -29,6 +29,7 @@ import {
   mergeTeacherGroups,
   lessonMatchesTeacherLoad,
   dedupeShiftLessons,
+  pickPersonForClass,
   parseHomeworkRows,
   parseHomeworkSelects,
   parseHomeworkEditForm,
@@ -363,30 +364,61 @@ check("looksLikeName: ko'rish rad", !looksLikeName("Ko'rish"), true);
 }
 
 {
-  // smena aralashuvi + duplikatlar (jonli rasm holati: kunduzgi + tushdan keyingi smena)
+  // takrorlar + smena — tushdan keyingi smena ham TO'G'RI (12:55 qoladi, 08:30 emas)
   const mk = (number: number, subject: string, startTime: string) =>
     ({ number, subject, startTime }) as never;
-  const mixed = [
+
+  // Tushdan keyingi sinf jonli holati (1-A: 12:55–16:15) + noto'g'ri ertalab soatlar
+  const afternoonDay = [
     mk(1, "Kelajak soati", "12:55"),
     mk(1, "Kelajak soati", "08:30"),
     mk(2, "Matematika", "13:45"),
     mk(2, "Matematika", "09:20"),
-    mk(3, "Jismoniy tarbiya", "10:10"),
+    mk(3, "Ona tili", "14:35"),
     mk(4, "Jismoniy tarbiya", "15:25"),
+    mk(4, "Jismoniy tarbiya", "10:10"),
   ];
-  const clean = dedupeShiftLessons(mixed);
-  check("smena: 3 ta dars qoladi (duplikatlar yo'q)", clean.length === 3, clean);
+  const clean = dedupeShiftLessons(afternoonDay);
+  check("smena: tushdan keyingi kunda 4 ta dars qoladi", clean.length === 4, clean);
   check(
-    "smena: faqat kunduzgi soatlar (08:30, 09:20, 10:10)",
-    clean.map((l) => l.startTime).join(",") === "08:30,09:20,10:10",
+    "smena: tushdan keyingi soatlar qoladi (12:55,13:45,14:35,15:25)",
+    clean.map((l) => l.startTime).join(",") === "12:55,13:45,14:35,15:25",
     clean.map((l) => `${l.subject}@${l.startTime}`),
   );
+
+  // Ertalabki smena — ertalabki soatlar qoladi
+  const morningDay = [
+    mk(1, "Alifbe", "08:30"),
+    mk(1, "Alifbe", "13:00"),
+    mk(2, "Matematika", "09:20"),
+    mk(2, "Matematika", "13:50"),
+  ];
+  const mClean = dedupeShiftLessons(morningDay);
+  check(
+    "smena: ertalabki sinfda ertalabki soatlar qoladi",
+    mClean.map((l) => l.startTime).join(",") === "08:30,09:20",
+    mClean.map((l) => `${l.subject}@${l.startTime}`),
+  );
+
   const onlyAfternoon = dedupeShiftLessons([mk(1, "Matematika", "13:00"), mk(2, "Ona tili", "14:00")]);
   check("smena: barchasi tushdan keyin bo'lsa — o'zgarmaydi", onlyAfternoon.length === 2, onlyAfternoon);
-  const doubles = dedupeShiftLessons([mk(2, "Matematika", "09:20"), mk(3, "Matematika", "10:10")]);
-  check("smena: kunduzgi ikki dars (takror emas) — ikkalasi qoladi", doubles.length === 2, doubles);
+  const doubles = dedupeShiftLessons([mk(2, "Matematika", "13:45"), mk(3, "Matematika", "14:35")]);
+  check("smena: ikki dars (takror emas) — ikkalasi qoladi", doubles.length === 2, doubles);
   const noTime = dedupeShiftLessons([mk(1, "Alifbe", "08:30"), mk(1, "Alifbe", "")]);
-  check("smena: vaqtsiz duplikat tushmaydi, ertasi qoladi", noTime.length === 1 && noTime[0].startTime === "08:30", noTime);
+  check("smena: vaqtsiz duplikat tushmaydi, soatlisi qoladi", noTime.length === 1 && noTime[0].startTime === "08:30", noTime);
+}
+
+{
+  // pickPersonForClass — ota-ona farzandlari ARALASHMAYDI
+  const P = (personId: string, groupId: string, groupName: string) =>
+    ({ personId, schoolId: "s", groupId, fullName: personId, schoolName: "", groupName }) as never;
+  const kids = [P("kidA", "2524942980748797372", "1-A"), P("kidB", "3003082620064563100", "5-B")];
+  check("farzand: ID bo'yicha to'g'ri farzand", pickPersonForClass(kids, "2524942980748797372", "1-A")?.personId === "kidA");
+  check("farzand: sinf nomi bo'yicha to'g'ri farzand", pickPersonForClass(kids, "999", "5-B")?.personId === "kidB");
+  check("farzand: qisqa ID bilan ham mos", pickPersonForClass(kids, "25249429", "1-A")?.personId === "kidA");
+  check("farzand: mos bo'lmasa — null (aralashtirmaymiz)", pickPersonForClass(kids, "999", "9-C") === null);
+  const single = [P("stu", "2524942980748797372", "1-A")];
+  check("farzand: yagona a'zo — o'zi", pickPersonForClass(single, "3003082620064563100", "5-B")?.personId === "stu");
 }
 
 // ==========================================================================
