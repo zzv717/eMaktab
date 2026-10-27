@@ -172,6 +172,7 @@ export const MENU_TEXT = {
   settings: "⚙️ Sozlamalar",
   grades: "📊 Baholar",
   schedule: "📚 Dars jadvali",
+  guide: "📖 Yoriqnoma",
   home: "🏠 Asosiy menyu",
 } as const;
 
@@ -190,6 +191,7 @@ export function teacherReplyKeyboard(isClassTeacher: boolean) {
     rows.push([{ text: MENU_TEXT.news }, { text: MENU_TEXT.profile }]);
     rows.push([{ text: MENU_TEXT.settings }]);
   }
+  rows.push([{ text: MENU_TEXT.guide }]);
   return replyKb(rows);
 }
 
@@ -198,6 +200,7 @@ export function mainReplyKeyboard() {
   return replyKb([
     [{ text: MENU_TEXT.grades }, { text: MENU_TEXT.schedule }],
     [{ text: MENU_TEXT.news }, { text: MENU_TEXT.settings }],
+    [{ text: MENU_TEXT.guide }],
   ]);
 }
 
@@ -344,6 +347,7 @@ export function mainMenuKeyboard(connected: boolean) {
             { text: "📰 Yangiliklar", callback_data: "menu:news" },
             { text: "⚙️ Sozlamalar", callback_data: "menu:settings" },
           ],
+          [{ text: "📖 Yoriqnoma", callback_data: "menu:guide" }],
         ]
       : [[{ text: "🔐 eMaktabni ulash (login)", callback_data: "menu:connect" }]],
   );
@@ -368,6 +372,7 @@ export function teacherMenuKeyboard(connected: boolean, isClassTeacher: boolean)
     { text: "👤 Profil", callback_data: "profile" },
   ]);
   rows.push([{ text: "⚙️ Sozlamalar", callback_data: "menu:settings" }]);
+  rows.push([{ text: "📖 Yoriqnoma", callback_data: "menu:guide" }]);
   return kb(rows);
 }
 
