@@ -134,6 +134,82 @@ export async function GET(req: NextRequest) {
           (out as Record<string, unknown>).ju4 = "xato " + String(e12).slice(0, 25);
         }
 
+      // ?dshift=1 — smena/takror tahlili: o'qituvchining O'Z diary + a'zo hisoblari
+      // (ota-ona bo'lsa — HAR BIR farzand alohida, sinf smenasi va soatlari ko'rinadi).
+      if (sp.get("dshift")) {
+        const ascii = (s: string) => s.replace(/[^\x20-\x7E]/g, ".").replace(/['"`]/g, "~");
+        const compact = async (
+          sess: Parameters<typeof fetchDiaryDays>[0],
+          from: string,
+          to: string,
+        ): Promise<string> => {
+          try {
+            const days = await fetchDiaryDays(sess, from, to);
+            const segs = (days as Array<Record<string, unknown>>).map((d) => {
+              const date = String(d.date ?? "").slice(5, 10);
+              const les = ((d.lessons ?? []) as Array<Record<string, unknown>>)
+                .map((l) => {
+                  const h = (l.hours ?? {}) as Record<string, unknown>;
+                  const subj =
+                    typeof l.subject === "string"
+                      ? l.subject
+                      : ((l.subject as Record<string, unknown> | undefined)?.name as string | undefined) ?? "?";
+                  return `${l.number ?? "?"}:${ascii(String(subj)).slice(0, 6)}@${h.startHour ?? "-"}:${String(h.startMinute ?? "0").padStart(2, "0")}`;
+                })
+                .join(",");
+              return `${date}[${les}]`;
+            });
+            return segs.join(" ; ").slice(0, 330) || "bosh";
+          } catch (e) {
+            return "xato " + String(e).slice(0, 30);
+          }
+        };
+        const fromD = sp.get("from") || "2026-10-26";
+        const toD = sp.get("to") || "2026-10-28";
+        (out as Record<string, unknown>).tp = `${result.session.active.personId}:${ascii(result.session.active.groupName || "-")}:${result.session.persons.length}p`;
+        (out as Record<string, unknown>).td = await compact(result.session, fromD, toD);
+        try {
+          const rows = await db.select().from(memberAccounts).limit(4);
+          for (let i = 0; i < rows.length && i < 3; i++) {
+            const r = rows[i];
+            const kind = String(r.kind ?? "?").slice(0, 4);
+            if (!r.emaktabLogin || !r.emaktabPasswordEnc) {
+              (out as Record<string, unknown>)[`a${i + 1}`] = `${kind}:nologin`;
+              continue;
+            }
+            let pw = "";
+            try {
+              pw = decryptSecret(r.emaktabPasswordEnc);
+            } catch {
+              (out as Record<string, unknown>)[`a${i + 1}`] = `${kind}:decrypt-xato`;
+              continue;
+            }
+            const lr = await loginEmaktab(r.emaktabLogin, pw);
+            if (lr.status !== "ok") {
+              (out as Record<string, unknown>)[`a${i + 1}`] = `${kind}:${lr.status}`;
+              continue;
+            }
+            const sess = lr.session;
+            const persons = sess.persons
+              .map((p) => `${p.personId}:${ascii(p.groupName || p.groupId.slice(-6) || "-")}`)
+              .join(",");
+            (out as Record<string, unknown>)[`a${i + 1}`] =
+              `${kind}:${String(r.classId ?? "").slice(-6)}:${persons}`.slice(0, 330);
+            const picks = sess.persons.length > 1 ? sess.persons.slice(0, 2) : [sess.active];
+            for (let j = 0; j < picks.length; j++) {
+              (out as Record<string, unknown>)[`d${i + 1}${j + 1}`] = await compact(
+                { ...sess, active: picks[j] },
+                fromD,
+                toD,
+              );
+            }
+          }
+        } catch (e) {
+          (out as Record<string, unknown>).dshift = "xato " + String(e).slice(0, 40);
+        }
+        return NextResponse.json(out);
+      }
+
       // ?hostonly=1|2 — yengil host/prefiks sinovi (faqat login + 4 ta POST + kontekst)
       if (sp.get("hostonly")) {
         const ck = Object.entries(result.session.cookies).map(([k, v]) => `${k}=${v}`).join("; ");
