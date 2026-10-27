@@ -1446,8 +1446,9 @@ async function handleConductCallback(chatId: number, user: BotUser, data: string
       () => ({ periods: [] as PlanOption[], subgroups: [] as PlanOption[] }),
     );
     const subgroups = opts.subgroups.length ? opts.subgroups : [];
-    if (subgroups.length > 1) {
-      const rows = subgroups.slice(0, 10).map((g, i) => [
+    if (subgroups.length > 0) {
+      const all: PlanOption[] = [{ value: "", name: "Butun sinf" }, ...subgroups];
+      const rows = all.slice(0, 10).map((g, i) => [
         { text: `👥 ${g.name}`.slice(0, 60), callback_data: `ctpsg:${classId}:${subjIdxS}:${pIdxS}:${i}` },
       ]);
       rows.push([{ text: "🏠 Asosiy menyu", callback_data: "menu:home" }]);
@@ -1628,7 +1629,8 @@ async function handleCtpDocument(chatId: number, user: BotUser, message: Telegra
       const periods = planPeriodOptions(opts.periods);
       const period = periods[Number(pIdxS)]?.value ?? "0";
       const sgIdx = Number(sgIdxS ?? "-1");
-      const subgroup = sgIdx >= 0 ? opts.subgroups[sgIdx]?.value ?? "" : "";
+      const sgList: PlanOption[] = [{ value: "", name: "Butun sinf" }, ...opts.subgroups];
+      const subgroup = sgIdx >= 0 ? sgList[sgIdx]?.value ?? "" : "";
       return importLessonPlan(s, {
         schoolId,
         groupId: classId,
