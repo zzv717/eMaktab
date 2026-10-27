@@ -37,6 +37,7 @@ import {
   mapImportColumn,
   parseImportCheck,
   parseWizFormSimple,
+  planPeriodOptions,
   looksLikeName,
   shiftDayKey,
   tashkentDayKey,
@@ -492,6 +493,27 @@ check("looksLikeName: ko'rish rad", !looksLikeName("Ko'rish"), true);
   check("ish reja form: step1 submit", wiz?.fields.find((f) => f.name === "step1")?.value === "Keyingi qadam");
   check("ish reja form: firstRow checked", wiz?.fields.find((f) => f.name === "firstRow")?.checked === true);
   check("ish reja form: bo'sh html — null", parseWizFormSimple("<html></html>") === null);
+}
+
+{
+  // planPeriodOptions — choraklar ro'yxati (barqaror tartib Yil + 1-4-chorak)
+  const full = planPeriodOptions([
+    { value: "2525707862884565213", name: "1-chorak" },
+    { value: "0", name: "Yil davomida" },
+    { value: "2525707862884565214", name: "3-chorak" },
+    { value: "2525707862884565215", name: "2-chorak" },
+    { value: "2525707862884565216", name: "4-chorak" },
+  ]);
+  check("period: 5 ta variant", full.length === 5, full.length);
+  check("period: birinchi — Yil", full[0]?.value === "0" && /Yil/.test(full[0]?.name ?? ""), full[0]);
+  check("period: 1-chorak ID saqlanadi", full[1]?.value === "2525707862884565213", full[1]);
+  check("period: tartib 1..4", full[1]?.name === "1-chorak" && full[2]?.name === "2-chorak" && full[4]?.name === "4-chorak");
+  const synth = planPeriodOptions([]);
+  check("period: bo'sh javob — sintez 5 ta", synth.length === 5, synth.length);
+  check("period: sintez qiymatlar", synth[1]?.value === "1" && synth[4]?.value === "4", synth);
+  const mixed = planPeriodOptions([{ value: "ID9", name: "2-chorak" }]);
+  check("period: aralash — real+ sintez", mixed[2]?.value === "ID9" && mixed[1]?.value === "1", mixed);
+  check("period: tartib barqaror (2 marta)", JSON.stringify(planPeriodOptions([])) === JSON.stringify(synth));
 }
 
 console.log(`\nNatija: ${passed} o'tdi, ${failed} yiqildi`);

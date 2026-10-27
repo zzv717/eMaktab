@@ -37,6 +37,7 @@ import {
   fetchPlanImportOptions,
   resolvePlanSubjectId,
   importLessonPlan,
+  planPeriodOptions,
   type PlanOption,
   fetchHomeworkRows,
   setHomeworkMaqom,
@@ -666,7 +667,7 @@ export async function handleTelegramUpdate(update: TelegramUpdate) {
           chatId,
           `😔 <b>Kutilmagan xatolik yuz berdi.</b>\n\n<code>${escapeHtml(detail.slice(0, 500))}</code>\n\n` +
             `Iltimos, qayta urinib ko'ring yoki /start ni bosing.`,
-          { replyMarkup: mainMenuKeyboard(true) },
+          { replyMarkup: kb([[{ text: "🏠 Asosiy sahifa", callback_data: "menu:home" }]]) },
         );
       } catch {
         /* ignore */
@@ -700,7 +701,7 @@ async function handleMessage(message: TelegramMessage) {
   }
 
   // --- Ish reja fayli (dokument) ---
-  if (message.document && (user.state ?? "").startsWith("ctp_file:")) {
+  if (message.document && (user.state ?? "").startsWith("c:")) {
     await handleCtpDocument(chatId, user, message);
     return;
   }
@@ -1426,10 +1427,10 @@ async function handleConductCallback(chatId: number, user: BotUser, data: string
     const opts = await withSession(user, (s) => fetchPlanImportOptions(s, { groupId: classId })).catch(
       () => ({ periods: [] as PlanOption[], subgroups: [] as PlanOption[] }),
     );
-    const periods = opts.periods.length ? opts.periods : [{ value: "0", name: "Yil davomida" }];
-    const rows = periods.slice(0, 10).map((p, i) => [
+    const periods = planPeriodOptions(opts.periods);
+    const rows = periods.map((p, i) => [
       {
-        text: `📆 ${p.name || (p.value === "0" ? "Yil davomida" : p.value)}`.slice(0, 60),
+        text: `📆 ${p.name}`.slice(0, 60),
         callback_data: `ctpq:${classId}:${subjIdxS}:${i}`,
       },
     ]);
@@ -1455,7 +1456,7 @@ async function handleConductCallback(chatId: number, user: BotUser, data: string
     }
     await db
       .update(botUsers)
-      .set({ state: `ctp_file:${classId}:${subjIdxS}:${pIdxS}:-1`, updatedAt: new Date() })
+      .set({ state: `c:${classId}:${subjIdxS}:${pIdxS}:-1`, updatedAt: new Date() })
       .where(eq(botUsers.telegramId, user.telegramId));
     await editTo(
       `📄 <b>Ish reja joylashtirish</b>\n\n5️⃣ Endi <b>.xls</b> yoki <b>.xlsx</b> faylni shu chatga yuboring.\n\n⏳ <i>Fayl kelganda bot "Iltimos kuting…" deb javob beradi.</i>`,
@@ -1469,7 +1470,7 @@ async function handleConductCallback(chatId: number, user: BotUser, data: string
     const [, classId, subjIdxS, pIdxS, sgIdxS] = m;
     await db
       .update(botUsers)
-      .set({ state: `ctp_file:${classId}:${subjIdxS}:${pIdxS}:${sgIdxS}`, updatedAt: new Date() })
+      .set({ state: `c:${classId}:${subjIdxS}:${pIdxS}:${sgIdxS}`, updatedAt: new Date() })
       .where(eq(botUsers.telegramId, user.telegramId));
     await editTo(
       `📄 <b>Ish reja joylashtirish</b>\n\n5️⃣ Endi <b>.xls</b> yoki <b>.xlsx</b> faylni shu chatga yuboring.\n\n⏳ <i>Fayl kelganda bot "Iltimos kuting…" deb javob beradi.</i>`,
@@ -1591,7 +1592,7 @@ async function handleCtpDocument(chatId: number, user: BotUser, message: Telegra
   const doc = message.document!;
   const fileName = (doc.file_name ?? "ish-reja").toLowerCase();
   const st = user.state ?? "";
-  const m = st.match(/^ctp_file:(\d+):(\d+):(\d+)(?::(-?\d+))?$/);
+  const m = st.match(/^c:(\d+):(\d+):(\d+):(-?\d+)$/);
   if (!m) return;
   if (!fileName.endsWith(".xls") && !fileName.endsWith(".xlsx")) {
     await sendMessage(chatId, "⚠️ Faqat <b>.xls</b> yoki <b>.xlsx</b> fayl yuboring.", { replyMarkup: menuFor(user) });
@@ -1624,7 +1625,8 @@ async function handleCtpDocument(chatId: number, user: BotUser, message: Telegra
       const subjectId = await resolvePlanSubjectId(s, { schoolId, groupId: classId, subjectName });
       if (!subjectId) return { ok: false, reason: `fan ID topilmadi (${subjectName})` };
       const opts = await fetchPlanImportOptions(s, { groupId: classId });
-      const period = opts.periods[Number(pIdxS)]?.value ?? "0";
+      const periods = planPeriodOptions(opts.periods);
+      const period = periods[Number(pIdxS)]?.value ?? "0";
       const sgIdx = Number(sgIdxS ?? "-1");
       const subgroup = sgIdx >= 0 ? opts.subgroups[sgIdx]?.value ?? "" : "";
       return importLessonPlan(s, {
