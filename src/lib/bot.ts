@@ -1047,6 +1047,10 @@ async function handleMessage(message: TelegramMessage) {
       await sendNewsView(chatId, user);
       return;
     }
+    if (text === "/help" || text === "/yoriqnoma" || text === MENU_TEXT.guide) {
+      await sendGuideView(chatId, user);
+      return;
+    }
     if (text === MENU_TEXT.week) {
       if (isTeacher(user)) await sendTeacherWeekView(chatId, user);
       else await sendWeekView(chatId, user);
@@ -1112,6 +1116,7 @@ async function handleMessage(message: TelegramMessage) {
       }
       rows.push([{ text: "🔄 Login/parolni yangilash", callback_data: "settings:relogin" }]);
       rows.push([{ text: "🚪 Chiqish (Logout)", callback_data: "settings:logout" }]);
+      rows.push([{ text: "🏠 Asosiy sahifa", callback_data: "menu:home" }]);
       await sendLong(chatId, formatAccount(user), kb(rows));
       return;
     }
@@ -1902,6 +1907,70 @@ async function sendHomeworkView(chatId: number, user: BotUser) {
   }
 }
 
+/** Yoriqnoma — botni qanday ishlatish (har bir rol uchun alohida). */
+async function sendGuideView(chatId: number, user: BotUser) {
+  const home = kb([[{ text: "🏠 Asosiy sahifa", callback_data: "menu:home" }]]);
+  if (isTeacher(user)) {
+    await sendLong(
+      chatId,
+      `📖 <b>Yoriqnoma — O'qituvchi uchun</b>\n\n` +
+        `<b>📅 Bugungi / 📆 Ertangi / 📆 Haftalik jadval</b>\n` +
+        `Darslaringiz ro'yxati. Haftalik jadvalda faqat <b>kunduzgi smena</b> ko'rsatiladi va takrorlanuvchi darslar olib tashlanadi.\n\n` +
+        `<b>✅ Darsni o'tildi qilish</b>\n` +
+        `Sinf → fan → sana → darsni tanlab tasdiqlaysiz — dars eMaktabda <b>"o'tildi"</b> deb belgilanadi.\n\n` +
+        `<b>📝 Maqom berish</b>\n` +
+        `Uy vazifasi maqomini belgilaysiz: sinf → fan → sana → kerakli vazifa (🔴 berilmagan) tanlanadi va bot o'zi <b>"Bajarildi"</b> qiladi. Tugaganidan keyin <b>"➡️ Keyingisi"</b> bilan keyingi vazifaga o'tasiz.\n\n` +
+        `<b>📄 Ish reja joylashtirish</b>\n` +
+        `Sinf → fan → <b>chorak</b> (1–4 chorak yoki yil davomida) → o'quv guruhi (Butun sinf/1/2) → <b>.xls/.xlsx</b> fayl yuborasiz. Bot tekshiradi: yashil ("ko'chirish mumkin") bo'lsa import qiladi, qizil xato bo'lsa sababini ko'rsatadi.\n\n` +
+        `<b>🏫 Sinfim — O'quvchilar</b> (sinf rahbari)\n` +
+        `Sinf a'zolari (o'quvchi/o'ta-ona) ro'yxati, login-parol biriktirish va tekshirish.\n\n` +
+        `<b>⚡ Barchani tekshirish</b> (sinf rahbari) — barcha a'zoga avtomatik login-parol biriktirish.\n` +
+        `<b>👪 Ota-onalar faolligi</b> (sinf rahbari) — sinf ota-onalari ro'yxati.\n\n` +
+        `<b>👤 Profil</b> — hisob ma'lumotlari.\n` +
+        `<b>📰 Yangiliklar</b> — maktabning barcha yangiliklari.\n` +
+        `<b>⚙️ Sozlamalar</b> — 🔄 login/parolni yangilash, 🚪 hisobdan chiqish.\n\n` +
+        `💡 <i>Barcha amallar haqiqiy eMaktab tizimida bajariladi.</i>`,
+      home,
+    );
+    return;
+  }
+  if (user.role === "parent") {
+    await sendLong(
+      chatId,
+      `📖 <b>Yoriqnoma — Ota-ona uchun</b>\n\n` +
+        `<b>📊 Baholar</b>\n` +
+        `Farzandingizning so'nggi 14 kunlik baholari (fanlar kesimida).\n\n` +
+        `<b>📚 Dars jadvali</b>\n` +
+        `Farzandingizning bugungi darslari. Ostidagi tugmalar orqali:\n` +
+        `• 📅 Bugun / 📆 Ertaga — kunlik darslar\n` +
+        `• 🗓 Haftalik — butun hafta jadvali\n` +
+        `• 📝 Uy vazifalari — vazifalar (so'nggi 2 kun + keyingi 10 kun)\n\n` +
+        `<b>📰 Yangiliklar</b> — maktabning barcha yangiliklari.\n\n` +
+        `<b>⚙️ Sozlamalar</b>\n` +
+        `• 👶 <b>Bolalar</b> — bir nechta farzand bo'lsa, shu yerdan tanlaysiz. Har bir farzand ma'lumotlari <b>ALOHIDA</b> ko'rsatiladi va aralashtirilmaydi.\n` +
+        `• 🔄 login/parolni yangilash · 🚪 hisobdan chiqish.\n\n` +
+        `🏠 Istalgan sahifadan <b>Asosiy sahifa</b> tugmasi bilan asosiy menyuga qaytasiz.`,
+      home,
+    );
+    return;
+  }
+  await sendLong(
+    chatId,
+    `📖 <b>Yoriqnoma — O'quvchi uchun</b>\n\n` +
+      `<b>📊 Baholar</b>\n` +
+      `So'nggi 14 kunlik baholaringiz (fanlar kesimida).\n\n` +
+      `<b>📚 Dars jadvali</b>\n` +
+      `Bugungi darslaringiz. Ostidagi tugmalar orqali:\n` +
+      `• 📅 Bugun / 📆 Ertaga — kunlik darslar\n` +
+      `• 🗓 Haftalik — butun hafta jadvali\n` +
+      `• 📝 Uy vazifalari — vazifalar (so'nggi 2 kun + keyingi 10 kun)\n\n` +
+      `<b>📰 Yangiliklar</b> — maktabning barcha yangiliklari.\n\n` +
+      `<b>⚙️ Sozlamalar</b> — 🔄 login/parolni yangilash, 🚪 hisobdan chiqish.\n\n` +
+      `🏠 Istalgan sahifadan <b>Asosiy sahifa</b> tugmasi bilan asosiy menyuga qaytasiz.`,
+    home,
+  );
+}
+
 async function sendNewsView(chatId: number, user: BotUser) {
   const progress = await startProgress(chatId, "Yangiliklar yuklanmoqda");
   try {
@@ -2312,6 +2381,10 @@ async function handleCallback(cb: TelegramCallbackQuery) {
 
   if (data === "menu:news" || data === "news:refresh") {
     await sendNewsView(chatId, fresh);
+    return;
+  }
+  if (data === "menu:guide") {
+    await sendGuideView(chatId, fresh);
     return;
   }
 
