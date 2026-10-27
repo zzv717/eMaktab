@@ -2114,6 +2114,9 @@ export async function setHomeworkMaqom(
 // ==========================================================================
 
 const WIZ_BASE = "https://schools.emaktab.uz/v2/journals/planning";
+// fileuploader.js: url.replace('planning/import', 'getperiods-cmd') —
+// ya'ni -cmd manzillari planning bo'limisiz: /v2/journals/{cmd}-cmd
+const WIZ_CMD_BASE = "https://schools.emaktab.uz/v2/journals";
 
 export interface PlanOption {
   value: string;
@@ -2122,15 +2125,52 @@ export interface PlanOption {
 
 async function wizGetJson(cookies: Record<string, string>, path: string, q: Record<string, string>): Promise<PlanOption[]> {
   const qs = new URLSearchParams(q).toString();
-  const r = await fetchFollowing(`${WIZ_BASE}/${path}?${qs}`, {}, cookies);
+  const r = await fetchFollowing(`${WIZ_CMD_BASE}/${path}?${qs}`, {}, cookies);
   try {
-    const arr = JSON.parse(r.body) as Array<{ value?: unknown; name?: unknown }>;
-    return Array.isArray(arr)
-      ? arr.map((x) => ({ value: String(x.value ?? ""), name: String(x.name ?? "") }))
-      : [];
+    const parsed = JSON.parse(r.body) as unknown;
+    const rawArr: unknown[] = Array.isArray(parsed)
+      ? parsed
+      : Array.isArray((parsed as { items?: unknown[] })?.items)
+        ? (parsed as { items: unknown[] }).items
+        : Array.isArray((parsed as { results?: unknown[] })?.results)
+          ? (parsed as { results: unknown[] }).results
+          : [];
+    return rawArr.map((x) => {
+      const o = (x ?? {}) as Record<string, unknown>;
+      const value = o.value ?? o.Value ?? o.id ?? o.Id ?? "";
+      const name = o.name ?? o.Name ?? o.title ?? o.Title ?? "";
+      return { value: String(value), name: String(name) };
+    });
   } catch {
     return [];
   }
+}
+
+/**
+ * Choraklar ro'yxati — barqaror tartib: Yil davomida, 1–4-chorak.
+ * Haqiqiy qiymatlar (uzun ID) topilsa — o'sha ishlatiladi, aks holda sintez.
+ */
+export function planPeriodOptions(periods: PlanOption[]): PlanOption[] {
+  const norm = (t: string) => t.replace(/\s+/g, " ").trim().toLowerCase();
+  const used = new Set<number>();
+  const pick = (test: (n: string, p: PlanOption) => boolean): PlanOption | null => {
+    const idx = periods.findIndex((p, i) => !used.has(i) && test(norm(p.name), p));
+    if (idx < 0) return null;
+    used.add(idx);
+    return periods[idx];
+  };
+  const out: PlanOption[] = [];
+  out.push(pick((n, p) => /yil/.test(n) || p.value === "0") ?? { value: "0", name: "Yil davomida" });
+  const roman = ["", "i", "ii", "iii", "iv"];
+  for (let i = 1; i <= 4; i++) {
+    out.push(
+      pick((n) => /chorak|choraq/.test(n) && (new RegExp(`(^|[^0-9])${i}([^0-9]|$)`).test(n) || n.startsWith(`${roman[i]} `) || n.startsWith(`${roman[i]}-`))) ?? {
+        value: String(i),
+        name: `${i}-chorak`,
+      },
+    );
+  }
+  return out;
 }
 
 /** Sehrgar yordamchi ma'lumotlari: choraklar, guruhlar. */
