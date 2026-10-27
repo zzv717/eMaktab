@@ -1570,6 +1570,43 @@ export async function GET(req: NextRequest) {
           headers: { "Content-Type": "text/plain; charset=utf-8" },
         });
       }
+      // ?pwizopt=1&group=… — sehrgar -cmd javoblari (choraklar/guruhlar/fanlar).
+      if (sp.get("pwizopt")) {
+        const lines: string[] = [];
+        const school = sp.get("school") ?? "1000006039552";
+        const group = sp.get("group") ?? "2524942980748797372";
+        const ck = Object.entries(result.session.cookies)
+          .map(([k, v]) => `${k}=${v}`)
+          .join("; ");
+        const ua =
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36";
+        for (const [label, url] of [
+          ["periods", `https://schools.emaktab.uz/v2/journals/getperiods-cmd?group=${group}`],
+          ["subgroups", `https://schools.emaktab.uz/v2/journals/getsubgroups-cmd?group=${group}`],
+          ["subjects", `https://schools.emaktab.uz/v2/journals/getsubjects-cmd?school=${school}&group=${group}`],
+        ] as const) {
+          try {
+            const r = await fetch(url, {
+              headers: {
+                "User-Agent": ua,
+                Cookie: ck,
+                Accept: "application/json, */*",
+                "X-Requested-With": "XMLHttpRequest",
+                Referer: "https://schools.emaktab.uz/v2/journals/planning/import",
+              },
+            });
+            const raw = await r.text();
+            lines.push(
+              `${label}=${r.status} ${raw.replace(/[^\x20-\x7E]/g, ".").replace(/\s+/g, " ").slice(0, 300)}`,
+            );
+          } catch (e) {
+            lines.push(`${label}=xato ${String(e).slice(0, 60)}`);
+          }
+        }
+        return new NextResponse(lines.join("\n"), {
+          headers: { "Content-Type": "text/plain; charset=utf-8" },
+        });
+      }
     } else if (result.status === "captcha_required") {
       out.captcha = true;
       out.captchaUrl = result.captchaUrl ? "bor" : "yo'q";
