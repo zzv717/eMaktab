@@ -166,6 +166,24 @@ export async function GET(req: NextRequest) {
         };
         const fromD = sp.get("from") || "2026-10-26";
         const toD = sp.get("to") || "2026-10-28";
+        try {
+          const tg = await fetchTeacherGroups(result.session);
+          (out as Record<string, unknown>).tg = tg
+            .map((g) => `${g.classId.slice(-6)}:${ascii(g.className).slice(0, 8)}:${g.subjects.map((s) => ascii(s).slice(0, 5)).join("/")}`)
+            .join(" | ")
+            .slice(0, 330);
+        } catch (e) {
+          (out as Record<string, unknown>).tg = "xato " + String(e).slice(0, 30);
+        }
+        try {
+          const tc = await fetchTeacherClasses(result.session);
+          (out as Record<string, unknown>).tc = tc
+            .map((c) => `${c.classId.slice(-6)}:${ascii(c.className).slice(0, 8)}`)
+            .join(" | ")
+            .slice(0, 200);
+        } catch (e) {
+          (out as Record<string, unknown>).tc = "xato " + String(e).slice(0, 30);
+        }
         (out as Record<string, unknown>).tp = `${result.session.active.personId}:${ascii(result.session.active.groupName || "-")}:${result.session.persons.length}p`;
         (out as Record<string, unknown>).td = await compact(result.session, fromD, toD);
         try {
