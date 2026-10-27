@@ -72,6 +72,12 @@ import {
   answerCallbackQuery,
   beginFlow,
   type ReplyMarkup,
+  adminBroadcastConfirmKeyboard,
+  adminBroadcastKeyboard,
+  adminHomeKeyboard,
+  adminProPeriodKeyboard,
+  adminUserKeyboard,
+  adminUsersKeyboard,
   cancelKeyboard,
   cleanupPreviousFlow,
   MENU_TEXT,
@@ -99,6 +105,21 @@ import {
   type TelegramMessage,
   type TelegramUpdate,
 } from "@/lib/telegram";
+import {
+  broadcastTargets,
+  collectAdminStats,
+  countUsers,
+  formatAdminStats,
+  getAdminUser,
+  isAdmin,
+  listUsers,
+  planActive,
+  planLabel,
+  planUntilFromPeriod,
+  recentEvents,
+  setUserPlan,
+  type BroadcastAudience,
+} from "@/lib/admin";
 
 const SESSION_CACHE_TTL_MS = 15 * 60 * 1000; // eMaktab sessiyasi 15 daqiqa keshlanadi
 
@@ -152,8 +173,8 @@ function isClassTeacher(user: BotUser): boolean {
 
 function menuFor(user: BotUser) {
   return isTeacher(user)
-    ? teacherReplyKeyboard(isClassTeacher(user))
-    : mainReplyKeyboard();
+    ? teacherReplyKeyboard(isClassTeacher(user), isAdmin(user))
+    : mainReplyKeyboard(isAdmin(user));
 }
 
 function parseChildren(user: BotUser): ChildContext[] {
@@ -399,7 +420,17 @@ async function getOrCreateUser(
 ): Promise<BotUser> {
   const chatId = message?.chat.id ?? from.id;
   const existing = await getUser(from.id);
-  if (existing) return existing;
+  if (existing) {
+    // Har bir muloqotda: username yangilansin + oxirgi faollik qayd etilsin (admin statistikasi).
+    await db
+      .update(botUsers)
+      .set({
+        lastSeenAt: new Date(),
+        ...(from.username && existing.username !== from.username ? { username: from.username } : {}),
+      })
+      .where(eq(botUsers.telegramId, from.id));
+    return existing;
+  }
 
   const [created] = await db
     .insert(botUsers)
@@ -408,6 +439,7 @@ async function getOrCreateUser(
       chatId,
       username: from.username,
       firstName: from.first_name,
+      lastSeenAt: new Date(),
     })
     .returning();
   return created;
@@ -1030,6 +1062,44 @@ async function handleMessage(message: TelegramMessage) {
     await sendMessage(chatId, `❌ ${escapeHtml(result.message)}\n\nQaytadan boshlang: /start`, {
       replyMarkup: mainMenuKeyboard(false),
     });
+    return;
+  }
+
+  // --- 🛠 Admin: e'lon qoralamasi (state: adm:bc:{aud}) — faqat admin ---
+  if (user.state && user.state.startsWith("adm:bc:") && isAdmin(user)) {
+    const aud = (user.state.slice(7) || "all") as BroadcastAudience;
+    if (!text || text.startsWith("/") || (Object.values(MENU_TEXT) as string[]).includes(text)) {
+      await sendMessage(chatId, "Iltimos, e'lon <b>matnini</b> yozing yoki ❌ Bekor qilish tugmasini bosing.", {
+        replyMarkup: kb([[{ text: "❌ Bekor qilish", callback_data: "adm:bcx" }]]),
+      });
+      return;
+    }
+    await db
+      .update(botUsers)
+      .set({ tempText: text, state: `adm:bcs:${aud}`, updatedAt: new Date() })
+      .where(eq(botUsers.telegramId, from.id));
+    const previewHead = `📢 <b>E'lon qoralamasi</b> — ${audienceLabel(aud)}:\n\n`;
+    try {
+      await sendMessage(chatId, `${previewHead}${text}\n\nHTML teglar qo'llab-quvvatlanadi. Yuborishni tasdiqlang:`, {
+        replyMarkup: adminBroadcastConfirmKeyboard(),
+      });
+    } catch {
+      // HTML noto'g'ri bo'lsa — matnni ko'rsatamiz, yuborishda avtomatik escape bo'ladi
+      await sendMessage(chatId, `${previewHead}${escapeHtml(text)}\n\n⚠️ <i>HTML teglar noto'g'ri — yuborishda matn oddiy ko'rinishda ketadi.</i>`, {
+        replyMarkup: adminBroadcastConfirmKeyboard(),
+      });
+    }
+    return;
+  }
+
+  // --- 🛠 Admin panel (faqat admin uchun — boshqalarga panel mavjudligi ko'rinmaydi) ---
+  if (text === "/admin" || text === MENU_TEXT.admin) {
+    if (!isAdmin(user)) {
+      await sendMessage(chatId, "Quyidagi menyudan tanlang 👇", { replyMarkup: menuFor(user) });
+      return;
+    }
+    const stats = await collectAdminStats();
+    await sendMessage(chatId, formatAdminStats(stats), { replyMarkup: adminHomeKeyboard() });
     return;
   }
 
@@ -2286,6 +2356,231 @@ function normalizeName(name: string): string {
 // Callback'lar (inline tugmalar)
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// 🛠 Admin panel oqimi — faqat admin uchun (statistika, foydalanuvchilar,
+// 💎 Pro tarifi, e'lonlar, jurnal). Boshqalar bu tugmalarni umuman ko'rmaydi.
+// ---------------------------------------------------------------------------
+
+function audienceLabel(aud: BroadcastAudience): string {
+  return aud === "conn"
+    ? "faqat ulanganlar"
+    : aud === "pro"
+      ? "faqat Pro tarifi"
+      : "barcha foydalanuvchilar";
+}
+
+function roleEmojiOf(role: string | null): string {
+  return role === "teacher" ? "👨‍🏫" : role === "student" ? "🎒" : role === "parent" ? "👪" : "👤";
+}
+
+function fmtDT(d: Date | null): string {
+  if (!d) return "—";
+  const p2 = (n: number) => String(n).padStart(2, "0");
+  return `${p2(d.getDate())}.${p2(d.getMonth() + 1)}.${d.getFullYear()} ${p2(d.getHours())}:${p2(d.getMinutes())}`;
+}
+
+async function handleAdminCallback(cb: TelegramCallbackQuery, user: BotUser, data: string) {
+  const chatId = cb.message?.chat.id;
+  if (!chatId) return;
+  if (!isAdmin(user, cb.from.username)) {
+    await sendMessage(chatId, "⛔ Ruxsat yo'q.");
+    return;
+  }
+  const show = (text: string, markup?: ReplyMarkup) => showView(cb, text, markup);
+
+  // Bosh panel (statistika)
+  if (data === "adm:home" || data === "adm:noop") {
+    const stats = await collectAdminStats();
+    await show(formatAdminStats(stats), adminHomeKeyboard());
+    return;
+  }
+
+  // 👥 Foydalanuvchilar ro'yxati (sahifalash)
+  if (data.startsWith("adm:u:")) {
+    const page = Math.max(0, Number(data.slice(6)) || 0);
+    const perPage = 8;
+    const total = await countUsers();
+    const pages = Math.max(1, Math.ceil(total / perPage));
+    const safePage = Math.min(page, pages - 1);
+    const rows = await listUsers(safePage * perPage, perPage);
+    const labels = rows.map((r, i) => {
+      const name = (r.fullName || r.firstName || "?").slice(0, 18);
+      return {
+        id: r.id,
+        label: `${safePage * perPage + i + 1}. ${name} ${roleEmojiOf(r.role)} ${r.emaktabLogin ? "✅" : "⏳"}${planActive(r) ? " 💎" : ""}`,
+      };
+    });
+    await show(`👥 <b>Foydalanuvchilar</b> — jami ${total} ta`, adminUsersKeyboard(labels, safePage, pages));
+    return;
+  }
+
+  // 👤 Foydalanuvchi kartochkasi
+  const dMatch = data.match(/^adm:d:(\d+)$/);
+  if (dMatch) {
+    const u = await getAdminUser(Number(dMatch[1]));
+    if (!u) {
+      await show("❌ Foydalanuvchi topilmadi.", adminHomeKeyboard());
+      return;
+    }
+    let childrenCount = 0;
+    try {
+      const parsed = u.childrenJson ? JSON.parse(u.childrenJson) : null;
+      if (Array.isArray(parsed)) childrenCount = parsed.length;
+    } catch {
+      /* ignore */
+    }
+    const lines = [
+      `👤 <b>${escapeHtml(u.fullName || u.firstName || "?")}</b>${u.username ? ` (@${escapeHtml(u.username)})` : ""}`,
+      ``,
+      `• 🆔 Telegram ID: <code>${u.telegramId}</code>`,
+      `• 🎭 Rol: ${roleEmojiOf(u.role)} ${escapeHtml(u.role || "—")}`,
+      `• 🔗 eMaktab: ${u.emaktabLogin ? `✅ <code>${escapeHtml(u.emaktabLogin)}</code>` : "❌ ulanmagan"}`,
+      u.schoolName ? `• 🏫 ${escapeHtml(u.schoolName)}` : "",
+      u.groupName ? `• 🎓 ${escapeHtml(u.groupName)}` : "",
+      childrenCount > 1 ? `• 👶 Farzandlar: ${childrenCount} ta` : "",
+      `• 💎 Tarif: <b>${planLabel(u)}</b>`,
+      `• 📅 Qo'shilgan: ${fmtDT(u.createdAt)}`,
+      `• 🕐 Oxirgi faollik: ${fmtDT(u.lastSeenAt)}`,
+    ].filter(Boolean);
+    await show(lines.join("\n"), adminUserKeyboard(u.id, planActive(u)));
+    return;
+  }
+
+  // 💎 Pro berish — muddat tanlash
+  const prMatch = data.match(/^adm:pr:(\d+)$/);
+  if (prMatch) {
+    await show(`💎 <b>Pro muddatini tanlang</b>`, adminProPeriodKeyboard(Number(prMatch[1])));
+    return;
+  }
+
+  // 💎 Pro berish — qo'llash
+  const pMatch = data.match(/^adm:p:(\d+):(1m|3m|1y|inf)$/);
+  if (pMatch) {
+    const id = Number(pMatch[1]);
+    const until = planUntilFromPeriod(pMatch[2]);
+    await setUserPlan(id, "pro", until);
+    await logEvent("admin_pro", `user=${id} period=${pMatch[2]}`, cb.from.id);
+    const u = await getAdminUser(id);
+    await show(
+      `✅ <b>Pro ochildi</b> — ${escapeHtml(u?.fullName || String(id))}: <b>${planLabel({ plan: "pro", planUntil: until })}</b>`,
+      adminUserKeyboard(id, true),
+    );
+    return;
+  }
+
+  // 💎 Pro olib tashlash
+  const pnMatch = data.match(/^adm:pn:(\d+)$/);
+  if (pnMatch) {
+    const id = Number(pnMatch[1]);
+    await setUserPlan(id, "free", null);
+    await logEvent("admin_pro_off", `user=${id}`, cb.from.id);
+    await show(`✅ Pro olib tashlandi.`, adminUserKeyboard(id, false));
+    return;
+  }
+
+  // 📢 E'lon — oluvchilarni tanlash
+  if (data === "adm:bc") {
+    await show(`📢 <b>Xabar yuborish</b>\n\nKimlarga yuborilsin?`, adminBroadcastKeyboard());
+    return;
+  }
+
+  // 📢 E'lon — matn yozish bosqichi
+  const bcaMatch = data.match(/^adm:bca:(all|conn|pro)$/);
+  if (bcaMatch) {
+    const aud = bcaMatch[1] as BroadcastAudience;
+    await db
+      .update(botUsers)
+      .set({ state: `adm:bc:${aud}`, tempText: null, updatedAt: new Date() })
+      .where(eq(botUsers.telegramId, cb.from.id));
+    await sendMessage(
+      chatId,
+      `📢 <b>E'lon matnini yozing</b> — oluvchilar: ${audienceLabel(aud)}.\n\nHTML teglar ishlatish mumkin.`,
+      { replyMarkup: kb([[{ text: "❌ Bekor qilish", callback_data: "adm:bcx" }]]) },
+    );
+    return;
+  }
+
+  // 📢 E'lon — yuborish
+  if (data === "adm:bcs") {
+    const st = user.state ?? "";
+    const aud = (st.startsWith("adm:bcs:") ? st.slice(8) : "all") as BroadcastAudience;
+    const text = user.tempText ?? "";
+    if (!text) {
+      await show("❌ Qoralama topilmadi — qaytadan yozing.", adminHomeKeyboard());
+      return;
+    }
+    const targets = await broadcastTargets(aud);
+    await show(`📤 <b>Yuborilmoqda…</b> (${targets.length} ta)`, undefined);
+    let sent = 0;
+    let failed = 0;
+    let body = text;
+    for (const t of targets) {
+      try {
+        await sendMessage(t.chatId, body, { untracked: true });
+        sent++;
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        // HTML parse xatosi — matnni escape qilib qayta urinamiz
+        if (msg.includes("can't parse entities") && body === text) {
+          body = escapeHtml(text);
+          try {
+            await sendMessage(t.chatId, body, { untracked: true });
+            sent++;
+            continue;
+          } catch {
+            /* pastda failed++ */
+          }
+        }
+        failed++;
+      }
+    }
+    await db
+      .update(botUsers)
+      .set({ state: "idle", tempText: null, updatedAt: new Date() })
+      .where(eq(botUsers.telegramId, cb.from.id));
+    await logEvent("admin_broadcast", `${aud} sent=${sent} failed=${failed}`, cb.from.id);
+    await show(
+      `✅ <b>E'lon yuborildi</b>\n\n• 🎯 Oluvchilar: ${audienceLabel(aud)}\n• ✅ Yuborildi: <b>${sent}</b>\n• ❌ Xato: ${failed}`,
+      adminHomeKeyboard(),
+    );
+    return;
+  }
+
+  // 📢 E'lon — bekor qilish
+  if (data === "adm:bcx") {
+    await db
+      .update(botUsers)
+      .set({ state: "idle", tempText: null, updatedAt: new Date() })
+      .where(eq(botUsers.telegramId, cb.from.id));
+    await show("✅ Bekor qilindi.", adminHomeKeyboard());
+    return;
+  }
+
+  // 🚨 Jurnal (oxirgi hodisalar)
+  if (data === "adm:log") {
+    const events = await recentEvents(8);
+    const body =
+      events.length > 0
+        ? events
+            .map(
+              (e) =>
+                `• <b>${escapeHtml(e.step)}</b> — ${escapeHtml((e.message || "").slice(0, 70))} <i>(${fmtDT(e.createdAt)})</i>`,
+            )
+            .join("\n")
+        : "Jurnal bo'sh.";
+    await show(
+      `🚨 <b>So'nggi hodisalar</b>\n\n${body}`,
+      kb([
+        [{ text: "🔄 Yangilash", callback_data: "adm:log" }],
+        [{ text: "⬅️ Admin panel", callback_data: "adm:home" }],
+      ]),
+    );
+    return;
+  }
+
+  await show("🛠 <b>Admin panel</b>", adminHomeKeyboard());
+}
+
 async function handleCallback(cb: TelegramCallbackQuery) {
   const chatId = cb.message?.chat.id;
   const messageId = cb.message?.message_id;
@@ -2335,6 +2630,12 @@ async function handleCallback(cb: TelegramCallbackQuery) {
 
   if (data === "menu:connect") {
     await startLoginFlow(cb.from.id, chatId);
+    return;
+  }
+
+  // --- 🛠 Admin panel (faqat admin — boshqalarga hech narsa ko'rinmaydi) ---
+  if (data.startsWith("adm:")) {
+    await handleAdminCallback(cb, user, data);
     return;
   }
 

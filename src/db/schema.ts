@@ -54,6 +54,14 @@ export const botUsers = pgTable("bot_users", {
   // eMaktab cookie'lari (shifrlangan) — qayta login qilmaslik uchun
   sessionEnc: text("session_enc"),
 
+  // 💎 Pro (pullik) tarif: free | pro. planUntil — amal qilish muddati (null = cheksiz).
+  plan: varchar("plan", { length: 16 }).notNull().default("free"),
+  planUntil: timestamp("plan_until", { withTimezone: true }),
+  // Oxirgi faollik (admin statistikasi uchun) — har bir xabar/kallbackda yangilanadi.
+  lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
+  // Admin oqimlari uchun vaqtinchalik matn (masalan e'lon qoralamasi).
+  tempText: text("temp_text"),
+
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
