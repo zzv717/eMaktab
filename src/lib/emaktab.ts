@@ -1534,9 +1534,10 @@ function hhmmFromHourParts(h?: string | number | null, m?: string | number | nul
 
 function lessonTime(hours?: DiaryLesson["hours"], fallbackStart?: string | null, fallbackEnd?: string | null): { start: string | null; end: string | null } {
   if (hours && hours.startHour !== undefined && hours.startHour !== null) {
-    const start = hhmmFromHourParts(hours.startHour, hours.startMinute) ?? "00:00";
-    const end = hhmmFromHourParts(hours.endHour, hours.endMinute) ?? "00:00";
-    return { start, end };
+    const start = hhmmFromHourParts(hours.startHour, hours.startMinute);
+    const end = hhmmFromHourParts(hours.endHour, hours.endMinute);
+    // eMaktab soati qat'iy: o'qib bo'lmasa — 00:00 TO'QIMAQ (fallback'ga o'tamiz).
+    if (start) return { start, end };
   }
   const fmt = (ts?: string | number | null) => {
     if (!ts) return null;
@@ -3088,43 +3089,73 @@ export function mergeTeacherGroups(groups: TeacherGroup[], journals: TeacherJour
 }
 
 /**
- * Bir kundagi darslarni smena aralashuvidan tozalaydi:
- * 1) bir xil (raqam + fan) takrorlanganda — eng ertadagisi (kunduzgi smena) qoladi;
- * 2) fan kun davomida ham erta, ham tushdan keyin uchrasa — faqat 12:00 oldinlar qoladi
- *    (o'qituvchi darslari doim kunduzgi smenada).
- * Barcha darslar tushdan keyin bo'lsa — o'zgarmaydi.
+ * Bir kundagi darslardan takrorlarni tozalaydi.
+ * SMENA USTUNLIGI YO'Q — tushdan keyingi smena o'qituvchilari ham to'g'ri ko'radi:
+ * 1) bir xil (raqam + fan + vaqt) — bittasi qoladi (haqiqiy takror);
+ * 2) bir xil (raqam + fan) TURLI soatlarda — kun smenasining ko'pchilik tomonidagi
+ *    soat qoladi (masalan tushdan keyingi sinfda 12:55 qoladi, 08:30 — emas);
+ * 3) turli raqamdagi darslar (ikkita "Matematika") — takror EMAS, ikkalasi qoladi.
  */
 export function dedupeShiftLessons(lessons: Lesson[]): Lesson[] {
   const t = (l: Lesson) => (l.startTime && /^\d{1,2}:\d{2}/.test(l.startTime) ? l.startTime : "z");
   const isMorning = (l: Lesson) => Boolean(l.startTime) && l.startTime! < "12:00";
-  const isAfternoon = (l: Lesson) => Boolean(l.startTime) && l.startTime! >= "12:00";
-  // 1) raqam+fan duplikati → eng ertasi (soatli oldin, soatsiz keyin)
-  const byNumSubj = new Map<string, Lesson>();
+  // Kun smenasi: barcha soatli darslar bo'yicha ko'pchilik (tenglikda — ertalab).
+  let morning = 0;
+  let afternoon = 0;
+  for (const l of lessons) {
+    if (!l.startTime) continue;
+    if (isMorning(l)) morning++;
+    else afternoon++;
+  }
+  const preferMorning = morning >= afternoon;
+  const inShift = (l: Lesson) => (isMorning(l) ? preferMorning : !preferMorning);
+  // 1-2) raqam+fan takrorlari
+  const byNumSubj = new Map<string, Lesson[]>();
   for (const l of [...lessons].sort((a, b) => t(a).localeCompare(t(b)))) {
     const key = `${l.number}|${l.subject}`;
-    if (!byNumSubj.has(key)) byNumSubj.set(key, l);
-  }
-  let kept = [...byNumSubj.values()];
-  // 2) smena aralashuvi → faqat kunduzgi (12:00 oldin)
-  const bySubj = new Map<string, Lesson[]>();
-  for (const l of kept) {
-    const arr = bySubj.get(l.subject) ?? [];
+    const arr = byNumSubj.get(key) ?? [];
     arr.push(l);
-    bySubj.set(l.subject, arr);
+    byNumSubj.set(key, arr);
   }
-  kept = [];
-  for (const arr of bySubj.values()) {
-    const hasMorning = arr.some(isMorning);
-    const hasAfternoon = arr.some(isAfternoon);
-    for (const l of arr) {
-      if (hasMorning && hasAfternoon) {
-        if (isMorning(l)) kept.push(l);
-      } else {
-        kept.push(l);
-      }
-    }
+  const kept: Lesson[] = [];
+  for (const arr of byNumSubj.values()) {
+    const shifted = arr.filter(inShift);
+    const pool = shifted.length > 0 ? shifted : arr;
+    const withTime = pool.filter((l) => t(l) !== "z");
+    kept.push(withTime.length > 0 ? withTime[0] : pool[0]);
   }
   return kept.sort((a, b) => t(a).localeCompare(t(b)) || (a.number || 99) - (b.number || 99));
+}
+
+/**
+ * Ota-ona hisobida bir nechta farzand bo'lsa — AYNAN shu sinfga tegishli
+ * farzand tanlanadi (farzandlar hech qachon aralashtirilmaydi!).
+ * - yagona a'zo bo'lsa — o'zi;
+ * - sinf ID yoki nomi bo'yicha mos farzand topilsa — u;
+ * - hech bir farzandda sinf ma'lumoti bo'lmasa — persons[0] (eski holat);
+ * - aks holda — null (noto'g'ri farzandning diary'si kiritilmaydi).
+ */
+export function pickPersonForClass(
+  persons: PersonContext[],
+  classId: string,
+  className?: string | null,
+): PersonContext | null {
+  if (!persons || persons.length === 0) return null;
+  if (persons.length === 1) return persons[0];
+  const norm = (s: string) => (s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  const cid = (classId || "").trim();
+  for (const p of persons) {
+    const pg = (p.groupId || "").trim();
+    if (cid && pg && (pg === cid || pg.includes(cid) || cid.includes(pg))) return p;
+  }
+  const nCls = norm(className || "");
+  if (nCls) {
+    for (const p of persons) {
+      if (norm(p.groupName) && norm(p.groupName) === nCls) return p;
+    }
+  }
+  const anyGroupInfo = persons.some((p) => (p.groupId || "").trim() || (p.groupName || "").trim());
+  return anyGroupInfo ? null : persons[0];
 }
 
 function normLoose(s: string): string {

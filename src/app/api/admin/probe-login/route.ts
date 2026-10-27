@@ -14,6 +14,10 @@ import {
   fetchTeacherGroups,
   loginEmaktab,
   pageGet,
+  dedupeShiftLessons,
+  lessonMatchesTeacherLoad,
+  pickPersonForClass,
+  scheduleFromDiaryDays,
   parseHomeworkRows,
   parseHomeworkSelects,
   probeLogin,
@@ -224,6 +228,67 @@ export async function GET(req: NextRequest) {
           }
         } catch (e) {
           (out as Record<string, unknown>).dshift = "xato " + String(e).slice(0, 40);
+        }
+        return NextResponse.json(out);
+      }
+
+      // ?tweek=1 — buildTeacherWeek zanjirini jonli tekshirish:
+      // pickPersonForClass → diary → dedupeShiftLessons → lessonMatchesTeacherLoad.
+      if (sp.get("tweek")) {
+        const ascii2 = (s: string) => s.replace(/[^\x20-\x7E]/g, ".").replace(/['"`]/g, "~");
+        const gid = sp.get("gid") || "2524942980748797372";
+        const fromT = sp.get("from") || "2026-10-26";
+        const toT = sp.get("to") || "2026-10-28";
+        try {
+          const tg = await fetchTeacherGroups(result.session);
+          const g = tg.find(
+            (x) => x.classId === gid || x.classId.includes(gid) || gid.includes(x.classId),
+          );
+          const subjects = g?.subjects ?? [];
+          (out as Record<string, unknown>).load =
+            subjects.map((s) => ascii2(s).slice(0, 6)).join("/").slice(0, 120) || "bosh";
+          const rows = await db.select().from(memberAccounts).limit(8);
+          const outs: string[] = [];
+          for (const r of rows) {
+            const rid = String(r.classId ?? "");
+            if (!r.emaktabLogin || !r.emaktabPasswordEnc) continue;
+            if (!(rid === gid || rid.includes(gid) || gid.includes(rid))) continue;
+            let pw = "";
+            try {
+              pw = decryptSecret(r.emaktabPasswordEnc);
+            } catch {
+              continue;
+            }
+            const lr = await loginEmaktab(r.emaktabLogin, pw);
+            const kind = String(r.kind ?? "?").slice(0, 3);
+            if (lr.status !== "ok") {
+              outs.push(`${kind}:${lr.status}`);
+              continue;
+            }
+            const person = pickPersonForClass(lr.session.persons, gid, g?.className ?? null);
+            if (!person) {
+              outs.push(`${kind}:person-null`);
+              continue;
+            }
+            outs.push(`${kind}:${ascii2(person.groupName || person.personId.slice(-6))}`);
+            const days = await fetchDiaryDays({ ...lr.session, active: person }, fromT, toT);
+            const sched = scheduleFromDiaryDays(days);
+            for (const d of sched) {
+              const kept = dedupeShiftLessons(d.lessons).filter((l) =>
+                lessonMatchesTeacherLoad(l.subject, l.teacher, subjects, result.session.fullName),
+              );
+              for (const l of kept) {
+                outs.push(
+                  `${String(d.date).slice(5)}:${l.number}:${ascii2(l.subject).slice(0, 6)}@${l.startTime ?? "-"}`,
+                );
+              }
+            }
+          }
+          (out as Record<string, unknown>).tweek = outs.slice(0, 10).join(" | ").slice(0, 330) || "bosh";
+          (out as Record<string, unknown>).tw2 = outs.slice(10, 20).join(" | ").slice(0, 330);
+          (out as Record<string, unknown>).tw3 = outs.slice(20, 30).join(" | ").slice(0, 330);
+        } catch (e) {
+          (out as Record<string, unknown>).tweek = "xato " + String(e).slice(0, 40);
         }
         return NextResponse.json(out);
       }

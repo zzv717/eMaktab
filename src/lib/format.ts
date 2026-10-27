@@ -304,7 +304,7 @@ export function formatTeacherDay(
   const dateLine = dayKey ? `🗓 ${escapeHtml(formatDayTitle(dayKey))}\n` : "";
 
   if (lessons.length === 0) {
-    return header + dateLine + `\nBu kunda darslar topilmadi. 🏖`;
+    return header + dateLine + `\nBu kunda sizga tegishli darslar topilmadi. 🏖`;
   }
 
   let text = header + dateLine;
@@ -348,7 +348,9 @@ export function formatTeacherWeek(
     const d = new Date(startDate.getTime() + i * 86400000);
     const key = d.toISOString().slice(0, 10);
     const wd = (d.getUTCDay() + 6) % 7;
-    const lessons = (daysByDate.get(key) ?? []).slice().sort((a, b) => (a.number || 99) - (b.number || 99));
+    const lessons = (daysByDate.get(key) ?? [])
+      .slice()
+      .sort((a, b) => (a.startTime ?? "z").localeCompare(b.startTime ?? "z") || (a.number || 99) - (b.number || 99));
     text += `\n<b>${WEEKDAY_LABELS[wd]}</b> (${key.slice(8)}.${key.slice(5, 7)})\n`;
     if (lessons.length === 0) {
       text += `   —\n`;
@@ -357,8 +359,8 @@ export function formatTeacherWeek(
     any = true;
     for (const l of lessons) {
       const time = l.startTime ? `🕘 ${l.startTime}${l.endTime ? `–${l.endTime}` : ""}` : `🕘 —`;
-      const group = l.groupName ? ` — <b>${escapeHtml(l.groupName)}</b>` : "";
-      text += `   ${time}  📖 ${escapeHtml(l.subject)}${group}`;
+      const group = l.groupName ? ` — <b>${escapeHtml(l.groupName)}</b> sinf` : "";
+      text += `   ${time}  📖 ${l.number ? `${l.number}. ` : ""}${escapeHtml(l.subject)}${group}`;
       if (l.isCanceled) text += `  ❌`;
       if (l.room) text += `  🚪 ${escapeHtml(l.room)}`;
       text += `\n`;
