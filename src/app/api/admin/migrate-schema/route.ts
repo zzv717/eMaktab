@@ -108,6 +108,30 @@ const STATEMENTS: { name: string; run: string }[] = [
       created_at timestamptz NOT NULL DEFAULT now()
     )`,
   },
+  {
+    name: "create payments (💎 Pro to'lovlari)",
+    run: `CREATE TABLE IF NOT EXISTS payments (
+      id serial PRIMARY KEY,
+      telegram_id bigint NOT NULL,
+      plan varchar(16) NOT NULL,
+      amount bigint,
+      status varchar(16) NOT NULL DEFAULT 'draft',
+      receipt_file_id text,
+      receipt_unique_id text,
+      receipt_ref varchar(64),
+      admin_note varchar(255),
+      reviewed_at timestamptz,
+      created_at timestamptz NOT NULL DEFAULT now()
+    )`,
+  },
+  {
+    name: "create bot_settings (sozlamalar)",
+    run: `CREATE TABLE IF NOT EXISTS bot_settings (
+      key varchar(64) PRIMARY KEY,
+      value text,
+      updated_at timestamptz NOT NULL DEFAULT now()
+    )`,
+  },
   { name: "drop login_tokens (eski)", run: `DROP TABLE IF EXISTS login_tokens` },
 ];
 

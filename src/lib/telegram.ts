@@ -304,7 +304,8 @@ export interface TelegramMessage {
   from?: TelegramUser;
   chat: { id: number };
   text?: string;
-  document?: { file_id: string; file_name?: string; mime_type?: string };
+  document?: { file_id: string; file_unique_id?: string; file_name?: string; mime_type?: string };
+  photo?: Array<{ file_id: string; file_unique_id?: string; width?: number; height?: number }>;
 }
 
 /** Telegram faylini yuklab oladi (bot token serverda — brauzer kerak emas). */
@@ -433,6 +434,10 @@ export function adminHomeKeyboard() {
   return kb([
     [{ text: "👥 Foydalanuvchilar", callback_data: "adm:u:0" }],
     [
+      { text: "💳 To'lovlar", callback_data: "adm:pay" },
+      { text: "⚙️ To'lov sozlamalari", callback_data: "adm:payset" },
+    ],
+    [
       { text: "📢 Xabar yuborish", callback_data: "adm:bc" },
       { text: "🚨 Jurnal", callback_data: "adm:log" },
     ],
@@ -506,6 +511,69 @@ export function adminBroadcastConfirmKeyboard() {
   ]);
 }
 
+// ==========================================
+// 💎 Pro / to'lov klaviaturalari
+// ==========================================
+
+/** 💎 Pro olish — tarif tanlash. */
+export function proPlanKeyboard(prices: Record<string, number | null>) {
+  const row = (period: string, title: string) => ({
+    text: prices[period] ? `${title} — ${String(prices[period]).replace(/\B(?=(\d{3})+(?!\d))/g, " ")} so'm` : title,
+    callback_data: `prop:${period}`,
+  });
+  return kb([
+    [row("1m", "📅 1 oy"), row("3m", "📅 3 oy")],
+    [row("1y", "📅 1 yil")],
+    [{ text: "🏠 Asosiy sahifa", callback_data: "menu:home" }],
+  ]);
+}
+
+/** Chek yuborilgandan keyin tasdiqlash. */
+export function payConfirmKeyboard(pid: number) {
+  return kb([
+    [
+      { text: "✅ Yuborish", callback_data: `pay:s:${pid}` },
+      { text: "❌ Bekor qilish", callback_data: `pay:c:${pid}` },
+    ],
+  ]);
+}
+
+/** Admin uchun to'lovni tasdiqlash/rad etish. */
+export function payAdminKeyboard(pid: number) {
+  return kb([
+    [
+      { text: "✅ Tasdiqlash", callback_data: `adm:payok:${pid}` },
+      { text: "❌ Rad etish", callback_data: `adm:payno:${pid}` },
+    ],
+    [{ text: "💳 To'lovlar", callback_data: "adm:pay" }],
+    [{ text: "🛠 Admin panel", callback_data: "adm:home" }],
+  ]);
+}
+
+/** Admin: to'lov sozlamalari. */
+export function paySettingsKeyboard() {
+  return kb([
+    [
+      { text: "💳 Karta raqami", callback_data: "adm:sv:card" },
+      { text: "👤 Karta egasi", callback_data: "adm:sv:holder" },
+    ],
+    [
+      { text: "💰 1 oy narxi", callback_data: "adm:sv:price1" },
+      { text: "💰 3 oy narxi", callback_data: "adm:sv:price3" },
+    ],
+    [{ text: "💰 1 yil narxi", callback_data: "adm:sv:priceY" }],
+    [{ text: "⬅️ Admin panel", callback_data: "adm:home" }],
+  ]);
+}
+
+/** 💎 Pro ekranidagi asosiy tugmalar. */
+export function proBuyKeyboard() {
+  return kb([
+    [{ text: "💎 Pro olish", callback_data: "prop:buy" }],
+    [{ text: "🏠 Asosiy sahifa", callback_data: "menu:home" }],
+  ]);
+}
+
 /** Baholar bo'limi. */
 export function gradesKeyboard() {
   return kb([
@@ -561,6 +629,7 @@ export function profileKeyboard() {
 /** Sozlamalar bo'limi. */
 export function settingsKeyboard() {
   return kb([
+    [{ text: "💎 Pro holati", callback_data: "prop:status" }],
     [{ text: "🔄 Login/parolni yangilash", callback_data: "settings:relogin" }],
     [{ text: "🚪 Chiqish (Logout)", callback_data: "settings:logout" }],
     [{ text: "🏠 Asosiy menyu", callback_data: "menu:home" }],

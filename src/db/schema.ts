@@ -94,6 +94,34 @@ export const botMessages = pgTable("bot_messages", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+// 💎 Pro to'lovlari — foydalanuvchi chek yuboradi, admin tasdiqlaydi (yoki rad etadi).
+// Soxta cheklarga qarshi: receipt_unique_id (Telegram fayl) va receipt_ref
+// (tranzaksiya raqami) bo'yicha takrorlanish tekshiriladi.
+export const payments = pgTable("payments", {
+  id: serial("id").primaryKey(),
+  telegramId: bigint("telegram_id", { mode: "number" }).notNull(),
+  // tanlangan tarif: 1m | 3m | 1y
+  plan: varchar("plan", { length: 16 }).notNull(),
+  // kutilayotgan summa (so'm) — tanlangan tarif narxi
+  amount: bigint("amount", { mode: "number" }),
+  // draft (chek kutilmoqda) | pending (admin tasdiqlashini kutmoqda) | approved | rejected
+  status: varchar("status", { length: 16 }).notNull().default("draft"),
+  receiptFileId: text("receipt_file_id"),
+  receiptUniqueId: text("receipt_unique_id"),
+  receiptRef: varchar("receipt_ref", { length: 64 }),
+  adminNote: varchar("admin_note", { length: 255 }),
+  reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// Bot sozlamalari (kalit-qiymat) — masalan to'lov rekvizitlari:
+// pay_card, pay_holder, pay_price_1m, pay_price_3m, pay_price_1y.
+export const botSettings = pgTable("bot_settings", {
+  key: varchar("key", { length: 64 }).primaryKey(),
+  value: text("value"),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 // Xato va muhim hodisalar jurnali — masofadan diagnostika uchun (user xato yubormasa ham ko'ramiz).
 export const errorLogs = pgTable("error_log", {
   id: serial("id").primaryKey(),
@@ -108,6 +136,8 @@ export type ErrorLog = typeof errorLogs.$inferSelect;
 
 export type BotUser = typeof botUsers.$inferSelect;
 export type MemberAccount = typeof memberAccounts.$inferSelect;
+export type Payment = typeof payments.$inferSelect;
+export type BotSetting = typeof botSettings.$inferSelect;
 export type ChildContext = {
   personId: string;
   schoolId: string;
