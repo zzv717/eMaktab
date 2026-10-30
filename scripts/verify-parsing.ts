@@ -45,6 +45,7 @@ import {
 } from "../src/lib/emaktab";
 import { decryptSecret, encryptSecret } from "../src/lib/crypto";
 import { formatDay, formatGrades, formatNews, formatWeek } from "../src/lib/format";
+import { hhmmToMinutes, minutesToHHMM, parseDays, parseTestDraft, testSourceLabel } from "../src/lib/nazoratchi";
 
 let passed = 0;
 let failed = 0;
@@ -546,6 +547,21 @@ check("looksLikeName: ko'rish rad", !looksLikeName("Ko'rish"), true);
   const mixed = planPeriodOptions([{ value: "ID9", name: "2-chorak" }]);
   check("period: aralash — real+ sintez", mixed[2]?.value === "ID9" && mixed[1]?.value === "1", mixed);
   check("period: tartib barqaror (2 marta)", JSON.stringify(planPeriodOptions([])) === JSON.stringify(synth));
+}
+
+{
+  // 👁 Nazoratchi yordamchilari
+  check("nz: HH:MM → daqqa (16:00)", hhmmToMinutes("16:00") === 960);
+  check("nz: HH:MM → daqqa (8:30)", hhmmToMinutes("8:30") === 510);
+  check("nz: noto'g'ri soat → null", hhmmToMinutes("abc") === null);
+  check("nz: daqqa → HH:MM (510)", minutesToHHMM(510) === "08:30");
+  check("nz: kunlar JSON", JSON.stringify(parseDays("[1,3,5]")) === "[1,3,5]");
+  check("nz: kunlar buzilgan → default", JSON.stringify(parseDays("xato")) === "[1,2,3,4,5]");
+  const d1 = parseTestDraft('{"mode":"book","title":"Alpomish","author":"Xolquloq","pages":"12-20"}');
+  check("nz: test draft parse", d1?.mode === "book" && d1.title === "Alpomish");
+  check("nz: test source label kitob", (d1 && testSourceLabel(d1).includes("Alpomish")) === true);
+  const d2 = parseTestDraft(null);
+  check("nz: bo'sh draft → null", d2 === null);
 }
 
 console.log(`\nNatija: ${passed} o'tdi, ${failed} yiqildi`);

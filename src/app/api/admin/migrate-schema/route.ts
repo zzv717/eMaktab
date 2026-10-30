@@ -125,6 +125,65 @@ const STATEMENTS: { name: string; run: string }[] = [
     )`,
   },
   {
+    name: "create nazoratchi_links (ota-ona ↔ bola)",
+    run: `CREATE TABLE IF NOT EXISTS nazoratchi_links (
+      id serial PRIMARY KEY,
+      parent_telegram_id bigint NOT NULL,
+      child_telegram_id bigint NOT NULL,
+      child_person_id varchar(32),
+      child_name varchar(255),
+      child_class varchar(64),
+      status varchar(16) NOT NULL DEFAULT 'active',
+      child_blocked varchar(8) NOT NULL DEFAULT 'no',
+      created_at timestamptz NOT NULL DEFAULT now(),
+      removed_at timestamptz
+    )`,
+  },
+  {
+    name: "create nazoratchi_tutor (repetitor soatlari)",
+    run: `CREATE TABLE IF NOT EXISTS nazoratchi_tutor (
+      id serial PRIMARY KEY,
+      link_id bigint NOT NULL,
+      subject varchar(64) NOT NULL,
+      time varchar(5) NOT NULL,
+      duration_min bigint NOT NULL DEFAULT 60,
+      days varchar(32) NOT NULL DEFAULT '[1,2,3,4,5]',
+      place varchar(120),
+      active varchar(8) NOT NULL DEFAULT 'yes',
+      created_at timestamptz NOT NULL DEFAULT now()
+    )`,
+  },
+  {
+    name: "create nazoratchi_tests (AI testlari)",
+    run: `CREATE TABLE IF NOT EXISTS nazoratchi_tests (
+      id serial PRIMARY KEY,
+      link_id bigint NOT NULL,
+      child_telegram_id bigint NOT NULL,
+      parent_telegram_id bigint NOT NULL,
+      mode varchar(8) NOT NULL,
+      source varchar(255),
+      question text NOT NULL,
+      options text NOT NULL,
+      correct_index bigint NOT NULL,
+      child_answer bigint,
+      answered_at timestamptz,
+      is_correct varchar(8),
+      created_at timestamptz NOT NULL DEFAULT now()
+    )`,
+  },
+  {
+    name: "create nazoratchi_events (bildirishnoma dedup)",
+    run: `CREATE TABLE IF NOT EXISTS nazoratchi_events (
+      id serial PRIMARY KEY,
+      link_id bigint NOT NULL,
+      day varchar(10) NOT NULL,
+      type varchar(16) NOT NULL,
+      key varchar(32) NOT NULL DEFAULT '0',
+      created_at timestamptz NOT NULL DEFAULT now(),
+      UNIQUE (link_id, day, type, key)
+    )`,
+  },
+  {
     name: "create bot_settings (sozlamalar)",
     run: `CREATE TABLE IF NOT EXISTS bot_settings (
       key varchar(64) PRIMARY KEY,

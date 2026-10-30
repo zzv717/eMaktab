@@ -163,6 +163,7 @@ export const MENU_TEXT = {
   tomorrow: "📆 Ertangi darslar",
   week: "📆 Haftalik jadval",
   admin: "🛠 Admin panel",
+  nazoratchi: "👁 Nazoratchi",
   conduct: "✅ Darsni o'tildi qilish",
   ctp: "📄 Ish reja joylashtirish",
   maqom: "📝 Maqom berish",
@@ -193,6 +194,7 @@ export function teacherReplyKeyboard(isClassTeacher: boolean, admin = false) {
     rows.push([{ text: MENU_TEXT.news }, { text: MENU_TEXT.profile }]);
     rows.push([{ text: MENU_TEXT.settings }]);
   }
+  rows.push([{ text: MENU_TEXT.nazoratchi }]);
   if (admin) rows.push([{ text: MENU_TEXT.admin }]);
   rows.push([{ text: MENU_TEXT.guide }]);
   return replyKb(rows);
@@ -204,6 +206,7 @@ export function mainReplyKeyboard(admin = false) {
     [{ text: MENU_TEXT.grades }, { text: MENU_TEXT.schedule }],
     [{ text: MENU_TEXT.news }, { text: MENU_TEXT.settings }],
   ];
+  rows.push([{ text: MENU_TEXT.nazoratchi }]);
   if (admin) rows.push([{ text: MENU_TEXT.admin }]);
   rows.push([{ text: MENU_TEXT.guide }]);
   return replyKb(rows);
@@ -355,12 +358,18 @@ export function mainMenuKeyboard(connected: boolean) {
             { text: "📚 Dars jadvali", callback_data: "menu:schedule" },
           ],
           [
+            { text: "👁 Nazoratchi", callback_data: "nz:home" },
             { text: "📰 Yangiliklar", callback_data: "menu:news" },
+          ],
+          [
             { text: "⚙️ Sozlamalar", callback_data: "menu:settings" },
           ],
           [{ text: "📖 Yoriqnoma", callback_data: "menu:guide" }],
         ]
-      : [[{ text: "🔐 eMaktabni ulash (login)", callback_data: "menu:connect" }]],
+      : [
+          [{ text: "🔐 eMaktabni ulash (login)", callback_data: "menu:connect" }],
+          [{ text: "👶 Nazoratchi kodini kiritish", callback_data: "nz:codebtn" }],
+        ],
   );
 }
 
@@ -383,6 +392,7 @@ export function teacherMenuKeyboard(connected: boolean, isClassTeacher: boolean)
   } else {
     rows.push([{ text: "📆 Haftalik jadval", callback_data: "t:week" }]);
   }
+  rows.push([{ text: "👁 Nazoratchi", callback_data: "nz:home" }]);
   rows.push([
     { text: "📰 Yangiliklar", callback_data: "menu:news" },
     { text: "👤 Profil", callback_data: "profile" },
@@ -649,6 +659,14 @@ export function logoutConfirmKeyboard() {
 /** Ro'yxatdan o'tish jarayoni uchun bekor qilish. */
 export function cancelKeyboard() {
   return kb([[{ text: "❌ Bekor qilish", callback_data: "menu:cancel" }]]);
+}
+
+/** Login bosqichi — bolalar (eMaktabsiz) Nazoratchi kodi orqali kira oladi. */
+export function loginPromptKeyboard() {
+  return kb([
+    [{ text: "👶 Nazoratchi kodini kiritish", callback_data: "nz:codebtn" }],
+    [{ text: "❌ Bekor qilish", callback_data: "menu:cancel" }],
+  ]);
 }
 
 /** Umumiy "ortga/menyu" navigatsiyasi. */

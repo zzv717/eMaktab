@@ -114,6 +114,65 @@ export const payments = pgTable("payments", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+// 👁 Nazoratchi — ota-ona va bola telefonlarini ulash, avtomatik xabarlar,
+// repetitor/kutubxona testlari. Ulanishni FAQAT ota-ona uzadi (bola o'chira olmaydi).
+export const nazoratchiLinks = pgTable("nazoratchi_links", {
+  id: serial("id").primaryKey(),
+  parentTelegramId: bigint("parent_telegram_id", { mode: "number" }).notNull(),
+  childTelegramId: bigint("child_telegram_id", { mode: "number" }).notNull(),
+  // bola eMaktab personId (baholar/jadval uchun) — ulash paytida olinadi
+  childPersonId: varchar("child_person_id", { length: 32 }),
+  childName: varchar("child_name", { length: 255 }),
+  childClass: varchar("child_class", { length: 64 }),
+  // active | removed (faqat ota-ona yoki admin o'chiradi!)
+  status: varchar("status", { length: 16 }).notNull().default("active"),
+  // bola botni bloklagan bo'lsa — ogohlantirish uchun
+  childBlocked: varchar("child_blocked", { length: 8 }).notNull().default("no"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  removedAt: timestamp("removed_at", { withTimezone: true }),
+});
+
+// Repetitor (yoki qo'shimcha mashg'ulot) sozlamalari — ota-ona kiritadi.
+export const nazoratchiTutor = pgTable("nazoratchi_tutor", {
+  id: serial("id").primaryKey(),
+  linkId: bigint("link_id", { mode: "number" }).notNull(),
+  subject: varchar("subject", { length: 64 }).notNull(),
+  time: varchar("time", { length: 5 }).notNull(), // HH:MM
+  durationMin: bigint("duration_min", { mode: "number" }).notNull().default(60),
+  // hafta kunlari: [1,3,5] = Dushanba, Chorshanba, Juma (0=Dushanba)
+  days: varchar("days", { length: 32 }).notNull().default("[1,2,3,4,5]"),
+  place: varchar("place", { length: 120 }),
+  active: varchar("active", { length: 8 }).notNull().default("yes"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// 📝 AI testlari — kitob yoki mavzu bo'yicha. Ota-onaga JAVOB bilan, bolaga VARIANT.
+export const nazoratchiTests = pgTable("nazoratchi_tests", {
+  id: serial("id").primaryKey(),
+  linkId: bigint("link_id", { mode: "number" }).notNull(),
+  childTelegramId: bigint("child_telegram_id", { mode: "number" }).notNull(),
+  parentTelegramId: bigint("parent_telegram_id", { mode: "number" }).notNull(),
+  mode: varchar("mode", { length: 8 }).notNull(), // book | topic
+  source: varchar("source", { length: 255 }), // "Kitob (muallif, betlar)" yoki mavzu
+  question: text("question").notNull(),
+  options: text("options").notNull(), // JSON ["A","B","C","D"]
+  correctIndex: bigint("correct_index", { mode: "number" }).notNull(),
+  childAnswer: bigint("child_answer", { mode: "number" }), // tanlangan variant
+  answeredAt: timestamp("answered_at", { withTimezone: true }),
+  isCorrect: varchar("is_correct", { length: 8 }), // yes | no
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// Bildirishnoma dedup — bir xil xabar kuniga bir marta.
+export const nazoratchiEvents = pgTable("nazoratchi_events", {
+  id: serial("id").primaryKey(),
+  linkId: bigint("link_id", { mode: "number" }).notNull(),
+  day: varchar("day", { length: 10 }).notNull(), // YYYY-MM-DD
+  type: varchar("type", { length: 16 }).notNull(), // lesson_start | lesson_end | tutor | tutor_end
+  key: varchar("key", { length: 32 }).notNull().default("0"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 // Bot sozlamalari (kalit-qiymat) — masalan to'lov rekvizitlari:
 // pay_card, pay_holder, pay_price_1m, pay_price_3m, pay_price_1y.
 export const botSettings = pgTable("bot_settings", {
@@ -138,6 +197,10 @@ export type BotUser = typeof botUsers.$inferSelect;
 export type MemberAccount = typeof memberAccounts.$inferSelect;
 export type Payment = typeof payments.$inferSelect;
 export type BotSetting = typeof botSettings.$inferSelect;
+export type NazoratchiLink = typeof nazoratchiLinks.$inferSelect;
+export type NazoratchiTutor = typeof nazoratchiTutor.$inferSelect;
+export type NazoratchiTest = typeof nazoratchiTests.$inferSelect;
+export type NazoratchiEvent = typeof nazoratchiEvents.$inferSelect;
 export type ChildContext = {
   personId: string;
   schoolId: string;
