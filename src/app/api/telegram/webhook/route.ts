@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { handleTelegramUpdate } from "@/lib/bot";
+import { runDueNotifications } from "@/lib/nazoratchi";
 import type { TelegramUpdate } from "@/lib/telegram";
 
 export const dynamic = "force-dynamic";
@@ -28,6 +29,14 @@ export async function POST(req: NextRequest) {
     // Always answer Telegram with 200 so it doesn't keep retrying the same update,
     // but log the error for debugging.
     console.error("Failed to handle Telegram update", error);
+  }
+
+  // 👁 Nazoratchi bildirishnomalari — cron tushmasa ham, har qanday faollikda
+  // tekshiriladi (ichida 2 daqiqalik qulf bor — og'ir emas).
+  try {
+    await runDueNotifications();
+  } catch {
+    /* bildirishnoma xatosi javobga xalaqit bermaydi */
   }
 
   return NextResponse.json({ ok: true });

@@ -5,7 +5,14 @@
 
 import { and, count, desc, eq, gte, isNotNull, isNull, or } from "drizzle-orm";
 import { db } from "@/db";
-import { botUsers, errorLogs, memberAccounts, type BotUser } from "@/db/schema";
+import {
+  botUsers,
+  errorLogs,
+  memberAccounts,
+  nazoratchiLinks,
+  nazoratchiTests,
+  type BotUser,
+} from "@/db/schema";
 
 // Kodda doimiy admin (Telegram username — kichik/katta harf farqsiz).
 // Qo'shimcha: env orqali ham qo'shish mumkin (kod o'zgartirmasdan):
@@ -85,6 +92,8 @@ export interface AdminStats {
   pro: number;
   memberAccounts: number;
   events24h: number;
+  nzLinks: number;
+  nzTests: number;
 }
 
 export async function collectAdminStats(): Promise<AdminStats> {
@@ -124,6 +133,11 @@ export async function collectAdminStats(): Promise<AdminStats> {
     .select({ n: count() })
     .from(errorLogs)
     .where(gte(errorLogs.createdAt, dayAgo));
+  const [nzLinkR] = await db
+    .select({ n: count() })
+    .from(nazoratchiLinks)
+    .where(eq(nazoratchiLinks.status, "active"));
+  const [nzTestR] = await db.select({ n: count() }).from(nazoratchiTests);
 
   const roleCount = (r: string) => roleRows.find((x) => x.role === r)?.n ?? 0;
   return {
@@ -137,6 +151,8 @@ export async function collectAdminStats(): Promise<AdminStats> {
     pro: proR?.n ?? 0,
     memberAccounts: memR?.n ?? 0,
     events24h: evR?.n ?? 0,
+    nzLinks: nzLinkR?.n ?? 0,
+    nzTests: nzTestR?.n ?? 0,
   };
 }
 
@@ -150,6 +166,7 @@ export function formatAdminStats(stats: AdminStats): string {
     `• 🕐 Faol (24 soat): <b>${stats.active24h}</b> ta\n` +
     `• 💎 Pro: <b>${stats.pro}</b> ta\n` +
     `• 🧾 Sinf hisoblari (o'quvchi/ota-ona): <b>${stats.memberAccounts}</b> ta\n` +
+    `• 👁 Nazoratchi: <b>${stats.nzLinks}</b> ulanish · <b>${stats.nzTests}</b> test\n` +
     `• 🧯 Xato/hodisalar (24 soat): <b>${stats.events24h}</b> ta`
   );
 }
