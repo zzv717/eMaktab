@@ -21,7 +21,10 @@ function envList(name: string): string[] {
 }
 
 /** Foydalanuvchi adminmi? (faqat admin uchun — boshqalarga hech narsa ko'rinmaydi) */
-export function isAdmin(user: BotUser, liveUsername?: string | null): boolean {
+export function isAdmin(
+  user: Pick<BotUser, "telegramId" | "username">,
+  liveUsername?: string | null,
+): boolean {
   const ids = envList("TELEGRAM_ADMIN_IDS");
   if (ids.includes(String(user.telegramId))) return true;
   const names = [

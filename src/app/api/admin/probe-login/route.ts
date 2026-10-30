@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { eq, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { botUsers, memberAccounts } from "@/db/schema";
+import { botSettings, botUsers, memberAccounts, payments } from "@/db/schema";
 import { decryptSecret } from "@/lib/crypto";
 import {
   extractTeacherJournals,
@@ -228,6 +228,33 @@ export async function GET(req: NextRequest) {
           }
         } catch (e) {
           (out as Record<string, unknown>).dshift = "xato " + String(e).slice(0, 40);
+        }
+        return NextResponse.json(out);
+      }
+
+      // ?pay=1 — to'lov tizimini jonli tekshirish (sozlamalar + to'lovlar).
+      if (sp.get("pay")) {
+        const ascii4 = (s: string) => s.replace(/[^\x20-\x7E]/g, ".").replace(/['"`]/g, "~");
+        try {
+          const st = await db.select().from(botSettings).limit(10);
+          (out as Record<string, unknown>).set = st
+            .map((r) => `${r.key}=${ascii4((r.value ?? "").slice(0, 20))}`)
+            .join(" | ")
+            .slice(0, 300) || "bosh";
+          const pays = await db.select().from(payments).limit(8);
+          (out as Record<string, unknown>).pay = pays
+            .map((r) => `#${r.id}:${r.telegramId}:${r.plan}:${r.status}:${r.receiptRef ? "R" : "-"}${r.receiptUniqueId ? "U" : "-"}`)
+            .join(" | ")
+            .slice(0, 300) || "bosh";
+          const cols = await db.execute(
+            sql`select column_name from information_schema.columns where table_name = 'payments' order by ordinal_position`,
+          );
+          (out as Record<string, unknown>).pcols = cols.rows
+            .map((r) => String((r as { column_name: unknown }).column_name))
+            .join(",")
+            .slice(0, 220);
+        } catch (e) {
+          (out as Record<string, unknown>).pay = "xato " + String(e).slice(0, 60);
         }
         return NextResponse.json(out);
       }

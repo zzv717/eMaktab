@@ -15,7 +15,7 @@
 
 import { and, eq } from "drizzle-orm";
 import { db, logError, logEvent } from "@/db";
-import { botUsers, memberAccounts, type BotUser, type ChildContext } from "@/db/schema";
+import { botUsers, memberAccounts, payments, type BotUser, type ChildContext } from "@/db/schema";
 import { decryptSecret, encryptSecret } from "@/lib/crypto";
 import {
   EmaktabApiError,
@@ -78,6 +78,11 @@ import {
   adminProPeriodKeyboard,
   adminUserKeyboard,
   adminUsersKeyboard,
+  payAdminKeyboard,
+  payConfirmKeyboard,
+  paySettingsKeyboard,
+  proBuyKeyboard,
+  proPlanKeyboard,
   cancelKeyboard,
   cleanupPreviousFlow,
   MENU_TEXT,
@@ -120,6 +125,30 @@ import {
   setUserPlan,
   type BroadcastAudience,
 } from "@/lib/admin";
+import {
+  adminChatIds,
+  approvePayment,
+  attachReceipt,
+  attachRef,
+  countPendingPayments,
+  countPayments,
+  createDraftPayment,
+  findPaymentByReceiptUid,
+  findPaymentByRef,
+  formatSum,
+  getPaySettings,
+  getPayment,
+  listPayments,
+  PAY_KEYS,
+  payStatusIcon,
+  paymentHistoryCount,
+  PLAN_TITLES,
+  planPeriods,
+  rejectPayment,
+  setSetting,
+  submitPayment,
+  type PlanPeriod,
+} from "@/lib/payments";
 
 const SESSION_CACHE_TTL_MS = 15 * 60 * 1000; // eMaktab sessiyasi 15 daqiqa keshlanadi
 
@@ -175,6 +204,27 @@ function menuFor(user: BotUser) {
   return isTeacher(user)
     ? teacherReplyKeyboard(isClassTeacher(user), isAdmin(user))
     : mainReplyKeyboard(isAdmin(user));
+}
+
+/**
+ * 💎 Pro cheklovi — FAQAT o'qituvchilar uchun.
+ * O'quvchi/ota-ona uchun barcha funksiyalar bepul (ular eMaktabni bepul ko'ra oladi).
+ * true qaytsa — funksiya bloklandi va Pro taklif qilindi.
+ */
+async function proGate(chatId: number, user: BotUser): Promise<boolean> {
+  if (user.role !== "teacher") return false;
+  if (isAdmin(user)) return false;
+  if (planActive(user)) return false;
+  await sendMessage(
+    chatId,
+    `💎 <b>Bu funksiya Pro tarifda</b>\n\n` +
+      `Ushbu funksiya faqat 💎 <b>Pro o'qituvchilar</b> uchun ochiq.\n` +
+      `O'quvchi va ota-onalar uchun barcha funksiyalar <b>bepul</b>.\n\n` +
+      `🎯 Tariflar: 1 oy · 3 oy · 1 yil\n` +
+      `To'lov qilib, chek yuborasiz — tasdiqlangandan so'ng Pro <b>avtomatik</b> ochiladi.`,
+    { replyMarkup: proBuyKeyboard() },
+  );
+  return true;
 }
 
 function parseChildren(user: BotUser): ChildContext[] {
@@ -739,6 +789,12 @@ async function handleMessage(message: TelegramMessage) {
     return;
   }
 
+  // --- 💎 Pro: chek rasm/fayli (state: pay:rec:{id}) ---
+  if ((message.photo || message.document) && (user.state ?? "").startsWith("pay:rec:")) {
+    await handleReceiptUpload(chatId, user, message);
+    return;
+  }
+
   // --- Buyruqlar ---
   if (text === "/start") {
     await resetState(from.id);
@@ -1092,6 +1148,54 @@ async function handleMessage(message: TelegramMessage) {
     return;
   }
 
+  // --- 💎 Pro: chek tranzaksiya raqami (state: pay:ref:{id}) ---
+  if (user.state && user.state.startsWith("pay:ref:") && text && !text.startsWith("/")) {
+    await handleReceiptRef(chatId, user, text);
+    return;
+  }
+
+  // --- 🛠 Admin: to'lov sozlamasi qiymati (state: adm:sv:{key}) ---
+  if (user.state && user.state.startsWith("adm:sv:") && isAdmin(user)) {
+    const key = user.state.slice(7);
+    const allowed = ["card", "holder", "price1", "price3", "priceY"];
+    if (!allowed.includes(key) || !text || text.startsWith("/")) {
+      await sendMessage(chatId, "Iltimos, to'g'ri qiymat matn sifatida yozing.", {
+        replyMarkup: kb([[{ text: "❌ Bekor qilish", callback_data: "menu:cancel" }]]),
+      });
+      return;
+    }
+    let value = text.trim();
+    const digits = value.replace(/[^\d]/g, "");
+    if (key === "card") {
+      if (digits.length < 16) {
+        await sendMessage(chatId, "⚠️ Karta raqami kamida 16 xonali bo'lishi kerak. Qayta yozing.", {
+          replyMarkup: kb([[{ text: "❌ Bekor qilish", callback_data: "menu:cancel" }]]),
+        });
+        return;
+      }
+      value = digits;
+    } else if (key !== "holder") {
+      if (!digits) {
+        await sendMessage(chatId, "⚠️ Narxni faqat raqamda kiriting (masalan: 30000).", {
+          replyMarkup: kb([[{ text: "❌ Bekor qilish", callback_data: "menu:cancel" }]]),
+        });
+        return;
+      }
+      value = digits;
+    }
+    const keyMap: Record<string, string> = {
+      card: PAY_KEYS.card,
+      holder: PAY_KEYS.holder,
+      price1: PAY_KEYS.price1,
+      price3: PAY_KEYS.price3,
+      priceY: PAY_KEYS.priceY,
+    };
+    await setSetting(keyMap[key], value);
+    await resetState(from.id);
+    await sendMessage(chatId, `✅ Saqlandi.`, { replyMarkup: adminHomeKeyboard() });
+    return;
+  }
+
   // --- 🛠 Admin panel (faqat admin uchun — boshqalarga panel mavjudligi ko'rinmaydi) ---
   if (text === "/admin" || text === MENU_TEXT.admin) {
     if (!isAdmin(user)) {
@@ -1133,15 +1237,24 @@ async function handleMessage(message: TelegramMessage) {
       return;
     }
     if (text === MENU_TEXT.conduct) {
-      if (isTeacher(user)) await sendConductStart(chatId, user);
+      if (isTeacher(user)) {
+        if (await proGate(chatId, user)) return;
+        await sendConductStart(chatId, user);
+      }
       return;
     }
     if (text === MENU_TEXT.ctp) {
-      if (isTeacher(user)) await sendCtpStart(chatId, user);
+      if (isTeacher(user)) {
+        if (await proGate(chatId, user)) return;
+        await sendCtpStart(chatId, user);
+      }
       return;
     }
     if (text === MENU_TEXT.maqom) {
-      if (isTeacher(user)) await sendMaqomStart(chatId, user);
+      if (isTeacher(user)) {
+        if (await proGate(chatId, user)) return;
+        await sendMaqomStart(chatId, user);
+      }
       return;
     }
     if (text === MENU_TEXT.profile) {
@@ -1187,6 +1300,7 @@ async function handleMessage(message: TelegramMessage) {
     if (text === "/settings" || text === MENU_TEXT.settings) {
       const children = parseChildren(user);
       const rows: Array<Array<{ text: string; callback_data: string }>> = [];
+      rows.push([{ text: "💎 Pro holati", callback_data: "prop:status" }]);
       if (children.length > 0 || user.role === "parent") {
         rows.push([{ text: "👶 Bolalar", callback_data: "settings:children" }]);
       }
@@ -1671,6 +1785,7 @@ async function handleMaqomCallback(
 
 /** Yuborilgan ish-reja faylini qabul qilish (faqat o'qituvchi, ctp_file holatida). */
 async function handleCtpDocument(chatId: number, user: BotUser, message: TelegramMessage) {
+  if (await proGate(chatId, user)) return;
   const doc = message.document!;
   const fileName = (doc.file_name ?? "ish-reja").toLowerCase();
   const st = user.state ?? "";
@@ -2357,6 +2472,283 @@ function normalizeName(name: string): string {
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
+// 💎 Pro / to'lov oqimi (foydalanuvchi tomoni) — chek bilan.
+// Chek tasdiqlanishi bilan Pro AVTOMATIK ochiladi. Soxta cheklar tekshiriladi.
+// ---------------------------------------------------------------------------
+
+async function sendProStatus(chatId: number, user: BotUser) {
+  const active = planActive(user);
+  const lines = [
+    `💎 <b>Pro holati</b>`,
+    ``,
+    `👤 ${escapeHtml(user.fullName || user.emaktabLogin || "")}`,
+    `• Tarif: <b>${planLabel(user)}</b>`,
+  ];
+  if (user.role !== "teacher") {
+    lines.push(``, `🎉 <b>Siz uchun barcha funksiyalar BEPUL</b> — Pro talab qilinmaydi.`);
+    await sendMessage(chatId, lines.join("\n"), {
+      replyMarkup: kb([[{ text: "🏠 Asosiy sahifa", callback_data: "menu:home" }]]),
+    });
+    return;
+  }
+  if (active) {
+    lines.push(
+      ``,
+      `✅ Barcha Pro funksiyalar ochiq:`,
+      `✅ Darsni o'tildi qilish · 📝 Maqom berish · 📄 Ish reja joylashtirish`,
+    );
+  } else {
+    lines.push(
+      ``,
+      `🔒 Pro funksiyalar yopiq (bepul tarif):`,
+      `✅ Darsni o'tildi qilish · 📝 Maqom berish · 📄 Ish reja joylashtirish`,
+      ``,
+      `🎯 1 oy · 3 oy · 1 yil tariflari mavjud.`,
+    );
+  }
+  await sendMessage(chatId, lines.join("\n"), {
+    replyMarkup: active
+      ? kb([[{ text: "🏠 Asosiy sahifa", callback_data: "menu:home" }]])
+      : proBuyKeyboard(),
+  });
+}
+
+async function sendProBuy(chatId: number, user: BotUser) {
+  const s = await getPaySettings();
+  const plans = planPeriods().filter((p) => s.prices[p] !== null);
+  if (!s.card || plans.length === 0) {
+    await sendMessage(
+      chatId,
+      `⚠️ <b>To'lov rekvizitlari hali sozlanmagan.</b>\n\n` +
+        `Iltimos, admin bilan bog'laning: <b>${ADMIN_NICK}</b>`,
+      { replyMarkup: kb([[{ text: "🏠 Asosiy sahifa", callback_data: "menu:home" }]]) },
+    );
+    return;
+  }
+  const prices: Record<string, number | null> = s.prices;
+  await sendMessage(
+    chatId,
+    `💎 <b>Pro tarifini tanlang</b>\n\n` +
+      `To'lov qilgach, <b>chek rasmini</b> yuborasiz — admin tasdiqlagach Pro <b>avtomatik</b> ochiladi.`,
+    { replyMarkup: proPlanKeyboard(prices) },
+  );
+}
+
+async function sendProPlanSelected(chatId: number, user: BotUser, plan: PlanPeriod) {
+  const s = await getPaySettings();
+  const price = s.prices[plan];
+  if (!s.card || price === null || price === undefined) {
+    await sendMessage(
+      chatId,
+      `⚠️ Bu tarif narxi hali sozlanmagan. Admin bilan bog'laning: <b>${ADMIN_NICK}</b>`,
+      { replyMarkup: kb([[{ text: "🏠 Asosiy sahifa", callback_data: "menu:home" }]]) },
+    );
+    return;
+  }
+  const draft = await createDraftPayment(user.telegramId, plan, price);
+  await db
+    .update(botUsers)
+    .set({ state: `pay:rec:${draft.id}`, updatedAt: new Date() })
+    .where(eq(botUsers.telegramId, user.telegramId));
+  await sendMessage(
+    chatId,
+    `💳 <b>To'lov</b> — 🎯 ${PLAN_TITLES[plan]} · 💰 <b>${formatSum(price)}</b>\n\n` +
+      `1️⃣ Quyidagi kartaga <b>${formatSum(price)}</b> to'lov qiling:\n\n` +
+      `💳 Karta: <code>${escapeHtml(s.card)}</code>\n` +
+      `👤 Egasi: <b>${escapeHtml(s.holder || "—")}</b>\n\n` +
+      `2️⃣ So'ng <b>chek rasmini</b> (screenshot yoki foto) shu yerga yuboring.\n` +
+      `3️⃣ Chekdagi <b>tranzaksiya raqamini</b> kiritasiz.\n\n` +
+      `⚠️ <i>Cheksiz Pro oCHILMAYDI. Bir xil chek/raqam ikkinchi marta qabul qilinmaydi.</i>`,
+    {
+      replyMarkup: kb([
+        [{ text: "❌ Bekor qilish", callback_data: `pay:c:${draft.id}` }],
+      ]),
+    },
+  );
+}
+
+/** Chek rasm/faylini qabul qilish (state: pay:rec:{id}). */
+async function handleReceiptUpload(chatId: number, user: BotUser, message: TelegramMessage) {
+  const st = user.state ?? "";
+  const m = st.match(/^pay:rec:(\d+)$/);
+  if (!m) return;
+  const pid = Number(m[1]);
+  const p = await getPayment(pid);
+  if (!p || p.telegramId !== user.telegramId || p.status !== "draft") {
+    await resetState(user.telegramId);
+    await sendMessage(chatId, "❌ Jarayon topilmadi — qaytadan boshlang (💎 Pro holati).", {
+      replyMarkup: menuFor(user),
+    });
+    return;
+  }
+
+  let fileId: string | null = null;
+  let uniqueId: string | null = null;
+  if (message.photo && message.photo.length > 0) {
+    const best = message.photo[message.photo.length - 1]; // eng katta o'lcham
+    fileId = best.file_id;
+    uniqueId = best.file_unique_id ?? null;
+  } else if (message.document) {
+    fileId = message.document.file_id;
+    uniqueId = message.document.file_unique_id ?? null;
+  }
+  if (!fileId) return;
+
+  // Soxta chek himoyasi: bir xil chek rasmi ikkinchi marta qabul qilinmaydi
+  if (uniqueId) {
+    const dup = await findPaymentByReceiptUid(uniqueId);
+    if (dup && dup.id !== pid) {
+      await logEvent("pay_dup_receipt", `uid=${uniqueId} old=${dup.id} new=${pid}`, user.telegramId);
+      await sendMessage(
+        chatId,
+        `⚠️ <b>Bu chek allaqachon qabul qilingan!</b>\n\n` +
+          `Bir xil chekni qayta yuborib bo'lmaydi. Agar to'lov qilgan bo'lsangiz — yangi chek yuboring yoki admin bilan bog'laning: <b>${ADMIN_NICK}</b>`,
+        {
+          replyMarkup: kb([
+            [{ text: "🏠 Asosiy sahifa", callback_data: "menu:home" }],
+          ]),
+        },
+      );
+      return;
+    }
+  }
+
+  await attachReceipt(pid, fileId, uniqueId);
+  await db
+    .update(botUsers)
+    .set({ state: `pay:ref:${pid}`, updatedAt: new Date() })
+    .where(eq(botUsers.telegramId, user.telegramId));
+  await sendMessage(
+    chatId,
+    `✅ <b>Chek qabul qilindi.</b>\n\n` +
+      `Endi chekdagi <b>tranzaksiya raqamini</b> yozing.\n` +
+      `Agar topilmasa — to'lov izohini yozing (masalan: <i>Uzcard, telefon orqali</i>).`,
+    {
+      replyMarkup: kb([[{ text: "❌ Bekor qilish", callback_data: `pay:c:${pid}` }]]),
+    },
+  );
+}
+
+/** Tranzaksiya raqami (state: pay:ref:{id}). */
+async function handleReceiptRef(chatId: number, user: BotUser, text: string) {
+  const st = user.state ?? "";
+  const m = st.match(/^pay:ref:(\d+)$/);
+  if (!m) return;
+  const pid = Number(m[1]);
+  const p = await getPayment(pid);
+  if (!p || p.telegramId !== user.telegramId || p.status !== "draft") {
+    await resetState(user.telegramId);
+    await sendMessage(chatId, "❌ Jarayon topilmadi — qaytadan boshlang (💎 Pro holati).", {
+      replyMarkup: menuFor(user),
+    });
+    return;
+  }
+  const ref = text.trim().slice(0, 64);
+
+  // Soxta chek himoyasi: bir xil tranzaksiya raqami qayta ishlatilmaydi
+  const dup = await findPaymentByRef(ref);
+  if (dup && dup.id !== pid) {
+    await logEvent("pay_dup_ref", `ref=${ref} old=${dup.id} new=${pid}`, user.telegramId);
+    await sendMessage(
+      chatId,
+      `⚠️ <b>Bu tranzaksiya raqami allaqachon ishlatilgan!</b>\n\n` +
+        `To'g'ri tranzaksiya raqamini kiriting yoki admin bilan bog'laning: <b>${ADMIN_NICK}</b>`,
+      {
+        replyMarkup: kb([[{ text: "❌ Bekor qilish", callback_data: `pay:c:${pid}` }]]),
+      },
+    );
+    return;
+  }
+
+  await attachRef(pid, ref);
+  await db
+    .update(botUsers)
+    .set({ state: "idle", updatedAt: new Date() })
+    .where(eq(botUsers.telegramId, user.telegramId));
+  await sendMessage(
+    chatId,
+    `🧾 <b>Chek tayyor</b>\n\n` +
+      `• 🎯 Tarif: <b>${PLAN_TITLES[p.plan as PlanPeriod] ?? p.plan}</b>\n` +
+      `• 💰 Summa: <b>${formatSum(p.amount === null ? null : Number(p.amount))}</b>\n` +
+      `• 🔢 Tranzaksiya: <code>${escapeHtml(ref)}</code>\n` +
+      `• 📎 Chek: ✅ yuklangan\n\n` +
+      `Admin tasdiqlagach, Pro <b>avtomatik</b> ochiladi va xabar olasiz.`,
+    { replyMarkup: payConfirmKeyboard(pid) },
+  );
+}
+
+/** To'lov so'rovini adminga yuborish. */
+async function notifyAdminsNewPayment(pid: number) {
+  const p = await getPayment(pid);
+  if (!p) return;
+  const u = await getUser(p.telegramId);
+  const hist = await paymentHistoryCount(p.telegramId);
+  const warnings: string[] = [];
+  if (!p.receiptRef || p.receiptRef.trim().length < 4) {
+    warnings.push("⚠️ Tranzaksiya raqami kuchsiz/yo'q — diqqat bilan tekshiring!");
+  }
+  if (hist.total > 1) {
+    warnings.push(`ℹ️ Bu foydalanuvchining ${hist.total}-chi to'lov so'rovi (tasdiqlanganlari: ${hist.approved}).`);
+  }
+  const caption =
+    `💳 <b>Yangi to'lov so'rovi</b> (#${p.id})\n` +
+    `👤 <b>${escapeHtml(u?.fullName || u?.firstName || "?")}</b>${u?.username ? ` (@${escapeHtml(u.username)})` : ""}\n` +
+    `🎭 ${escapeHtml(u?.role || "—")} · <code>${p.telegramId}</code>\n` +
+    `🎯 Tarif: <b>${PLAN_TITLES[p.plan as PlanPeriod] ?? p.plan}</b> · 💰 <b>${formatSum(p.amount === null ? null : Number(p.amount))}</b>\n` +
+    `🔢 Tranzaksiya: <code>${escapeHtml(p.receiptRef || "—")}</code>\n` +
+    `📊 Oldingi so'rovlar: ${hist.total} ta (tasdiqlangan: ${hist.approved})\n` +
+    (warnings.length > 0 ? `\n${warnings.join("\n")}\n` : "") +
+    `\n⚠️ <i>Bank ilovangizdagi KIRIM bilan solishtirib tasdiqlang!</i>`;
+  for (const adminChat of await adminChatIds()) {
+    try {
+      if (p.receiptFileId) {
+        await sendPhoto(adminChat, p.receiptFileId, { caption, replyMarkup: payAdminKeyboard(p.id) });
+      } else {
+        await sendMessage(adminChat, caption, { replyMarkup: payAdminKeyboard(p.id) });
+      }
+    } catch {
+      await sendMessage(adminChat, caption, { replyMarkup: payAdminKeyboard(p.id) });
+    }
+  }
+}
+
+async function handlePaySubmit(chatId: number, user: BotUser, pid: number) {
+  const p = await getPayment(pid);
+  if (!p || p.telegramId !== user.telegramId) {
+    await sendMessage(chatId, "❌ To'lov topilmadi.", { replyMarkup: menuFor(user) });
+    return;
+  }
+  if (p.status !== "draft") {
+    await sendMessage(chatId, "ℹ️ Bu to'lov allaqachon yuborilgan.", { replyMarkup: menuFor(user) });
+    return;
+  }
+  if (!p.receiptFileId) {
+    await sendMessage(chatId, "⚠️ Avval chek rasmini yuboring.", {
+      replyMarkup: kb([[{ text: "❌ Bekor qilish", callback_data: `pay:c:${pid}` }]]),
+    });
+    return;
+  }
+  await submitPayment(pid);
+  await notifyAdminsNewPayment(pid);
+  await sendMessage(
+    chatId,
+    `✅ <b>To'lov so'rovi yuborildi!</b>\n\n` +
+      `Admin chekni tekshirib tasdiqlaydi. Tasdiqlangach — Pro <b>avtomatik</b> ochiladi va bu yerga xabar keladi.\n\n` +
+      `<i>Odatda bu bir necha daqiqa davom etadi.</i>`,
+    { replyMarkup: menuFor(user) },
+  );
+}
+
+async function handlePayCancel(chatId: number, user: BotUser, pid: number) {
+  const p = await getPayment(pid);
+  if (p && p.telegramId === user.telegramId && p.status === "draft") {
+    await db.delete(payments).where(eq(payments.id, pid));
+  }
+  await resetState(user.telegramId);
+  await sendMessage(chatId, "✅ Bekor qilindi.", { replyMarkup: menuFor(user) });
+}
+
+// ---------------------------------------------------------------------------
 // 🛠 Admin panel oqimi — faqat admin uchun (statistika, foydalanuvchilar,
 // 💎 Pro tarifi, e'lonlar, jurnal). Boshqalar bu tugmalarni umuman ko'rmaydi.
 // ---------------------------------------------------------------------------
@@ -2556,6 +2948,160 @@ async function handleAdminCallback(cb: TelegramCallbackQuery, user: BotUser, dat
     return;
   }
 
+  // 💳 To'lovlar ro'yxati
+  if (data === "adm:pay") {
+    const total = await countPayments();
+    const pending = await countPendingPayments();
+    const rows = await listPayments(8, 0);
+    const lines = rows.map((p, i) => {
+      const d = fmtDT(p.createdAt);
+      return `${i + 1}. #${p.id} · ${PLAN_TITLES[p.plan as PlanPeriod] ?? p.plan} · ${payStatusIcon(p.status)} ${d}`;
+    });
+    const listRows: Array<Array<{ text: string; callback_data: string }>> = rows.map((p, i) => [
+      {
+        text: `${i + 1}. #${p.id} ${payStatusIcon(p.status)} ${PLAN_TITLES[p.plan as PlanPeriod] ?? p.plan}`,
+        callback_data: `adm:payd:${p.id}`,
+      },
+    ]);
+    listRows.push([
+      { text: "🔄 Yangilash", callback_data: "adm:pay" },
+      { text: "⬅️ Admin panel", callback_data: "adm:home" },
+    ]);
+    await show(
+      `💳 <b>To'lovlar</b> — jami ${total} ta (⏳ kutilayotgan: ${pending})\n\n` +
+        (lines.length > 0 ? lines.join("\n") : "Hozircha to'lovlar yo'q."),
+      kb(listRows),
+    );
+    return;
+  }
+
+  // 💳 To'lov tafsiloti (chek + tasdiqlash/rad etish)
+  const paydMatch = data.match(/^adm:payd:(\d+)$/);
+  if (paydMatch) {
+    const p = await getPayment(Number(paydMatch[1]));
+    if (!p) {
+      await show("❌ To'lov topilmadi.", adminHomeKeyboard());
+      return;
+    }
+    const u = await getUser(p.telegramId);
+    const caption =
+      `💳 <b>To'lov #${p.id}</b> — ${payStatusIcon(p.status)} ${p.status}\n` +
+      `👤 <b>${escapeHtml(u?.fullName || u?.firstName || "?")}</b>${u?.username ? ` (@${escapeHtml(u.username)})` : ""}\n` +
+      `🎭 ${escapeHtml(u?.role || "—")} · <code>${p.telegramId}</code>\n` +
+      `🎯 Tarif: <b>${PLAN_TITLES[p.plan as PlanPeriod] ?? p.plan}</b> · 💰 <b>${formatSum(p.amount === null ? null : Number(p.amount))}</b>\n` +
+      `🔢 Tranzaksiya: <code>${escapeHtml(p.receiptRef || "—")}</code>\n` +
+      `📅 ${fmtDT(p.createdAt)}\n` +
+      (p.status === "pending"
+        ? `\n⚠️ <i>Bank ilovangizdagi KIRIM bilan solishtirib tasdiqlang!</i>`
+        : p.adminNote
+          ? `\n💬 ${escapeHtml(p.adminNote)}`
+          : "");
+    try {
+      if (p.receiptFileId) {
+        await sendPhoto(chatId, p.receiptFileId, {
+          caption,
+          replyMarkup: p.status === "pending" ? payAdminKeyboard(p.id) : adminHomeKeyboard(),
+        });
+        return;
+      }
+    } catch {
+      /* pastda matn bilan */
+    }
+    await show(caption, p.status === "pending" ? payAdminKeyboard(p.id) : adminHomeKeyboard());
+    return;
+  }
+
+  // ✅ To'lovni tasdiqlash — Pro AVTOMATIK ochiladi
+  const payokMatch = data.match(/^adm:payok:(\d+)$/);
+  if (payokMatch) {
+    const pid = Number(payokMatch[1]);
+    const res = await approvePayment(pid);
+    if (!res.ok) {
+      await show("❌ To'lov topilmadi.", adminHomeKeyboard());
+      return;
+    }
+    await logEvent("admin_pay_ok", `payment=${pid} user=${res.telegramId} plan=${res.plan}`, cb.from.id);
+    const u = await getUser(res.telegramId);
+    const untilText = res.until
+      ? `${String(res.until.getDate()).padStart(2, "0")}.${String(res.until.getMonth() + 1).padStart(2, "0")}.${res.until.getFullYear()} gacha`
+      : "cheksiz";
+    if (u?.chatId) {
+      await sendMessage(
+        u.chatId,
+        `🎉 <b>Tabriklaymiz! Pro ochildi!</b>\n\n` +
+          `🎯 Tarif: <b>${PLAN_TITLES[res.plan as PlanPeriod] ?? res.plan}</b> (${untilText})\n\n` +
+          `✅ Darsni o'tildi qilish · 📝 Maqom berish · 📄 Ish reja joylashtirish — hammasi ochiq!`,
+        { replyMarkup: menuFor(u) },
+      );
+    }
+    await show(
+      `✅ <b>To'lov tasdiqlandi</b> (#${pid})\n\nPro ochildi: ${untilText}\nFoydalanuvchiga xabar yuborildi.`,
+      adminHomeKeyboard(),
+    );
+    return;
+  }
+
+  // ❌ To'lovni rad etish
+  const paynoMatch = data.match(/^adm:payno:(\d+)$/);
+  if (paynoMatch) {
+    const pid = Number(paynoMatch[1]);
+    const p = await getPayment(pid);
+    if (!p) {
+      await show("❌ To'lov topilmadi.", adminHomeKeyboard());
+      return;
+    }
+    await rejectPayment(pid);
+    await logEvent("admin_pay_no", `payment=${pid} user=${p.telegramId}`, cb.from.id);
+    const u = await getUser(p.telegramId);
+    if (u?.chatId) {
+      await sendMessage(
+        u.chatId,
+        `❌ <b>To'lov so'rovi rad etildi.</b>\n\n` +
+          `Sababini bilish uchun admin bilan bog'laning: <b>${ADMIN_NICK}</b>\n` +
+          `Agar chekni noto'g'ri yuborgan bo'lsangiz — yangi to'lov qilib, to'g'ri chekni yuboring.`,
+        { replyMarkup: proBuyKeyboard() },
+      );
+    }
+    await show(`❌ To'lov rad etildi (#${pid}). Foydalanuvchiga xabar yuborildi.`, adminHomeKeyboard());
+    return;
+  }
+
+  // ⚙️ To'lov sozlamalari (karta, narxlar)
+  if (data === "adm:payset") {
+    const s = await getPaySettings();
+    await show(
+      `⚙️ <b>To'lov sozlamalari</b>\n\n` +
+        `• 💳 Karta raqami: ${s.card ? `<code>${escapeHtml(s.card)}</code>` : "<i>sozlanmagan</i>"}\n` +
+        `• 👤 Karta egasi: ${s.holder ? `<b>${escapeHtml(s.holder)}</b>` : "<i>sozlanmagan</i>"}\n` +
+        `• 💰 1 oy: <b>${formatSum(s.prices["1m"])}</b>\n` +
+        `• 💰 3 oy: <b>${formatSum(s.prices["3m"])}</b>\n` +
+        `• 💰 1 yil: <b>${formatSum(s.prices["1y"])}</b>\n\n` +
+        `<i>Tugma bosib, yangi qiymatni yozasiz.</i>`,
+      paySettingsKeyboard(),
+    );
+    return;
+  }
+
+  // ⚙️ Sozlamani o'zgartirish — qiymat kiritish bosqichi
+  const svMatch = data.match(/^adm:sv:(card|holder|price1|price3|priceY)$/);
+  if (svMatch) {
+    await db
+      .update(botUsers)
+      .set({ state: `adm:sv:${svMatch[1]}`, updatedAt: new Date() })
+      .where(eq(botUsers.telegramId, cb.from.id));
+    const prompts: Record<string, string> = {
+      card: "💳 Yangi <b>karta raqamini</b> yozing (16 xonali):",
+      holder: "👤 Karta <b>egasining ismini</b> yozing:",
+      price1: "💰 <b>1 oy</b> narxini yozing (so'mda, masalan: 30000):",
+      price3: "💰 <b>3 oy</b> narxini yozing (so'mda):",
+      priceY: "💰 <b>1 yil</b> narxini yozing (so'mda):",
+    };
+    await sendMessage(chatId, prompts[svMatch[1]], {
+      replyMarkup: kb([[{ text: "❌ Bekor qilish", callback_data: "menu:cancel" }]]),
+    });
+    return;
+  }
+
   // 🚨 Jurnal (oxirgi hodisalar)
   if (data === "adm:log") {
     const events = await recentEvents(8);
@@ -2649,6 +3195,31 @@ async function handleCallback(cb: TelegramCallbackQuery) {
 
   const fresh = (await getUser(cb.from.id)) ?? user;
 
+  // --- 💎 Pro / to'lov (foydalanuvchi tomoni) ---
+  if (data === "prop:status") {
+    await sendProStatus(chatId, fresh);
+    return;
+  }
+  if (data === "prop:buy") {
+    await sendProBuy(chatId, fresh);
+    return;
+  }
+  const propPlan = data.match(/^prop:(1m|3m|1y)$/);
+  if (propPlan) {
+    await sendProPlanSelected(chatId, fresh, propPlan[1] as PlanPeriod);
+    return;
+  }
+  const paySend = data.match(/^pay:s:(\d+)$/);
+  if (paySend) {
+    await handlePaySubmit(chatId, fresh, Number(paySend[1]));
+    return;
+  }
+  const payCancel = data.match(/^pay:c:(\d+)$/);
+  if (payCancel) {
+    await handlePayCancel(chatId, fresh, Number(payCancel[1]));
+    return;
+  }
+
   // --- Darsni o'tildi qilish / Ish reja / Maqom oqimlari (o'qituvchi) ---
   if (
     data === "t:conduct" ||
@@ -2658,6 +3229,8 @@ async function handleCallback(cb: TelegramCallbackQuery) {
     data.startsWith("ctp") ||
     data.startsWith("maqom")
   ) {
+    // 💎 Pro cheklovi (faqat o'qituvchi, Pro'siz) — davom tugmalari ham bloklanadi
+    if (await proGate(chatId, fresh)) return;
     const editTo = async (text: string, markup: ReturnType<typeof kb>) => {
       if (messageId) await editMessageText(chatId, messageId, text, { replyMarkup: markup });
       else await sendMessage(chatId, text, { replyMarkup: markup });
@@ -2819,6 +3392,7 @@ async function handleCallback(cb: TelegramCallbackQuery) {
   if (data === "menu:settings" || data === "settings:account") {
     const children = parseChildren(fresh);
     const rows: Array<Array<{ text: string; callback_data: string }>> = [];
+    rows.push([{ text: "💎 Pro holati", callback_data: "prop:status" }]);
     if (children.length > 0 || fresh.role === "parent") {
       rows.push([{ text: "👶 Bolalar", callback_data: "settings:children" }]);
     }
