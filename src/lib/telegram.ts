@@ -447,6 +447,7 @@ export function adminHomeKeyboard() {
       { text: "💳 To'lovlar", callback_data: "adm:pay" },
       { text: "⚙️ To'lov sozlamalari", callback_data: "adm:payset" },
     ],
+    [{ text: "🤖 AI sozlamalari", callback_data: "adm:aiset" }],
     [
       { text: "📢 Xabar yuborish", callback_data: "adm:bc" },
       { text: "🚨 Jurnal", callback_data: "adm:log" },
@@ -572,6 +573,18 @@ export function paySettingsKeyboard() {
       { text: "💰 3 oy narxi", callback_data: "adm:sv:price3" },
     ],
     [{ text: "💰 1 yil narxi", callback_data: "adm:sv:priceY" }],
+    [{ text: "⬅️ Admin panel", callback_data: "adm:home" }],
+  ]);
+}
+
+/** Admin: AI sozlamalari (test generatori). */
+export function aiSettingsKeyboard() {
+  return kb([
+    [{ text: "🔑 API kalit", callback_data: "adm:sv:ai_key" }],
+    [
+      { text: "🧠 Model", callback_data: "adm:sv:ai_model" },
+      { text: "🌐 API manzili", callback_data: "adm:sv:ai_base" },
+    ],
     [{ text: "⬅️ Admin panel", callback_data: "adm:home" }],
   ]);
 }

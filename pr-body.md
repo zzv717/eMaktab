@@ -1,14 +1,7 @@
-## Hotfix: Vercel deploy xatosi
+Nazoratchi uchun kafolatli kunlik triggerlar (Toshkent vaqti):
+- `0 3 * * *` UTC = **08:00** — "Dars boshlandi" oynasi ichida
+- `0 8 * * *` UTC = **13:00** — "Dars tugadi" oynasi ichida
 
-#164 deployi YIQILDI (Vercel status: "Deployment has failed") — ehtimoliy sabab:
-vercel.json dagi `*/5 * * * *` cron (reja chastotasi limitidan oshgan).
-
-### Tuzatish
-- `*/5` cron olib tashlandi (deploy xavfsiz)
-- `/api/cron/nazoratchi` — endi sir talab qilmaydi (refresh-webhook tamoyili):
-  ichida 2 daqiqalik qulf + kunlik dedup, xavfsiz
-- `refresh-webhook` croniga Nazoratchi tekshiruvi qo'shildi (kunlik bepul trigger)
-- Qolgan triggerlar: webhook orqali har qanday faollikda (2 daqiqalik qulf bilan)
-
-Deploy ishga tushgach (status tekshiriladi) — alohida PRda kunlik cron
-(08:00 Toshkent) qayta qo'shiladi yoki reja ruxsat bersa ko'proq.
+*/5 cron deployni yiqargani uchun faqat KUNLIK (mavjud cron bir xil) ishlatiladi.
+Agar shu deploy ham yiqilsa — reja limiti, bitta cron qoldiriladi (deploy xatosi
+jonli botga ta'sir qilmaydi).
