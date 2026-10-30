@@ -3,10 +3,6 @@
     {
       "path": "/api/telegram/refresh-webhook",
       "schedule": "0 7 * * *"
-    },
-    {
-      "path": "/api/cron/nazoratchi?secret=emaktab123",
-      "schedule": "*/5 * * * *"
     }
   ]
 }
