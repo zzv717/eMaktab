@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getWebhookInfo, setWebhook } from "@/lib/telegram";
+import { runDueNotifications } from "@/lib/nazoratchi";
 
 export const dynamic = "force-dynamic";
 
@@ -33,12 +34,20 @@ export async function GET() {
     // chunki bu avtomatik chaqiruv va haqiqiy xabarni yo'qotish mumkin.
     const result = await setWebhook(webhookUrl, secret ?? "", { dropPendingUpdates: false });
     const info = await getWebhookInfo();
+    // 👁 Nazoratchi bildirishnomalari — kunlik cron bilan bepul qo'shimcha tekshiruv.
+    let nazoratchi = "ok";
+    try {
+      await runDueNotifications();
+    } catch {
+      nazoratchi = "xato";
+    }
     return NextResponse.json({
       ok: true,
       webhookUrl,
       webhookSecretConfigured: Boolean(secret),
       result,
       info,
+      nazoratchi,
     });
   } catch (error) {
     return NextResponse.json({ ok: false, error: String(error) }, { status: 500 });
