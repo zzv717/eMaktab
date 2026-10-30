@@ -2687,18 +2687,45 @@ async function handleNazoratchiText(chatId: number, user: BotUser, text: string)
 
 async function finishTestDraft(chatId: number, user: BotUser, draft: TestDraft) {
   await sendMessage(chatId, "⏳ <b>Savol tayyorlanmoqda…</b> (sun'iy agent ishlamoqda)");
-  const links = await activeLinksForChild(user.telegramId);
-  if (links.length === 0) {
+  // Maqsad: ota-ona tanlagan farzand (draft.linkId) yoki bolaning o'zi
+  let link = null;
+  const targetLinkId = Number(draft.linkId) || 0;
+  if (targetLinkId) {
+    const parentLinks = await activeLinksForParent(user.telegramId);
+    link = parentLinks.find((l) => l.id === targetLinkId) ?? null;
+  } else {
+    const childLinks = await activeLinksForChild(user.telegramId);
+    link = childLinks[0] ?? null;
+  }
+  if (!link) {
     await resetState(user.telegramId);
-    await sendMessage(chatId, "⚠️ Test faqat ulangan bola tomonidan yaratiladi. Avval 🔗 Ulanish kodini kiriting.", {
+    await sendMessage(chatId, "⚠️ Ulanish topilmadi. Avval 🔗 Ulanish (kod olish) orqali ulaning.", {
       replyMarkup: await nazoratchiKbFor(user.telegramId),
     });
     return;
   }
-  // Bitta test — barcha ota-onalarga bir vaqtda yuboriladi (ichkarida fanningi)
-  const res = await createAndDeliverTest(links[0], draft);
+  // Bitta test — bola va barcha ota-onalarga bir vaqtda (ichkarida fanningi)
+  const res = await createAndDeliverTest(link, draft);
   await resetState(user.telegramId);
   await sendMessage(chatId, res.message, { replyMarkup: await nazoratchiKbFor(user.telegramId) });
+}
+
+/** 📝 Test uchun usul tanlash ekrani (linkId = ota-ona tanlagan farzand, 0 = o'zi). */
+async function showTestModeSelect(cb: TelegramCallbackQuery, linkId: number) {
+  const draft: TestDraft = linkId ? { mode: "book", linkId } : { mode: "book" };
+  await db
+    .update(botUsers)
+    .set({ tempText: JSON.stringify(draft), updatedAt: new Date() })
+    .where(eq(botUsers.telegramId, cb.from.id));
+  await showView(
+    cb,
+    `📝 <b>Test yaratish</b>\n\nQaysi usulda?`,
+    kb([
+      [{ text: "📚 Kitob bo'yicha", callback_data: "nz:tbk" }],
+      [{ text: "🧑‍🏫 Mavzu bo'yicha", callback_data: "nz:ttk" }],
+      [{ text: "⬅️ Nazoratchi", callback_data: "nz:home" }],
+    ]),
+  );
 }
 
 /** Nazoratchi callback'lari (nz:*). */
@@ -2891,32 +2918,53 @@ async function handleNazoratchiCallback(cb: TelegramCallbackQuery, user: BotUser
 
   // 📝 Test
   if (data === "nz:test") {
-    // Testlarni BOLA tomoni yaratadi (ota-ona ko'radi, baholaydi)
     const asChild = await activeLinksForChild(tg);
-    if (asChild.length === 0) {
+    const asParent = await activeLinksForParent(tg);
+    if (asChild.length === 0 && asParent.length === 0) {
       await show(
-        `📝 <b>Test yaratish</b>\n\n` +
-          `Testni <b>farzandingiz</b> yaratadi:\n` +
-          `uning telefonida 👁 Nazoratchi → 📝 Test.\n\n` +
-          `Sizga esa savol <b>javobi bilan</b> bir vaqtda keladi.`,
-        kb([[{ text: "⬅️ Nazoratchi", callback_data: "nz:home" }]]),
+        `📝 <b>Test yaratish</b>\n\nAvval telefonni ulang: 🔗 Ulanish (kod olish) → kodni kiriting.`,
+        kb([
+          [{ text: "🔗 Ulanish (kod olish)", callback_data: "nz:pair" }],
+          [{ text: "⬅️ Nazoratchi", callback_data: "nz:home" }],
+        ]),
       );
       return;
     }
-    await show(
-      `📝 <b>Test yaratish</b>\n\nQaysi usulda?`,
-      kb([
-        [{ text: "📚 Kitob bo'yicha", callback_data: "nz:tbk" }],
-        [{ text: "🧑‍🏫 Mavzu bo'yicha", callback_data: "nz:ttk" }],
-        [{ text: "⬅️ Nazoratchi", callback_data: "nz:home" }],
-      ]),
-    );
+    if (asParent.length > 0 && asChild.length === 0) {
+      // Ota-ona — farzand uchun yaratadi
+      if (asParent.length === 1) {
+        await showTestModeSelect(cb, asParent[0].id);
+        return;
+      }
+      const rows = asParent.map((l) => [
+        { text: `👤 ${l.childName || "Farzand"}${l.childClass ? ` (${l.childClass})` : ""}`.slice(0, 64), callback_data: `nz:tk:${l.id}` },
+      ]);
+      rows.push([{ text: "⬅️ Nazoratchi", callback_data: "nz:home" }]);
+      await show(`📝 <b>Kim uchun test?</b>`, kb(rows));
+      return;
+    }
+    // Bola — o'zi uchun yaratadi
+    await showTestModeSelect(cb, 0);
+    return;
+  }
+  // Ota-ona farzandni tanladi → rejim tanlash (draft ichida linkId saqlanadi)
+  const tkMatch = data.match(/^nz:tk:(\d+)$/);
+  if (tkMatch) {
+    const linkId = Number(tkMatch[1]);
+    const links = await activeLinksForParent(tg);
+    if (!links.some((l) => l.id === linkId)) {
+      await show("⛔ Ruxsat yo'q.", kb([[{ text: "⬅️ Nazoratchi", callback_data: "nz:home" }]]));
+      return;
+    }
+    await showTestModeSelect(cb, linkId);
     return;
   }
   if (data === "nz:tbk") {
+    const draft = (parseTestDraft(user.tempText) ?? {}) as TestDraft;
+    draft.mode = "book";
     await db
       .update(botUsers)
-      .set({ state: "nz:tb", tempText: JSON.stringify({ mode: "book" }), updatedAt: new Date() })
+      .set({ state: "nz:tb", tempText: JSON.stringify(draft), updatedAt: new Date() })
       .where(eq(botUsers.telegramId, tg));
     await sendMessage(chatId, `📚 Kitob <b>nominini</b> yozing:`, {
       replyMarkup: kb([[{ text: "❌ Bekor qilish", callback_data: "nz:cancel" }]]),
@@ -2924,9 +2972,11 @@ async function handleNazoratchiCallback(cb: TelegramCallbackQuery, user: BotUser
     return;
   }
   if (data === "nz:ttk") {
+    const draft = (parseTestDraft(user.tempText) ?? {}) as TestDraft;
+    draft.mode = "topic";
     await db
       .update(botUsers)
-      .set({ state: "nz:tt", tempText: JSON.stringify({ mode: "topic" }), updatedAt: new Date() })
+      .set({ state: "nz:tt", tempText: JSON.stringify(draft), updatedAt: new Date() })
       .where(eq(botUsers.telegramId, tg));
     await sendMessage(chatId, `🧑‍🏫 Bugungi <b>mavzuni</b> yozing (repetitorda nima o'tilgani):`, {
       replyMarkup: kb([[{ text: "❌ Bekor qilish", callback_data: "nz:cancel" }]]),
