@@ -368,7 +368,10 @@ export function mainMenuKeyboard(connected: boolean) {
         ]
       : [
           [{ text: "🔐 eMaktabni ulash (login)", callback_data: "menu:connect" }],
-          [{ text: "👶 Nazoratchi kodini kiritish", callback_data: "nz:codebtn" }],
+          [
+            { text: "👁 Nazoratchi", callback_data: "nz:home" },
+            { text: "👶 Nazoratchi kodini kiritish", callback_data: "nz:codebtn" },
+          ],
         ],
   );
 }
@@ -677,6 +680,7 @@ export function cancelKeyboard() {
 /** Login bosqichi — bolalar (eMaktabsiz) Nazoratchi kodi orqali kira oladi. */
 export function loginPromptKeyboard() {
   return kb([
+    [{ text: "👁 Nazoratchi", callback_data: "nz:home" }],
     [{ text: "👶 Nazoratchi kodini kiritish", callback_data: "nz:codebtn" }],
     [{ text: "❌ Bekor qilish", callback_data: "menu:cancel" }],
   ]);

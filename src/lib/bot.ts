@@ -160,10 +160,12 @@ import {
   completePairing,
   createAndDeliverTest,
   formatDays,
+  hasNazoratchiAccess,
   hhmmToMinutes,
   NAZORATCHI_GUIDE,
   nazoratchiHomeKeyboard,
   parseTestDraft,
+  pickChildForLink,
   startParentPairing,
   tutorsForLink,
   unlinkByParent,
@@ -834,12 +836,15 @@ async function handleMessage(message: TelegramMessage) {
       await sendMessage(chatId, WELCOME_BACK(user.fullName || from.first_name), {
         replyMarkup: menuFor(user),
       });
+    } else if (await hasNazoratchiAccess(from.id)) {
+      // Nazoratchiga ulangan bola (eMaktabsiz ham) — to'g'ridan-to'g'ri Nazoratchiga
+      await sendNazoratchiHome(chatId, user);
     } else {
       await db
         .update(botUsers)
         .set({ state: "awaiting_login", tempLogin: null, updatedAt: new Date() })
         .where(eq(botUsers.telegramId, from.id));
-      await sendMessage(chatId, WELCOME_NEW, { replyMarkup: cancelKeyboard() });
+      await sendMessage(chatId, WELCOME_NEW, { replyMarkup: loginPromptKeyboard() });
       await sendMessage(chatId, "🔑 Iltimos, eMaktab <b>loginingizni</b> yuboring:");
     }
     return;
@@ -2182,7 +2187,7 @@ async function sendGuideView(chatId: number, user: BotUser) {
         `<b>👤 Profil</b> — hisob ma'lumotlari.\n` +
         `<b>📰 Yangiliklar</b> — maktabning barcha yangiliklari.\n` +
         `<b>⚙️ Sozlamalar</b> — 🔄 login/parolni yangilash, 🚪 hisobdan chiqish.\n\n` +
-        `💡 <i>Barcha amallar haqiqiy eMaktab tizimida bajariladi.</i>`,
+        `💡 <i>Barcha amallar haqiqiy eMaktab tizimida bajariladi.</i>\n\n<b>\U0001F441 Nazoratchi</b>\nOta-ona nazorati: \U0001F517 Ulanish (kod olish) orqali bolangiz telefonini ulang \u2014 dars boshlanishi/tugashi, repetitor eslatmalari, \U0001F4CA Bugungi baholar va \U0001F4DD AI testlar. To'liq qo'llanma: \U0001F441 Nazoratchi \u2192 \U0001F4D6 Yoriqnoma.`,
       home,
     );
     return;
@@ -2202,7 +2207,7 @@ async function sendGuideView(chatId: number, user: BotUser) {
         `<b>⚙️ Sozlamalar</b>\n` +
         `• 👶 <b>Bolalar</b> — bir nechta farzand bo'lsa, shu yerdan tanlaysiz. Har bir farzand ma'lumotlari <b>ALOHIDA</b> ko'rsatiladi va aralashtirilmaydi.\n` +
         `• 🔄 login/parolni yangilash · 🚪 hisobdan chiqish.\n\n` +
-        `🏠 Istalgan sahifadan <b>Asosiy sahifa</b> tugmasi bilan asosiy menyuga qaytasiz.`,
+        `🏠 Istalgan sahifadan <b>Asosiy sahifa</b> tugmasi bilan asosiy menyuga qaytasiz.\n\n<b>\U0001F441 Nazoratchi</b>\nOta-ona nazorati: \U0001F517 Ulanish (kod olish) orqali bolangiz telefonini ulang \u2014 dars boshlanishi/tugashi, repetitor eslatmalari, \U0001F4CA Bugungi baholar va \U0001F4DD AI testlar. To'liq qo'llanma: \U0001F441 Nazoratchi \u2192 \U0001F4D6 Yoriqnoma.`,
       home,
     );
     return;
@@ -2219,7 +2224,7 @@ async function sendGuideView(chatId: number, user: BotUser) {
       `• 📝 Uy vazifalari — vazifalar (so'nggi 2 kun + keyingi 10 kun)\n\n` +
       `<b>📰 Yangiliklar</b> — maktabning barcha yangiliklari.\n\n` +
       `<b>⚙️ Sozlamalar</b> — 🔄 login/parolni yangilash, 🚪 hisobdan chiqish.\n\n` +
-      `🏠 Istalgan sahifadan <b>Asosiy sahifa</b> tugmasi bilan asosiy menyuga qaytasiz.`,
+      `🏠 Istalgan sahifadan <b>Asosiy sahifa</b> tugmasi bilan asosiy menyuga qaytasiz.\n\n<b>\U0001F441 Nazoratchi</b>\nOta-ona nazorati: \U0001F517 Ulanish (kod olish) orqali bolangiz telefonini ulang \u2014 dars boshlanishi/tugashi, repetitor eslatmalari, \U0001F4CA Bugungi baholar va \U0001F4DD AI testlar. To'liq qo'llanma: \U0001F441 Nazoratchi \u2192 \U0001F4D6 Yoriqnoma.`,
     home,
   );
 }
@@ -2788,6 +2793,19 @@ async function handleNazoratchiCallback(cb: TelegramCallbackQuery, user: BotUser
       return;
     }
     await show("✅ Ulanish uzildi.", kb([[{ text: "⬅️ Nazoratchi", callback_data: "nz:home" }]]));
+    return;
+  }
+
+  // 👶 "Bu qaysi farzandingiz?" — ota-ona farzandni tanlaydi
+  const plMatch = data.match(/^nz:pl:(\d+):(\d+)$/);
+  if (plMatch) {
+    const ok = await pickChildForLink(Number(plMatch[1]), tg, plMatch[2]);
+    await show(
+      ok
+        ? "✅ Farzand tanlandi. Endi dars jadvali, baholar va xabarlar shu farzand uchun to'g'ri keladi."
+        : "⛔ Ruxsat yo'q yoki ulanish topilmadi.",
+      kb([[{ text: "⬅️ Nazoratchi", callback_data: "nz:home" }]]),
+    );
     return;
   }
 
