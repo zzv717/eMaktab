@@ -305,6 +305,8 @@ export interface TestDraft {
   author?: string;
   pages?: string;
   topic?: string;
+  /** Ota-ona yaratayotgan bo'lsa — qaysi farzand (linkId) */
+  linkId?: number;
 }
 
 export function parseTestDraft(json: string | null): TestDraft | null {
@@ -364,6 +366,10 @@ export async function createAndDeliverTest(
   const letters = ["A", "B", "C", "D"];
   const optionText = question.options.map((o, i) => `${letters[i]}) ${o}`).join("\n");
   const sourceLine = testSourceLabel(draft);
+  const engineNote =
+    question.engine === "local"
+      ? `\n\n<i>💡 Soddalashtirilgan savol (AI kalit kiritilsa — chuqurroq savollar: admin → 🤖 AI sozlamalari)</i>`
+      : "";
 
   // Bolaga — TO'G'RI JAVOBSIZ variantlar
   const childKb = kb(
@@ -384,7 +390,7 @@ export async function createAndDeliverTest(
     `📝 <b>Test yuborildi</b> — 👤 ${escapeHtml(childLabel(link))}\n${sourceLine}\n\n` +
     `❓ ${escapeHtml(question.question)}\n\n${optionText}\n\n` +
     `✅ <b>To'g'ri javob: ${letters[question.correctIndex]}</b>\n\n` +
-    `<i>Bola javob bergach natija shu yerga keladi.</i>`;
+    `<i>Bola javob bergach natija shu yerga keladi.</i>${engineNote}`;
   for (const pid of parentIds) {
     await sendSafe(pid, parentText, undefined, false, link.id);
   }
@@ -679,9 +685,9 @@ async function dueForLink(link: NazoratchiLink, day: string, weekday: number, mi
         key: String(t.id),
         toParent:
           `👨‍🏫 Farzandingiz repetitordan chiqdi — ${escapeHtml(t.subject)}.\n` +
-          `📝 Test yaratish uchun bolaga tugma yuborildi.`,
+          `📝 Endi bugungi mavzu bo'yicha test yarating:`,
         toChild: `👨‍🏫 <b>Repetitor darsi tugadi!</b> (${escapeHtml(t.subject)})\n\nEndi bugungi mavzu bo'yicha test yarating:`,
-        parentKb: undefined,
+        parentKb: kb([[{ text: "📝 Test yaratish", callback_data: "nz:test" }]]),
       });
     }
   }
@@ -769,7 +775,8 @@ Agar bola botni bloklasa — ota-ona darhol ogohlantirish oladi.
 Bola repetitorga ketganda va chiqqanda xabarlar boradi.
 
 <b>4️⃣ 📝 Test (AI bilan)</b>
-Bola: 👁 Nazoratchi → 📝 Test →
+👁 Nazoratchi → 📝 Test → (bola o'zi yoki ota-ona farzand uchun)
+
 • <b>Kitob bo'yicha</b>: kitob nomi → muallifi → betlar;
 • <b>Mavzu bo'yicha</b>: bugungi mavzu (repetitordan keyin).
 

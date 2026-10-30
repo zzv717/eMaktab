@@ -46,6 +46,7 @@ import {
 import { decryptSecret, encryptSecret } from "../src/lib/crypto";
 import { formatDay, formatGrades, formatNews, formatWeek } from "../src/lib/format";
 import { hhmmToMinutes, minutesToHHMM, parseDays, parseTestDraft, testSourceLabel } from "../src/lib/nazoratchi";
+import { localQuestion } from "../src/lib/ai";
 
 let passed = 0;
 let failed = 0;
@@ -562,6 +563,17 @@ check("looksLikeName: ko'rish rad", !looksLikeName("Ko'rish"), true);
   check("nz: test source label kitob", (d1 && testSourceLabel(d1).includes("Alpomish")) === true);
   const d2 = parseTestDraft(null);
   check("nz: bo'sh draft → null", d2 === null);
+}
+
+{
+  // 🤖 Mahalliy test generatori (kalitsiz — har doim ishlaydi)
+  const q1 = localQuestion({ mode: "book", bookTitle: "Alpomish", bookAuthor: "Xolquloq", pages: "12-20" });
+  check("ai: local kitob savoli 4 variant", q1.options.length === 4 && q1.engine === "local");
+  check("ai: local muallif savoli", q1.question.includes("Alpomish") && q1.options[q1.correctIndex] === "Xolquloq");
+  const q2 = localQuestion({ mode: "topic", topic: "Kesimlar to'plami" });
+  check("ai: local mavzu savoli", q2.options[q2.correctIndex] === "Kesimlar to'plami" && q2.options.length === 4);
+  const q3 = localQuestion({ mode: "book", bookTitle: "O'tkan kunlar" });
+  check("ai: local kitob (muallifsiz)", q3.options[q3.correctIndex] === "O'tkan kunlar" && q3.options.length === 4);
 }
 
 console.log(`\nNatija: ${passed} o'tdi, ${failed} yiqildi`);
