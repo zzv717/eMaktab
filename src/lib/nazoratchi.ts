@@ -18,6 +18,7 @@ import {
   nazoratchiTests,
   nazoratchiTutor,
   type BotUser,
+  type ChildContext,
   type NazoratchiLink,
 } from "@/db/schema";
 import { decryptSecret } from "@/lib/crypto";
@@ -146,19 +147,61 @@ export async function completePairing(
     return { ok: true, message: "✅ Siz allaqachon ulangansiz." };
   }
   const child = await getUserByTg(childTg);
-  await db.insert(nazoratchiLinks).values({
-    parentTelegramId: parent.telegramId,
-    childTelegramId: childTg,
-    childPersonId: child?.personId ?? null,
-    childName: child?.fullName || child?.firstName || null,
-    childClass: child?.groupName ?? null,
-    status: "active",
-  });
+  const [link] = await db
+    .insert(nazoratchiLinks)
+    .values({
+      parentTelegramId: parent.telegramId,
+      childTelegramId: childTg,
+      childPersonId: child?.personId ?? null,
+      childName: child?.fullName || child?.firstName || null,
+      childClass: child?.groupName ?? null,
+      status: "active",
+    })
+    .returning();
   await db
     .update(botUsers)
     .set({ state: "idle", tempText: null, updatedAt: new Date() })
     .where(eq(botUsers.telegramId, parent.telegramId));
   await logEvent("nz_link", `parent=${parent.telegramId} child=${childTg}`, childTg);
+
+  // Farzandni eMaktabdagi shaxs bilan bog'lash — dars/baho to'g'ri topilishi uchun.
+  let kids: ChildContext[] = [];
+  try {
+    kids = parent.childrenJson ? (JSON.parse(parent.childrenJson) as ChildContext[]) : [];
+  } catch {
+    kids = [];
+  }
+  const matched =
+    kids.find((k) => k.personId && k.personId === child?.personId) ??
+    (kids.length === 1 ? kids[0] : undefined);
+  let pickRows: Array<Array<{ text: string; callback_data: string }>> | null = null;
+  if (matched) {
+    await db
+      .update(nazoratchiLinks)
+      .set({ childPersonId: matched.personId, childClass: matched.groupName ?? link.childClass })
+      .where(eq(nazoratchiLinks.id, link.id));
+  } else if (kids.length > 1) {
+    // Bir nechta farzand — ota-ona qaysi ekanini tanlasin
+    pickRows = kids.map((k) => [
+      {
+        text: `${k.groupName ? k.groupName + " · " : ""}${(k.schoolName || "Farzand").slice(0, 40)}`,
+        callback_data: `nz:pl:${link.id}:${k.personId}`,
+      },
+    ]);
+  }
+  // Ota-onaga xabar (+ kerak bo'lsa tanlash tugmalari)
+  const parentMsg =
+    `🔗 <b>Farzandingiz ulandi:</b> ${escapeHtml(child?.fullName || child?.firstName || "Farzand")}\n\n` +
+    `⚠️ Ulanishni faqat SIZ o'chira olasiz.\n` +
+    (pickRows ? `\nBu qaysi farzandingiz? (dars jadvali va baholar shu orqali topiladi):` : `\nEndi avtomatik xabarlar boshlanadi.`);
+  await sendSafe(
+    parent.telegramId,
+    parentMsg,
+    pickRows ? kb(pickRows) : undefined,
+    false,
+    link.id,
+  );
+
   return {
     ok: true,
     message:
@@ -166,6 +209,38 @@ export async function completePairing(
       `Endi ota-onangiz sizning darslaringiz, baholaringiz va testingizni nazorat qila oladi.\n` +
       `⚠️ <i>Bu ulanishni faqat ota-ona o'chiradi.</i>`,
   };
+}
+
+/** Ota-ona "Bu qaysi farzandingiz?" tugmasini bosadi — shaxsni biriktiramiz. */
+export async function pickChildForLink(
+  linkId: number,
+  parentTg: number,
+  personId: string,
+): Promise<boolean> {
+  const rows = await db
+    .select()
+    .from(nazoratchiLinks)
+    .where(and(eq(nazoratchiLinks.id, linkId), eq(nazoratchiLinks.parentTelegramId, parentTg)))
+    .limit(1);
+  const link = rows[0];
+  if (!link) return false;
+  const parent = await getUserByTg(parentTg);
+  let kids: ChildContext[] = [];
+  try {
+    kids = parent?.childrenJson ? (JSON.parse(parent.childrenJson) as ChildContext[]) : [];
+  } catch {
+    kids = [];
+  }
+  const kid = kids.find((k) => k.personId === personId);
+  await db
+    .update(nazoratchiLinks)
+    .set({
+      childPersonId: personId,
+      childClass: kid?.groupName ?? link.childClass,
+    })
+    .where(eq(nazoratchiLinks.id, linkId));
+  await logEvent("nz_pick_child", `link=${linkId} person=${personId}`, parentTg);
+  return true;
 }
 
 /** Ulanishni uzish — FAQAT ota-ona (yoki admin). */
@@ -631,13 +706,17 @@ export async function runDueNotifications(): Promise<{ sent: number; skipped: bo
     .from(nazoratchiLinks)
     .where(eq(nazoratchiLinks.status, "active"));
   let sent = 0;
+  // Bir nechta ota-ona ulangan bo'lsa — bolaga xabar BIR MARTA ketadi
+  const childSent = new Set<string>();
   for (const link of links) {
     try {
       const items = await dueForLink(link, day, weekday, minutes);
       for (const item of items) {
         if (await alreadySent(link.id, day, item.type, item.key)) continue;
         await sendSafe(link.parentTelegramId, item.toParent, item.parentKb, false, link.id);
-        if (item.toChild) {
+        const ck = `${link.childTelegramId}|${item.type}|${item.key}`;
+        if (item.toChild && !childSent.has(ck)) {
+          childSent.add(ck);
           await sendSafe(
             link.childTelegramId,
             item.toChild,
@@ -671,10 +750,11 @@ Ota-ona va bola telefonlarini bog'laydigan nazorat bo'limi. U orqali:
 • AI yordamida kitob/mavzu bo'yicha test yaratib, bolani sinab ko'rasiz.
 
 <b>1️⃣ Telefonlarni ulash (bir marta)</b>
-1. <b>Ota-ona</b>: 👁 Nazoratchi → 🔗 Ulanish → 6 xonali <b>kod</b> olinadi.
+1. <b>Ota-ona</b>: 👁 Nazoratchi → <b>🔗 Ulanish (kod olish)</b> → 6 xonali <b>kod</b> olinadi.
 2. Kodni farzandingizga yuboring.
-3. <b>Bola</b>: 👁 Nazoratchi → 🔗 Kodni kiritish → kodni yozadi.
+3. <b>Bola</b>: 👁 Nazoratchi → <b>👶 Kodni kiritish</b> → kodni yozadi.
 4. ✅ Tayyor! Endi xabarlar boshlanadi.
+5. Agar bir nechta farzandingiz bo'lsa — bot <b>"Bu qaysi farzandingiz?"</b> deb so'raydi.
 
 <b>🔒 Muhim:</b> ulanishni <b>faqat ota-ona</b> o'chiradi — bola o'chira olmaydi!
 Agar bola botni bloklasa — ota-ona darhol ogohlantirish oladi.
@@ -724,13 +804,13 @@ export function nazoratchiHomeKeyboard(hasLinks: boolean, isParentSide: boolean)
       { text: "📊 Bugungi baholar", callback_data: "nz:grades" },
       { text: "⏰ Repetitor", callback_data: "nz:tutor" },
     ]);
-    rows.push([{ text: "🔗 Ulanishlar", callback_data: "nz:links" }]);
-  } else {
-    rows.push([{ text: "🔗 Ulanish kodini kiritish", callback_data: "nz:codebtn" }]);
   }
-  if (hasLinks && !isParentSide) {
-    rows.push([{ text: "🔗 Ulanish holati", callback_data: "nz:links" }]);
-  }
+  // Ulanish har doim ko'rinadi — yangi ota-ona ham, bola ham
+  rows.push([{ text: "🔗 Ulanishlar", callback_data: "nz:links" }]);
+  rows.push([
+    { text: "🔗 Ulanish (kod olish)", callback_data: "nz:pair" },
+    { text: "👶 Kodni kiritish", callback_data: "nz:codebtn" },
+  ]);
   rows.push([
     { text: "📖 Yoriqnoma", callback_data: "nz:help" },
     { text: "🏠 Asosiy sahifa", callback_data: "menu:home" },
