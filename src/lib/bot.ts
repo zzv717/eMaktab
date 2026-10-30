@@ -78,6 +78,7 @@ import {
   adminProPeriodKeyboard,
   adminUserKeyboard,
   adminUsersKeyboard,
+  aiSettingsKeyboard,
   payAdminKeyboard,
   payConfirmKeyboard,
   paySettingsKeyboard,
@@ -126,6 +127,7 @@ import {
   setUserPlan,
   type BroadcastAudience,
 } from "@/lib/admin";
+import { AI_KEYS, getAiConfig } from "@/lib/ai";
 import {
   adminChatIds,
   approvePayment,
@@ -1179,10 +1181,10 @@ async function handleMessage(message: TelegramMessage) {
     return;
   }
 
-  // --- 🛠 Admin: to'lov sozlamasi qiymati (state: adm:sv:{key}) ---
+  // --- 🛠 Admin: to'lov/AI sozlamasi qiymati (state: adm:sv:{key}) ---
   if (user.state && user.state.startsWith("adm:sv:") && isAdmin(user)) {
     const key = user.state.slice(7);
-    const allowed = ["card", "holder", "price1", "price3", "priceY"];
+    const allowed = ["card", "holder", "price1", "price3", "priceY", "ai_key", "ai_model", "ai_base"];
     if (!allowed.includes(key) || !text || text.startsWith("/")) {
       await sendMessage(chatId, "Iltimos, to'g'ri qiymat matn sifatida yozing.", {
         replyMarkup: kb([[{ text: "❌ Bekor qilish", callback_data: "menu:cancel" }]]),
@@ -1199,7 +1201,20 @@ async function handleMessage(message: TelegramMessage) {
         return;
       }
       value = digits;
-    } else if (key !== "holder") {
+    } else if (key === "ai_base") {
+      if (!/^https?:\/\//.test(value)) {
+        await sendMessage(chatId, "⚠️ API manzili <code>https://...</code> bilan boshlanishi kerak.", {
+          replyMarkup: kb([[{ text: "❌ Bekor qilish", callback_data: "menu:cancel" }]]),
+        });
+        return;
+      }
+      value = value.replace(/\/+$/, "");
+    } else if (key === "ai_key" && value.length < 8) {
+      await sendMessage(chatId, "⚠️ API kalit juda qisqa. To'g'ri kalitni yuboring.", {
+        replyMarkup: kb([[{ text: "❌ Bekor qilish", callback_data: "menu:cancel" }]]),
+      });
+      return;
+    } else if (key.startsWith("price") ) {
       if (!digits) {
         await sendMessage(chatId, "⚠️ Narxni faqat raqamda kiriting (masalan: 30000).", {
           replyMarkup: kb([[{ text: "❌ Bekor qilish", callback_data: "menu:cancel" }]]),
@@ -1214,6 +1229,9 @@ async function handleMessage(message: TelegramMessage) {
       price1: PAY_KEYS.price1,
       price3: PAY_KEYS.price3,
       priceY: PAY_KEYS.priceY,
+      ai_key: AI_KEYS.key,
+      ai_model: AI_KEYS.model,
+      ai_base: AI_KEYS.base,
     };
     await setSetting(keyMap[key], value);
     await resetState(from.id);
@@ -3517,7 +3535,7 @@ async function handleAdminCallback(cb: TelegramCallbackQuery, user: BotUser, dat
   }
 
   // ⚙️ Sozlamani o'zgartirish — qiymat kiritish bosqichi
-  const svMatch = data.match(/^adm:sv:(card|holder|price1|price3|priceY)$/);
+  const svMatch = data.match(/^adm:sv:(card|holder|price1|price3|priceY|ai_key|ai_model|ai_base)$/);
   if (svMatch) {
     await db
       .update(botUsers)
@@ -3529,10 +3547,28 @@ async function handleAdminCallback(cb: TelegramCallbackQuery, user: BotUser, dat
       price1: "💰 <b>1 oy</b> narxini yozing (so'mda, masalan: 30000):",
       price3: "💰 <b>3 oy</b> narxini yozing (so'mda):",
       priceY: "💰 <b>1 yil</b> narxini yozing (so'mda):",
+      ai_key: "🔑 Yangi <b>AI API kalitni</b> yozing (OpenAI / Groq / DeepSeek):",
+      ai_model: "🧠 <b>Model nomini</b> yozing (masalan: <code>gpt-4o-mini</code> yoki <code>llama-3.3-70b-versatile</code>):",
+      ai_base: "🌐 <b>API manzilini</b> yozing (masalan: <code>https://api.openai.com/v1</code>):",
     };
     await sendMessage(chatId, prompts[svMatch[1]], {
       replyMarkup: kb([[{ text: "❌ Bekor qilish", callback_data: "menu:cancel" }]]),
     });
+    return;
+  }
+
+  // 🤖 AI sozlamalari (test generatori)
+  if (data === "adm:aiset") {
+    const cfg = await getAiConfig();
+    const masked = cfg.key ? `${cfg.key.slice(0, 3)}…${cfg.key.slice(-4)}` : "<i>sozlanmagan</i>";
+    await show(
+      `🤖 <b>AI sozlamalari</b> (📝 Test generatori)\n\n` +
+        `• 🔑 API kalit: <code>${masked}</code>\n` +
+        `• 🧠 Model: <code>${escapeHtml(cfg.model)}</code>\n` +
+        `• 🌐 API manzili: <code>${escapeHtml(cfg.base)}</code>\n\n` +
+        `Kalit bo'lmasa — testlar ishlamaydi. OpenAI, Groq (bepul), DeepSeek yoki boshqa OpenAI-mos API bo'lishi mumkin.`,
+      aiSettingsKeyboard(),
+    );
     return;
   }
 
