@@ -79,6 +79,7 @@ const STATEMENTS: { name: string; run: string }[] = [
   { name: "bot_users.plan_until", run: `ALTER TABLE bot_users ADD COLUMN IF NOT EXISTS plan_until timestamptz` },
   { name: "bot_users.last_seen_at", run: `ALTER TABLE bot_users ADD COLUMN IF NOT EXISTS last_seen_at timestamptz` },
   { name: "bot_users.temp_text", run: `ALTER TABLE bot_users ADD COLUMN IF NOT EXISTS temp_text text` },
+  { name: "bot_users.sys_admin", run: `ALTER TABLE bot_users ADD COLUMN IF NOT EXISTS sys_admin varchar(8) NOT NULL DEFAULT 'no'` },
   { name: "bot_users.created_at", run: `ALTER TABLE bot_users ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now()` },
   { name: "bot_users.updated_at", run: `ALTER TABLE bot_users ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now()` },
   {

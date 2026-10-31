@@ -13,7 +13,7 @@
 //    yana login so'raydigan holatga qaytadi.
 // ============================================================================
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNotNull } from "drizzle-orm";
 import { db, logError, logEvent } from "@/db";
 import { botUsers, memberAccounts, nazoratchiTutor, payments, type BotUser, type ChildContext } from "@/db/schema";
 import { decryptSecret, encryptSecret } from "@/lib/crypto";
@@ -97,7 +97,6 @@ import {
   gradesKeyboard,
   kb,
   logoutConfirmKeyboard,
-  loginPromptKeyboard,
   mainMenuKeyboard,
   newsKeyboard,
   profileKeyboard,
@@ -107,6 +106,7 @@ import {
   sendPhotoBytes,
   settingsKeyboard,
   teacherDayKeyboard,
+  systemAdminKeyboard,
   teacherMenuKeyboard,
   type TelegramCallbackQuery,
   type TelegramMessage,
@@ -128,6 +128,15 @@ import {
   type BroadcastAudience,
 } from "@/lib/admin";
 import { AI_KEYS, getAiConfig } from "@/lib/ai";
+import {
+  grantSystemAdmin,
+  hashSecret,
+  isSystemAdmin,
+  revokeSystemAdmin,
+  SYS_2FA_HASH,
+  SYS_LOGIN_HASH,
+  SYS_PASS_HASH,
+} from "@/lib/system-admin";
 import {
   adminChatIds,
   approvePayment,
@@ -160,7 +169,6 @@ import {
   completePairing,
   createAndDeliverTest,
   formatDays,
-  hasNazoratchiAccess,
   hhmmToMinutes,
   NAZORATCHI_GUIDE,
   nazoratchiHomeKeyboard,
@@ -223,6 +231,10 @@ function isClassTeacher(user: BotUser): boolean {
 }
 
 function menuFor(user: BotUser) {
+  // 🔐 Tizim boshqaruvi — faqat panel va sozlamalar (boshqa hech narsa yo'q)
+  if (isSystemAdmin(user) && !isAuthenticated(user)) {
+    return systemAdminKeyboard();
+  }
   return isTeacher(user)
     ? teacherReplyKeyboard(isClassTeacher(user), isAdmin(user))
     : mainReplyKeyboard(isAdmin(user));
@@ -525,9 +537,8 @@ async function startLoginFlow(telegramId: number, chatId: number) {
   await sendMessage(
     chatId,
     "🔑 <b>eMaktab (kundalik.com) loginingizni</b> yuboring.\n\n" +
-      "<i>Bu eMaktab saytidagi loginingiz (telefon raqam yoki email).</i>\n\n" +
-      "👶 <b>Bolasiz?</b> Ota-onangiz bergan <b>Nazoratchi kodini</b> orqali ham kira olasiz.",
-    { replyMarkup: loginPromptKeyboard() },
+      "<i>Bu eMaktab saytidagi loginingiz (telefon raqam yoki email).</i>",
+    { replyMarkup: cancelKeyboard() },
   );
 }
 
@@ -836,15 +847,15 @@ async function handleMessage(message: TelegramMessage) {
       await sendMessage(chatId, WELCOME_BACK(user.fullName || from.first_name), {
         replyMarkup: menuFor(user),
       });
-    } else if (await hasNazoratchiAccess(from.id)) {
-      // Nazoratchiga ulangan bola (eMaktabsiz ham) — to'g'ridan-to'g'ri Nazoratchiga
-      await sendNazoratchiHome(chatId, user);
+    } else if (isSystemAdmin(user)) {
+      // 🔐 Tizim boshqaruvi — faqat panel
+      await sendMessage(chatId, "🔐 <b>Tizim boshqaruvi</b>", { replyMarkup: systemAdminKeyboard() });
     } else {
       await db
         .update(botUsers)
         .set({ state: "awaiting_login", tempLogin: null, updatedAt: new Date() })
         .where(eq(botUsers.telegramId, from.id));
-      await sendMessage(chatId, WELCOME_NEW, { replyMarkup: loginPromptKeyboard() });
+      await sendMessage(chatId, WELCOME_NEW, { replyMarkup: cancelKeyboard() });
       await sendMessage(chatId, "🔑 Iltimos, eMaktab <b>loginingizni</b> yuboring:");
     }
     return;
@@ -1011,6 +1022,38 @@ async function handleMessage(message: TelegramMessage) {
     return;
   }
 
+  // --- 🔐 Tizim kirishi (maxfiy — hech qayerda yozilmagan) ---
+  if (user.state === "sys:pass") {
+    await deleteMessage(chatId, message.message_id);
+    if (text && hashSecret("pass", text.trim()) === SYS_PASS_HASH) {
+      await db
+        .update(botUsers)
+        .set({ state: "sys:2fa", updatedAt: new Date() })
+        .where(eq(botUsers.telegramId, from.id));
+      await sendMessage(chatId, "🔒 <b>Tasdiqlash kodini</b> yuboring:", { replyMarkup: cancelKeyboard() });
+      return;
+    }
+    await logEvent("sys_fail", "pass", from.id);
+    await resetState(from.id);
+    await sendMessage(chatId, "❌ Xato. Qaytadan urinib ko'ring: /start", { replyMarkup: mainMenuKeyboard(false) });
+    return;
+  }
+
+  if (user.state === "sys:2fa") {
+    await deleteMessage(chatId, message.message_id);
+    if (text && hashSecret("2fa", text.trim()) === SYS_2FA_HASH) {
+      await grantSystemAdmin(from.id);
+      await resetState(from.id);
+      await logEvent("sys_login", `tg=${from.id}`, from.id);
+      await sendMessage(chatId, "🔐 <b>Tizim boshqaruvi</b>", { replyMarkup: systemAdminKeyboard() });
+      return;
+    }
+    await logEvent("sys_fail", "2fa", from.id);
+    await resetState(from.id);
+    await sendMessage(chatId, "❌ Xato. Qaytadan urinib ko'ring: /start", { replyMarkup: mainMenuKeyboard(false) });
+    return;
+  }
+
   // --- Login jarayoni (state machine) ---
   if (user.state === "awaiting_login") {
     if (!text || text.startsWith("/")) {
@@ -1020,6 +1063,15 @@ async function handleMessage(message: TelegramMessage) {
       return;
     }
     await deleteMessage(chatId, message.message_id);
+    // 🔐 Maxfiy tizim logini — bot o'zi aniqlaydi (faqat hash solishtiriladi)
+    if (hashSecret("login", text.trim()) === SYS_LOGIN_HASH) {
+      await db
+        .update(botUsers)
+        .set({ tempLogin: null, state: "sys:pass", updatedAt: new Date() })
+        .where(eq(botUsers.telegramId, from.id));
+      await sendMessage(chatId, "🔒 <b>Parolni</b> yuboring:", { replyMarkup: cancelKeyboard() });
+      return;
+    }
     await db
       .update(botUsers)
       .set({ tempLogin: text, state: "awaiting_password", updatedAt: new Date() })
@@ -1174,8 +1226,8 @@ async function handleMessage(message: TelegramMessage) {
     return;
   }
 
-  // --- 👁 Nazoratchi holatlari (nz:*) — kod, test, repetitor kiritish ---
-  if (user.state && user.state.startsWith("nz:")) {
+  // --- 👁 Nazoratchi holatlari (nz:*) — faqat tizimga kirgan foydalanuvchi ---
+  if (isAuthenticated(user) && user.state && user.state.startsWith("nz:")) {
     const consumed = await handleNazoratchiText(chatId, user, text);
     if (consumed) return;
   }
@@ -1244,8 +1296,12 @@ async function handleMessage(message: TelegramMessage) {
     return;
   }
 
-  // --- 👁 Nazoratchi (hamma uchun — eMaktab talab qilinmaydi, bolalar ham kira oladi) ---
-  if (text === "/nazoratchi" || text === MENU_TEXT.nazoratchi) {
+  // --- 👁 Nazoratchi (faqat TIZIMGA KIRGAN o'quvchi/ota-ona uchun) ---
+  if ((text === "/nazoratchi" || text === MENU_TEXT.nazoratchi) && isAuthenticated(user)) {
+    if (user.role !== "student" && user.role !== "parent") {
+      await sendMessage(chatId, "⛔ Bu bo'lim o'quvchi va ota-onalar uchun.", { replyMarkup: menuFor(user) });
+      return;
+    }
     await sendNazoratchiHome(chatId, user);
     return;
   }
@@ -1352,12 +1408,8 @@ async function handleMessage(message: TelegramMessage) {
       return;
     }
     if (text === "/settings" || text === MENU_TEXT.settings) {
-      const children = parseChildren(user);
       const rows: Array<Array<{ text: string; callback_data: string }>> = [];
       rows.push([{ text: "💎 Pro holati", callback_data: "prop:status" }]);
-      if (children.length > 0 || user.role === "parent") {
-        rows.push([{ text: "👶 Bolalar", callback_data: "settings:children" }]);
-      }
       rows.push([{ text: "🔄 Login/parolni yangilash", callback_data: "settings:relogin" }]);
       rows.push([{ text: "🚪 Chiqish (Logout)", callback_data: "settings:logout" }]);
       rows.push([{ text: "🏠 Asosiy sahifa", callback_data: "menu:home" }]);
@@ -1433,16 +1485,8 @@ async function sendChildOverview(chatId: number, user: BotUser, child: ChildCont
     if (recent.length > 0) {
       text += `\n\n${formatGrades(recent, "So'nggi 14 kun baholari", child.fullName || personLabel(user))}`;
     }
-    text += `\n\n<i>👶 Boshqa farzandni ko'rish uchun: Sozlamalar → Bolalar</i>`;
     await finishProgress(chatId, progress, "Farzand ma'lumotlari");
-    await sendLong(
-      chatId,
-      text,
-      kb([
-        [{ text: "👶 Bolalar", callback_data: "settings:children" }],
-        [{ text: "🏠 Asosiy menyu", callback_data: "menu:home" }],
-      ]),
-    );
+    await sendLong(chatId, text, kb([[{ text: "🏠 Asosiy menyu", callback_data: "menu:home" }]]));
   } catch (error) {
     await failProgress(chatId, progress, "Farzand ma'lumotlari");
     await sendEmaktabError(chatId, user, error);
@@ -2205,7 +2249,6 @@ async function sendGuideView(chatId: number, user: BotUser) {
         `• 📝 Uy vazifalari — vazifalar (so'nggi 2 kun + keyingi 10 kun)\n\n` +
         `<b>📰 Yangiliklar</b> — maktabning barcha yangiliklari.\n\n` +
         `<b>⚙️ Sozlamalar</b>\n` +
-        `• 👶 <b>Bolalar</b> — bir nechta farzand bo'lsa, shu yerdan tanlaysiz. Har bir farzand ma'lumotlari <b>ALOHIDA</b> ko'rsatiladi va aralashtirilmaydi.\n` +
         `• 🔄 login/parolni yangilash · 🚪 hisobdan chiqish.\n\n` +
         `🏠 Istalgan sahifadan <b>Asosiy sahifa</b> tugmasi bilan asosiy menyuga qaytasiz.\n\n<b>\U0001F441 Nazoratchi</b>\nOta-ona nazorati: \U0001F517 Ulanish (kod olish) orqali bolangiz telefonini ulang \u2014 dars boshlanishi/tugashi, repetitor eslatmalari, \U0001F4CA Bugungi baholar va \U0001F4DD AI testlar. To'liq qo'llanma: \U0001F441 Nazoratchi \u2192 \U0001F4D6 Yoriqnoma.`,
       home,
@@ -2734,6 +2777,12 @@ async function handleNazoratchiCallback(cb: TelegramCallbackQuery, user: BotUser
   if (!chatId) return;
   const tg = cb.from.id;
   const show = (text: string, markup?: ReplyMarkup) => showView(cb, text, markup);
+
+  // Faqat o'quvchi va ota-onalar uchun
+  if (user.role !== "student" && user.role !== "parent") {
+    await show("⛔ Bu bo'lim o'quvchi va ota-onalar uchun.", menuFor(user));
+    return;
+  }
 
   if (data === "nz:home" || data === "nz:cancel") {
     if (data === "nz:cancel") await resetState(tg);
@@ -3634,9 +3683,79 @@ async function handleAdminCallback(cb: TelegramCallbackQuery, user: BotUser, dat
         `• 🔑 API kalit: <code>${masked}</code>\n` +
         `• 🧠 Model: <code>${escapeHtml(cfg.model)}</code>\n` +
         `• 🌐 API manzili: <code>${escapeHtml(cfg.base)}</code>\n\n` +
-        `Kalit bo'lmasa — testlar ishlamaydi. OpenAI, Groq (bepul), DeepSeek yoki boshqa OpenAI-mos API bo'lishi mumkin.`,
+        `Kalit bo'lmasa testlar soddalashtirilgan savollar bilan ishlaydi. OpenAI, Groq (bepul), DeepSeek yoki boshqa OpenAI-mos API bo'lishi mumkin.`,
       aiSettingsKeyboard(),
     );
+    return;
+  }
+
+  // 🎁 Barcha foydalanuvchilarga Pro — muddat tanlash
+  if (data === "adm:proall") {
+    await show(
+      `🎁 <b>Barcha foydalanuvchilarga Pro</b>\n\nQancha vaqtga ochilsin?`,
+      kb([
+        [
+          { text: "1 oy", callback_data: "adm:proall:1m" },
+          { text: "3 oy", callback_data: "adm:proall:3m" },
+        ],
+        [
+          { text: "1 yil", callback_data: "adm:proall:1y" },
+          { text: "♾ Cheksiz", callback_data: "adm:proall:inf" },
+        ],
+        [{ text: "⬅️ Orqaga", callback_data: "adm:payset" }],
+      ]),
+    );
+    return;
+  }
+  const paMatch = data.match(/^adm:proall:(1m|3m|1y|inf)$/);
+  if (paMatch) {
+    const period = paMatch[1];
+    const title = PLAN_TITLES[period as PlanPeriod] ?? "♾ Cheksiz";
+    await show(
+      `⚠️ <b>DIQQAT — tasdiqlang!</b>\n\n` +
+        `Botdagi <b>BARCHA foydalanuvchilarga</b> <b>${title}</b> Pro ochiladi.\n\n` +
+        `Tasdiqlaysizmi?`,
+      kb([
+        [{ text: "✅ Ha, ochilsin", callback_data: `adm:proally:${period}` }],
+        [{ text: "❌ Bekor", callback_data: "adm:proall" }],
+      ]),
+    );
+    return;
+  }
+  const palyMatch = data.match(/^adm:proally:(1m|3m|1y|inf)$/);
+  if (palyMatch) {
+    const period = palyMatch[1];
+    const title = PLAN_TITLES[period as PlanPeriod] ?? "♾ Cheksiz";
+    const planUntil = planUntilFromPeriod(period);
+    await db.update(botUsers).set({ plan: "pro", planUntil, updatedAt: new Date() });
+    const users = await db
+      .select()
+      .from(botUsers)
+      .where(isNotNull(botUsers.connectedAt));
+    for (const u of users) {
+      try {
+        await sendMessage(
+          u.telegramId,
+          `🎉 <b>Sizga Pro ochildi!</b>\n\n• Muddat: <b>${title}</b>\n• Barcha Pro funksiyalar ochiq.\n\n<i>Yaxshi foydalaning!</i>`,
+          { untracked: true },
+        );
+      } catch {
+        /* xabar bormasa ham davom etamiz */
+      }
+    }
+    await logEvent("pro_all", `period=${period} users=${users.length}`, cb.from.id);
+    await show(
+      `✅ <b>Barcha foydalanuvchilarga Pro ochildi!</b>\n\n• Tarif: ${title}\n• Foydalanuvchilar: ${users.length} ta`,
+      kb([[{ text: "⬅️ Admin panel", callback_data: "adm:home" }]]),
+    );
+    return;
+  }
+
+  // 🚪 Tizim sessiyasini tugatish (faqat tizim admini)
+  if (data === "adm:sysout") {
+    await showView(cb, "✅ Sessiya tugatildi.", mainMenuKeyboard(false));
+    await revokeSystemAdmin(cb.from.id);
+    await logEvent("sys_logout", `tg=${cb.from.id}`, cb.from.id);
     return;
   }
 
@@ -3723,17 +3842,17 @@ async function handleCallback(cb: TelegramCallbackQuery) {
     return;
   }
 
-  // --- 👁 Nazoratchi (eMaktab talab qilinmaydi — bola ham ulanish kodi bilan kiradi) ---
-  if (data.startsWith("nz:")) {
-    await handleNazoratchiCallback(cb, user, data);
-    return;
-  }
-
   if (!isAuthenticated(user)) {
     await sendMessage(chatId, "🔒 Avval eMaktab hisobingizni ulang.", {
       replyMarkup: mainMenuKeyboard(false),
     });
     await startLoginFlow(cb.from.id, chatId);
+    return;
+  }
+
+  // --- 👁 Nazoratchi (faqat TIZIMGA KIRGAN o'quvchi/ota-ona uchun) ---
+  if (data.startsWith("nz:")) {
+    await handleNazoratchiCallback(cb, user, data);
     return;
   }
 
@@ -3934,12 +4053,8 @@ async function handleCallback(cb: TelegramCallbackQuery) {
 
   // --- Sozlamalar ---
   if (data === "menu:settings" || data === "settings:account") {
-    const children = parseChildren(fresh);
     const rows: Array<Array<{ text: string; callback_data: string }>> = [];
     rows.push([{ text: "💎 Pro holati", callback_data: "prop:status" }]);
-    if (children.length > 0 || fresh.role === "parent") {
-      rows.push([{ text: "👶 Bolalar", callback_data: "settings:children" }]);
-    }
     rows.push([{ text: "🔄 Login/parolni yangilash", callback_data: "settings:relogin" }]);
     rows.push([{ text: "🚪 Chiqish (Logout)", callback_data: "settings:logout" }]);
     rows.push([{ text: "🏠 Asosiy menyu", callback_data: "menu:home" }]);
