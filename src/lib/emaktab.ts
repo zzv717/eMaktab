@@ -1431,6 +1431,15 @@ async function buildSession(
     fullName = persons[0].fullName;
   }
 
+  // ---- Rol aniqlashni mustahkamlash ----
+  // Agar bolalar API bo'sh kelsa ham: chat-roles ichida "parent" bo'lsa — ota-ona.
+  if (role === "student") {
+    const lowRoles = talkUser?.roles?.map((r) => (r ?? "").toLowerCase()) ?? [];
+    if (lowRoles.includes("parent")) role = "parent";
+  }
+  // Bir nechta farzand konteksti (bir nechta person) — ota-ona.
+  if (role === "student" && persons.length > 1) role = "parent";
+
   // O'qituvchi uchun personId bo'lmasligi mumkin — kontekstni minimallashtiramiz.
   if (persons.length === 0 && role === "teacher") {
     persons.push({

@@ -478,6 +478,7 @@ export function adminUserKeyboard(id: number, isPro: boolean) {
     isPro
       ? [{ text: "💎 Pro olib tashlash", callback_data: `adm:pn:${id}` }]
       : [{ text: "💎 Pro berish", callback_data: `adm:pr:${id}` }],
+    [{ text: "🎭 Rolni o'zgartirish", callback_data: `adm:role:${id}` }],
     [
       { text: "⬅️ Ro'yxat", callback_data: "adm:u:0" },
       { text: "🔄 Yangilash", callback_data: `adm:d:${id}` },
