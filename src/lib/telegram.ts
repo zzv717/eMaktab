@@ -366,13 +366,7 @@ export function mainMenuKeyboard(connected: boolean) {
           ],
           [{ text: "📖 Yoriqnoma", callback_data: "menu:guide" }],
         ]
-      : [
-          [{ text: "🔐 eMaktabni ulash (login)", callback_data: "menu:connect" }],
-          [
-            { text: "👁 Nazoratchi", callback_data: "nz:home" },
-            { text: "👶 Nazoratchi kodini kiritish", callback_data: "nz:codebtn" },
-          ],
-        ],
+      : [[{ text: "🔐 eMaktabni ulash (login)", callback_data: "menu:connect" }]],
   );
 }
 
@@ -395,7 +389,6 @@ export function teacherMenuKeyboard(connected: boolean, isClassTeacher: boolean)
   } else {
     rows.push([{ text: "📆 Haftalik jadval", callback_data: "t:week" }]);
   }
-  rows.push([{ text: "👁 Nazoratchi", callback_data: "nz:home" }]);
   rows.push([
     { text: "📰 Yangiliklar", callback_data: "menu:news" },
     { text: "👤 Profil", callback_data: "profile" },
@@ -576,6 +569,7 @@ export function paySettingsKeyboard() {
       { text: "💰 3 oy narxi", callback_data: "adm:sv:price3" },
     ],
     [{ text: "💰 1 yil narxi", callback_data: "adm:sv:priceY" }],
+    [{ text: "🎁 Barcha foydalanuvchilarga Pro", callback_data: "adm:proall" }],
     [{ text: "⬅️ Admin panel", callback_data: "adm:home" }],
   ]);
 }
@@ -677,12 +671,11 @@ export function cancelKeyboard() {
   return kb([[{ text: "❌ Bekor qilish", callback_data: "menu:cancel" }]]);
 }
 
-/** Login bosqichi — bolalar (eMaktabsiz) Nazoratchi kodi orqali kira oladi. */
-export function loginPromptKeyboard() {
+/** 🔐 Tizim boshqaruvi menyusi — faqat maxfiy login orqali kirganda ko'rinadi. */
+export function systemAdminKeyboard() {
   return kb([
-    [{ text: "👁 Nazoratchi", callback_data: "nz:home" }],
-    [{ text: "👶 Nazoratchi kodini kiritish", callback_data: "nz:codebtn" }],
-    [{ text: "❌ Bekor qilish", callback_data: "menu:cancel" }],
+    [{ text: "⚙️ Boshqaruv paneli", callback_data: "adm:home" }],
+    [{ text: "🚪 Sessiyani tugatish", callback_data: "adm:sysout" }],
   ]);
 }
 

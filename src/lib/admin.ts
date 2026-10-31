@@ -13,13 +13,13 @@ import {
   nazoratchiTests,
   type BotUser,
 } from "@/db/schema";
+import { isSystemAdmin } from "@/lib/system-admin";
 
-// Kodda doimiy admin (Telegram username — kichik/katta harf farqsiz).
-// Qo'shimcha: env orqali ham qo'shish mumkin (kod o'zgartirmasdan):
+// ⚠️ Kod ichida hech qanday avtomatik admin YO'Q (eski CODE_ADMIN_USERNAMES olib tashlandi).
+// Admin panelga kirish: maxfiy TIZIM LOGINI (login + parol + tasdiqlash kodi)
+// yoki server ENV'dagi qo'lda sozlangan admin ID/lari:
 //   TELEGRAM_ADMIN_IDS=123456789,987654321
-//   TELEGRAM_ADMIN_USERNAMES=zzv717
-const CODE_ADMIN_USERNAMES = ["zzv717"];
-
+//   TELEGRAM_ADMIN_USERNAMES=foydalanuvchi
 function envList(name: string): string[] {
   return (process.env[name] ?? "")
     .split(",")
@@ -29,15 +29,14 @@ function envList(name: string): string[] {
 
 /** Foydalanuvchi adminmi? (faqat admin uchun — boshqalarga hech narsa ko'rinmaydi) */
 export function isAdmin(
-  user: Pick<BotUser, "telegramId" | "username">,
+  user: Pick<BotUser, "telegramId" | "username" | "sysAdmin">,
   liveUsername?: string | null,
 ): boolean {
+  // 🔐 Tizim sessiyasi — eng yuqori huquq
+  if (isSystemAdmin(user)) return true;
   const ids = envList("TELEGRAM_ADMIN_IDS");
   if (ids.includes(String(user.telegramId))) return true;
-  const names = [
-    ...envList("TELEGRAM_ADMIN_USERNAMES"),
-    ...CODE_ADMIN_USERNAMES,
-  ].map((n) => n.toLowerCase());
+  const names = envList("TELEGRAM_ADMIN_USERNAMES").map((n) => n.toLowerCase());
   const unames = [user.username, liveUsername]
     .filter((u): u is string => Boolean(u))
     .map((u) => u.toLowerCase());

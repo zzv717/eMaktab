@@ -215,7 +215,12 @@ export async function paymentHistoryCount(telegramId: number): Promise<{ total: 
 /** Barcha admin chatlari (to'lov xabarlari shu yerga ketadi). */
 export async function adminChatIds(): Promise<number[]> {
   const rows = await db
-    .select({ chatId: botUsers.chatId, telegramId: botUsers.telegramId, username: botUsers.username })
+    .select({
+      chatId: botUsers.chatId,
+      telegramId: botUsers.telegramId,
+      username: botUsers.username,
+      sysAdmin: botUsers.sysAdmin,
+    })
     .from(botUsers);
   return rows.filter((r) => isAdmin(r)).map((r) => r.chatId);
 }

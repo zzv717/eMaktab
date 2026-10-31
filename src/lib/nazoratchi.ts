@@ -792,8 +792,8 @@ Bola variantni bosadi → natija <b>darhol ota-onaga</b> ko'rinadi
 baholar (fan va baho ko'rinishida).
 
 <b>❓ Tez-tez so'raladigan savollar</b>
-• <i>Farzandim telefoni yo'q — ishlaydimi?</i> Ha! Ota-ona hisobidan eMaktab
-jadvali olinadi, xabarlar ota-onaga boradi. Test uchun bola Telegramda bo'lishi kerak.
+• <i>Bola nima qilishi kerak?</i> Botga <b>o'z eMaktab hisobi</b> bilan kiradi va
+👶 Kodni kiritish orqali ulanadi. Keyin hammasi avtomatik.
 • <i>Ikki ota-ona ulansa bo'ladimi?</i> Ha — har biri o'z kodini kiritadi.
 • <i>Bola kodni o'zi o'chirsa?</i> Bo'lmaydi — uzish tugmasi faqat ota-onada.
 

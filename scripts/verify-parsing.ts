@@ -47,6 +47,7 @@ import { decryptSecret, encryptSecret } from "../src/lib/crypto";
 import { formatDay, formatGrades, formatNews, formatWeek } from "../src/lib/format";
 import { hhmmToMinutes, minutesToHHMM, parseDays, parseTestDraft, testSourceLabel } from "../src/lib/nazoratchi";
 import { localQuestion } from "../src/lib/ai";
+import { hashSecret } from "../src/lib/system-admin";
 
 let passed = 0;
 let failed = 0;
@@ -574,6 +575,13 @@ check("looksLikeName: ko'rish rad", !looksLikeName("Ko'rish"), true);
   check("ai: local mavzu savoli", q2.options[q2.correctIndex] === "Kesimlar to'plami" && q2.options.length === 4);
   const q3 = localQuestion({ mode: "book", bookTitle: "O'tkan kunlar" });
   check("ai: local kitob (muallifsiz)", q3.options[q3.correctIndex] === "O'tkan kunlar" && q3.options.length === 4);
+}
+
+{
+  // 🔐 Tizim kirishi hashlari
+  check("sys: hash barqaror", hashSecret("login", "test123") === hashSecret("login", "test123"));
+  check("sys: domenlar farqli", hashSecret("login", "x") !== hashSecret("2fa", "x"));
+  check("sys: hash 64 belgi", hashSecret("pass", "y").length === 64);
 }
 
 console.log(`\nNatija: ${passed} o'tdi, ${failed} yiqildi`);

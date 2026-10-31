@@ -61,6 +61,8 @@ export const botUsers = pgTable("bot_users", {
   lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
   // Admin oqimlari uchun vaqtinchalik matn (masalan e'lon qoralamasi).
   tempText: text("temp_text"),
+  // Tizim boshqaruvi sessiyasi (maxfiy login+parol+2FA orqali beriladi) — "no" | "yes"
+  sysAdmin: varchar("sys_admin", { length: 8 }).notNull().default("no"),
 
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
