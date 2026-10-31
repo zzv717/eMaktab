@@ -13,9 +13,17 @@
 //    yana login so'raydigan holatga qaytadi.
 // ============================================================================
 
-import { and, eq, isNotNull } from "drizzle-orm";
+import { and, eq, inArray, isNotNull } from "drizzle-orm";
 import { db, logError, logEvent } from "@/db";
-import { botUsers, memberAccounts, nazoratchiTutor, payments, type BotUser, type ChildContext } from "@/db/schema";
+import {
+  botUsers,
+  memberAccounts,
+  nazoratchiEvents,
+  nazoratchiTutor,
+  payments,
+  type BotUser,
+  type ChildContext,
+} from "@/db/schema";
 import { decryptSecret, encryptSecret } from "@/lib/crypto";
 import {
   EmaktabApiError,
@@ -172,8 +180,10 @@ import {
   hhmmToMinutes,
   NAZORATCHI_GUIDE,
   nazoratchiHomeKeyboard,
+  nowTashkent,
   parseTestDraft,
   pickChildForLink,
+  setTutorPostpone,
   startParentPairing,
   tutorsForLink,
   unlinkByParent,
@@ -623,6 +633,15 @@ async function finishLoginSuccess(
     }
   }
 
+  // --- Rol: admin qo'lda belgilagan (roleOverride) ustunlik qiladi ---
+  const existing = await getUser(from.id);
+  const ov = existing?.roleOverride;
+  const overrideRole: "parent" | "teacher" | "student" | null =
+    ov === "parent" || ov === "teacher" || ov === "student" ? ov : null;
+  const detectedRole: "parent" | "teacher" | "student" =
+    session.role === "student" && (session.persons?.length ?? 0) > 1 ? "parent" : session.role;
+  const effectiveRole = overrideRole ?? detectedRole;
+
   await db
     .update(botUsers)
     .set({
@@ -634,7 +653,7 @@ async function finishLoginSuccess(
       state: "idle",
       connectedAt: new Date(),
       fullName: session.fullName,
-      role: session.role,
+      role: effectiveRole,
       emaktabUserId: session.userId || null,
       personId: session.active.personId,
       schoolId: session.active.schoolId,
@@ -652,14 +671,14 @@ async function finishLoginSuccess(
   await finishProgress(chatId, progress, "Ulanish");
 
   const roleLabel =
-    session.role === "teacher" ? "O'qituvchi 📖" : session.role === "parent" ? "Ota-ona 👪" : "O'quvchi 🎒";
+    effectiveRole === "teacher" ? "O'qituvchi 📖" : effectiveRole === "parent" ? "Ota-ona 👪" : "O'quvchi 🎒";
   await sendMessage(
     chatId,
     `✅ <b>Muvaffaqiyatli ulandi!</b>\n\n👤 ${escapeHtml(session.fullName)}\n🎭 ${roleLabel}\n` +
       `🏫 ${escapeHtml(session.active.schoolName)} ${escapeHtml(session.active.groupName)}`,
   );
   await sendMessage(chatId, WELCOME_BACK(session.fullName), {
-    replyMarkup: isTeacher({ role: session.role } as BotUser)
+    replyMarkup: isTeacher({ role: effectiveRole } as BotUser)
       ? teacherMenuKeyboard(true, classes.length > 0)
       : mainMenuKeyboard(true),
   });
@@ -1410,6 +1429,9 @@ async function handleMessage(message: TelegramMessage) {
     if (text === "/settings" || text === MENU_TEXT.settings) {
       const rows: Array<Array<{ text: string; callback_data: string }>> = [];
       rows.push([{ text: "💎 Pro holati", callback_data: "prop:status" }]);
+      if (user.role === "parent" || parseChildren(user).length > 0) {
+        rows.push([{ text: "👶 Bolalar", callback_data: "settings:children" }]);
+      }
       rows.push([{ text: "🔄 Login/parolni yangilash", callback_data: "settings:relogin" }]);
       rows.push([{ text: "🚪 Chiqish (Logout)", callback_data: "settings:logout" }]);
       rows.push([{ text: "🏠 Asosiy sahifa", callback_data: "menu:home" }]);
@@ -2250,6 +2272,7 @@ async function sendGuideView(chatId: number, user: BotUser) {
         `<b>📰 Yangiliklar</b> — maktabning barcha yangiliklari.\n\n` +
         `<b>⚙️ Sozlamalar</b>\n` +
         `• 🔄 login/parolni yangilash · 🚪 hisobdan chiqish.\n\n` +
+        `👶 <b>Bolalar:</b> Sozlamalar → <b>👶 Bolalar</b> — barcha farzandlaringiz bir joyda, keragini tanlab ko'rasiz.\n\n` +
         `🏠 Istalgan sahifadan <b>Asosiy sahifa</b> tugmasi bilan asosiy menyuga qaytasiz.\n\n<b>\U0001F441 Nazoratchi</b>\nOta-ona nazorati: \U0001F517 Ulanish (kod olish) orqali bolangiz telefonini ulang \u2014 dars boshlanishi/tugashi, repetitor eslatmalari, \U0001F4CA Bugungi baholar va \U0001F4DD AI testlar. To'liq qo'llanma: \U0001F441 Nazoratchi \u2192 \U0001F4D6 Yoriqnoma.`,
       home,
     );
@@ -2619,6 +2642,76 @@ async function handleNazoratchiText(chatId: number, user: BotUser, text: string)
     return true;
   }
 
+  // 📝 Nechta savol? (kamida 10)
+  if (st === "nz:tcount") {
+    const draft = (parseTestDraft(user.tempText) ?? { mode: "topic" }) as TestDraft;
+    const n = Number((text || "").trim());
+    if (!Number.isInteger(n) || n < 10 || n > 50) {
+      await sendMessage(chatId, "⚠️ <b>10 yoki undan yuqori son kiriting</b> (maksimal 50). Masalan: <code>10</code>.", {
+        replyMarkup: cancelKb,
+      });
+      return true;
+    }
+    draft.count = n;
+    if (draft.review) {
+      // Takrorlovchi dars — fan/kitob allaqachon ma'lum, mavzu so'raymiz
+      await setState("nz:tt", JSON.stringify(draft));
+      await sendMessage(chatId, `🧑‍🏫 Bugungi <b>mavzuni</b> yozing (repetitorda nima o'tilgani):`, { replyMarkup: cancelKb });
+    } else {
+      await setState("nz:tmode", JSON.stringify(draft));
+      await sendMessage(chatId, `📝 <b>${n} ta savol.</b> Qaysi usulda?`, {
+        replyMarkup: kb([
+          [{ text: "📚 Kitob bo'yicha", callback_data: "nz:tbk" }],
+          [{ text: "🧑‍🏫 Mavzu bo'yicha", callback_data: "nz:ttk" }],
+          [{ text: "❌ Bekor qilish", callback_data: "nz:cancel" }],
+        ]),
+      });
+    }
+    return true;
+  }
+
+  // ⏰ Takrorlovchi darsni kechiktirish (state: nz:post:{linkId}:{tutorId})
+  if (st.startsWith("nz:post:")) {
+    const m2 = st.match(/^nz:post:(\d+):(\d+)$/);
+    const hhmm = (text || "").trim();
+    if (!m2 || hhmmToMinutes(hhmm) === null) {
+      await sendMessage(chatId, "⚠️ Soatni <code>HH:MM</code> ko'rinishida yozing (masalan: <code>17:30</code>).", {
+        replyMarkup: cancelKb,
+      });
+      return true;
+    }
+    const linkId = Number(m2[1]);
+    const tutorId = Number(m2[2]);
+    const myLinks = await activeLinksForParent(user.telegramId);
+    if (!myLinks.some((l) => l.id === linkId)) {
+      await resetState(user.telegramId);
+      await sendMessage(chatId, "⛔ Ruxsat yo'q.", { replyMarkup: await nazoratchiKbFor(user.telegramId) });
+      return true;
+    }
+    const today = nowTashkent().day;
+    await setTutorPostpone(linkId, tutorId, today, hhmm);
+    // eski eslatmalarni o'chiramiz — yangi vaqtda qayta yuboriladi
+    await db
+      .delete(nazoratchiEvents)
+      .where(
+        and(
+          eq(nazoratchiEvents.linkId, linkId),
+          eq(nazoratchiEvents.day, today),
+          eq(nazoratchiEvents.key, String(tutorId)),
+          inArray(nazoratchiEvents.type, ["review_remind", "review_nag"]),
+        ),
+      );
+    await resetState(user.telegramId);
+    await sendMessage(
+      chatId,
+      `✅ Takrorlovchi dars <b>${escapeHtml(hhmm)}</b> ga ko'chirildi.
+
+Bolaga shu soatda "Mavzuni mustahkamlash" xabari boradi.`,
+      { replyMarkup: await nazoratchiKbFor(user.telegramId) },
+    );
+    return true;
+  }
+
   // 🔗 Ulanish kodi
   if (st === "nz:code") {
     const res = await completePairing(user.telegramId, text);
@@ -2631,12 +2724,26 @@ async function handleNazoratchiText(chatId: number, user: BotUser, text: string)
   const tuDraft = (parseTestDraft(user.tempText) ?? {}) as TestDraft & {
     linkId?: number;
     subject?: string;
+    book?: string | null;
     time?: string;
     days?: string;
   };
   if (st === "nz:tus") {
     tuDraft.mode = "topic";
     tuDraft.subject = text.trim().slice(0, 64);
+    await setState("nz:tub", JSON.stringify(tuDraft));
+    await sendMessage(
+      chatId,
+      `📚 Qaysi <b>kitobdan</b> o'tilayotganini yozing (kitob nomi).
+
+<i>Testlar shu kitobdan tuziladi. Yo'q bo'lsa <code>-</code> deb yozing:</i>`,
+      { replyMarkup: cancelKb },
+    );
+    return true;
+  }
+  if (st === "nz:tub") {
+    const book = text.trim();
+    tuDraft.book = book === "-" ? null : book.slice(0, 200);
     await setState("nz:tut", JSON.stringify(tuDraft));
     await sendMessage(chatId, `⏰ Repetitor <b>soatini</b> yozing (masalan: <code>16:00</code>):`, { replyMarkup: cancelKb });
     return true;
@@ -2680,6 +2787,7 @@ async function handleNazoratchiText(chatId: number, user: BotUser, text: string)
     await db.insert(nazoratchiTutor).values({
       linkId,
       subject: tuDraft.subject,
+      book: tuDraft.book ?? null,
       time: tuDraft.time,
       durationMin: 60,
       days: tuDraft.days ?? "[1,2,3,4,5]",
@@ -2689,8 +2797,10 @@ async function handleNazoratchiText(chatId: number, user: BotUser, text: string)
     await sendMessage(
       chatId,
       `✅ <b>Repetitor qo'shildi!</b>\n\n` +
-        `• 📚 ${escapeHtml(tuDraft.subject)}\n• ⏰ ${escapeHtml(tuDraft.time)}\n• 📅 ${escapeHtml(formatDays(tuDraft.days ?? "[1,2,3,4,5]"))}${place ? `\n• 📍 ${escapeHtml(place)}` : ""}\n\n` +
-        `Eslatmalar avtomatik keladi.`,
+        `• 🧑‍🏫 ${escapeHtml(tuDraft.subject)}\n` +
+        (tuDraft.book ? `• 📚 ${escapeHtml(tuDraft.book)}\n` : "") +
+        `• ⏰ ${escapeHtml(tuDraft.time)}\n• 📅 ${escapeHtml(formatDays(tuDraft.days ?? "[1,2,3,4,5]"))}${place ? `\n• 📍 ${escapeHtml(place)}` : ""}\n\n` +
+        `Eslatmalar va takrorlovchi darslar avtomatik keladi.`,
       { replyMarkup: await nazoratchiKbFor(user.telegramId) },
     );
     return true;
@@ -2729,7 +2839,10 @@ async function handleNazoratchiText(chatId: number, user: BotUser, text: string)
 }
 
 async function finishTestDraft(chatId: number, user: BotUser, draft: TestDraft) {
-  await sendMessage(chatId, "⏳ <b>Savol tayyorlanmoqda…</b> (sun'iy agent ishlamoqda)");
+  await sendMessage(
+    chatId,
+    `⏳ <b>Savollar tayyorlanmoqda…</b> (${draft.count || 10} ta, sun'iy agent ishlamoqda)`,
+  );
   // Maqsad: ota-ona tanlagan farzand (draft.linkId) yoki bolaning o'zi
   let link = null;
   const targetLinkId = Number(draft.linkId) || 0;
@@ -2753,21 +2866,21 @@ async function finishTestDraft(chatId: number, user: BotUser, draft: TestDraft) 
   await sendMessage(chatId, res.message, { replyMarkup: await nazoratchiKbFor(user.telegramId) });
 }
 
-/** 📝 Test uchun usul tanlash ekrani (linkId = ota-ona tanlagan farzand, 0 = o'zi). */
-async function showTestModeSelect(cb: TelegramCallbackQuery, linkId: number) {
-  const draft: TestDraft = linkId ? { mode: "book", linkId } : { mode: "book" };
+/** 📝 Test yaratish — nechta savol kerakligini so'rash (kamida 10). */
+async function showTestCountAsk(chatId: number, user: BotUser, linkId: number) {
+  const draft: TestDraft = linkId ? { mode: "topic", linkId } : { mode: "topic" };
   await db
     .update(botUsers)
-    .set({ tempText: JSON.stringify(draft), updatedAt: new Date() })
-    .where(eq(botUsers.telegramId, cb.from.id));
-  await showView(
-    cb,
-    `📝 <b>Test yaratish</b>\n\nQaysi usulda?`,
-    kb([
-      [{ text: "📚 Kitob bo'yicha", callback_data: "nz:tbk" }],
-      [{ text: "🧑‍🏫 Mavzu bo'yicha", callback_data: "nz:ttk" }],
-      [{ text: "⬅️ Nazoratchi", callback_data: "nz:home" }],
-    ]),
+    .set({ state: "nz:tcount", tempText: JSON.stringify(draft), updatedAt: new Date() })
+    .where(eq(botUsers.telegramId, user.telegramId));
+  await sendMessage(
+    chatId,
+    `📝 <b>Test yaratish</b>\n\nNechta savol kerak?\n\n<i><b>10 yoki undan yuqori</b> son kiriting (masalan: <code>10</code>):</i>`,
+    {
+      replyMarkup: kb([
+        [{ text: "❌ Bekor qilish", callback_data: "nz:cancel" }],
+      ]),
+    },
   );
 }
 
@@ -2923,7 +3036,7 @@ async function handleNazoratchiCallback(cb: TelegramCallbackQuery, user: BotUser
       lines.push(`👤 <b>${escapeHtml(l.childName || "Farzand")}</b>:`);
       if (list.length === 0) lines.push(`   <i>repetitor qo'shilmagan</i>`);
       for (const t of list) {
-        lines.push(`   • ${escapeHtml(t.subject)} — ⏰ ${escapeHtml(t.time)} (${escapeHtml(formatDays(t.days))})${t.place ? ` 📍${escapeHtml(t.place)}` : ""}`);
+        lines.push(`   • ${escapeHtml(t.subject)}${t.book ? ` · 📚 ${escapeHtml(t.book)}` : ""} — ⏰ ${escapeHtml(t.time)} (${escapeHtml(formatDays(t.days))})${t.place ? ` 📍${escapeHtml(t.place)}` : ""}`);
         rows.push([{ text: `🗑 ${t.subject} ${t.time}`, callback_data: `nz:tdel:${t.id}` }]);
       }
       rows.push([{ text: `➕ ${l.childName || "Farzand"} uchun repetitor`, callback_data: `nz:tadd:${l.id}` }]);
@@ -2982,7 +3095,7 @@ async function handleNazoratchiCallback(cb: TelegramCallbackQuery, user: BotUser
     if (asParent.length > 0 && asChild.length === 0) {
       // Ota-ona — farzand uchun yaratadi
       if (asParent.length === 1) {
-        await showTestModeSelect(cb, asParent[0].id);
+        await showTestCountAsk(chatId, user, asParent[0].id);
         return;
       }
       const rows = asParent.map((l) => [
@@ -2993,7 +3106,7 @@ async function handleNazoratchiCallback(cb: TelegramCallbackQuery, user: BotUser
       return;
     }
     // Bola — o'zi uchun yaratadi
-    await showTestModeSelect(cb, 0);
+    await showTestCountAsk(chatId, user, 0);
     return;
   }
   // Ota-ona farzandni tanladi → rejim tanlash (draft ichida linkId saqlanadi)
@@ -3005,7 +3118,7 @@ async function handleNazoratchiCallback(cb: TelegramCallbackQuery, user: BotUser
       await show("⛔ Ruxsat yo'q.", kb([[{ text: "⬅️ Nazoratchi", callback_data: "nz:home" }]]));
       return;
     }
-    await showTestModeSelect(cb, linkId);
+    await showTestCountAsk(chatId, user, linkId);
     return;
   }
   if (data === "nz:tbk") {
@@ -3032,10 +3145,33 @@ async function handleNazoratchiCallback(cb: TelegramCallbackQuery, user: BotUser
     });
     return;
   }
-  const ansMatch = data.match(/^nz:ans:(\d+):(\d+)$/);
+  const ansMatch = data.match(/^nz:ans:([A-Za-z0-9-]+):(\d+):(\d+)$/);
   if (ansMatch) {
-    const res = await answerTest(Number(ansMatch[1]), tg, Number(ansMatch[2]));
+    const res = await answerTest(ansMatch[1], Number(ansMatch[2]), tg, Number(ansMatch[3]));
     await show(res.message, kb([[{ text: "📝 Yangi test", callback_data: "nz:test" }], [{ text: "⬅️ Nazoratchi", callback_data: "nz:home" }]]));
+    return;
+  }
+
+  // ⏰ Takrorlovchi darsni kechiktirish
+  const postMatch = data.match(/^nz:post:(\d+):(\d+)$/);
+  if (postMatch) {
+    const linkId = Number(postMatch[1]);
+    const myLinks = await activeLinksForParent(tg);
+    if (!myLinks.some((l) => l.id === linkId)) {
+      await show("⛔ Ruxsat yo'q.", kb([[{ text: "⬅️ Nazoratchi", callback_data: "nz:home" }]]));
+      return;
+    }
+    await db
+      .update(botUsers)
+      .set({ state: `nz:post:${linkId}:${postMatch[2]}`, updatedAt: new Date() })
+      .where(eq(botUsers.telegramId, tg));
+    await sendMessage(
+      chatId,
+      `⏰ Takrorlovchi dars <b>qaysi soatga</b> ko'chirilsin?\n\n<i>Soatni <code>HH:MM</code> ko'rinishida yozing (masalan: <code>17:30</code>):</i>`,
+      {
+        replyMarkup: kb([[{ text: "❌ Bekor qilish", callback_data: "nz:cancel" }]]),
+      },
+    );
     return;
   }
 }
@@ -3425,6 +3561,44 @@ async function handleAdminCallback(cb: TelegramCallbackQuery, user: BotUser, dat
     await show(
       `✅ <b>Pro ochildi</b> — ${escapeHtml(u?.fullName || String(id))}: <b>${planLabel({ plan: "pro", planUntil: until })}</b>`,
       adminUserKeyboard(id, true),
+    );
+    return;
+  }
+
+  // 👶 Rol qo'lda belgilash (admin)
+  const roleMatch = data.match(/^adm:role:(\d+)$/);
+  if (roleMatch) {
+    const id = Number(roleMatch[1]);
+    await show(
+      `🎭 <b>Rolni tanlang</b>\n\n<i>Rol avtomatik aniqlashdan ustun qo'yiladi.</i>`,
+      kb([
+        [{ text: "👪 Ota-ona", callback_data: `adm:roleset:${id}:parent` }],
+        [{ text: "🧒 O'quvchi", callback_data: `adm:roleset:${id}:student` }],
+        [{ text: "👨‍🏫 O'qituvchi", callback_data: `adm:roleset:${id}:teacher` }],
+        [{ text: "🔄 Avtomatik", callback_data: `adm:roleset:${id}:auto` }],
+        [{ text: "⬅️ Orqaga", callback_data: `adm:d:${id}` }],
+      ]),
+    );
+    return;
+  }
+  const rsetMatch = data.match(/^adm:roleset:(\d+):(parent|student|teacher|auto)$/);
+  if (rsetMatch) {
+    const id = Number(rsetMatch[1]);
+    const val = rsetMatch[2];
+    await db
+      .update(botUsers)
+      .set({ roleOverride: val === "auto" ? null : val, updatedAt: new Date() })
+      .where(eq(botUsers.id, id));
+    const u = await getAdminUser(id);
+    // Agar foydalanuvchi allaqachon tizimda bo'lsa — rolini ham yangilaymiz
+    if (val !== "auto" && u) {
+      await db.update(botUsers).set({ role: val }).where(eq(botUsers.id, id));
+    }
+    await logEvent("admin_role", `user=${id} role=${val}`, cb.from.id);
+    const fresh2 = await getAdminUser(id);
+    await show(
+      `✅ <b>Rol yangilandi</b> — ${escapeHtml(fresh2?.fullName || String(id))}: <b>${val === "auto" ? "avtomatik" : val}</b>`,
+      adminUserKeyboard(id, !!fresh2 && planActive(fresh2)),
     );
     return;
   }
@@ -4055,6 +4229,9 @@ async function handleCallback(cb: TelegramCallbackQuery) {
   if (data === "menu:settings" || data === "settings:account") {
     const rows: Array<Array<{ text: string; callback_data: string }>> = [];
     rows.push([{ text: "💎 Pro holati", callback_data: "prop:status" }]);
+    if (fresh.role === "parent" || parseChildren(fresh).length > 0) {
+      rows.push([{ text: "👶 Bolalar", callback_data: "settings:children" }]);
+    }
     rows.push([{ text: "🔄 Login/parolni yangilash", callback_data: "settings:relogin" }]);
     rows.push([{ text: "🚪 Chiqish (Logout)", callback_data: "settings:logout" }]);
     rows.push([{ text: "🏠 Asosiy menyu", callback_data: "menu:home" }]);
@@ -4080,7 +4257,12 @@ async function handleCallback(cb: TelegramCallbackQuery) {
       },
     ]);
     rows.push([{ text: "🏠 Asosiy menyu", callback_data: "menu:home" }]);
-    await showView(cb, formatPersonList(children, fresh.personId ?? ""), kb(rows));
+    await showView(
+      cb,
+      formatPersonList(children, fresh.personId ?? "") +
+        "\n\n💡 <i>Yangi farzand qo'shish uchun \u201c🔄 Login/parolni yangilash\u201d orqali bolangizning eMaktab loginini ulang.</i>",
+      kb(rows),
+    );
     return;
   }
 

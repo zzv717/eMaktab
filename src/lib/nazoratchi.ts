@@ -9,7 +9,7 @@
 //   javob bergach natija ota-onaga ko'rinadi.
 // ---------------------------------------------------------------------------
 
-import { and, eq } from "drizzle-orm";
+import { and, count, eq, gte } from "drizzle-orm";
 import { db, logEvent, logError } from "@/db";
 import {
   botUsers,
@@ -27,6 +27,7 @@ import {
   fetchDiaryDays,
   fetchGrades,
   loginEmaktab,
+  dayStartTs,
   scheduleFromDiaryDays,
   tashkentDayKey,
   TZ_OFFSET_MS,
@@ -36,7 +37,7 @@ import {
 } from "@/lib/emaktab";
 import { escapeHtml, formatGrades } from "@/lib/format";
 import { kb, sendMessage, type ReplyMarkup } from "@/lib/telegram";
-import { generateTestQuestion } from "@/lib/ai";
+import { generateTestQuestions } from "@/lib/ai";
 import { getSetting, setSetting } from "@/lib/payments";
 
 // ---------------------------------------------------------------------------
@@ -264,12 +265,13 @@ export async function unlinkByParent(linkId: number, parentTg: number): Promise<
 // ---------------------------------------------------------------------------
 
 export async function tutorsForLink(linkId: number): Promise<
-  Array<{ id: number; subject: string; time: string; durationMin: number; days: string; place: string | null }>
+  Array<{ id: number; subject: string; book: string | null; time: string; durationMin: number; days: string; place: string | null }>
 > {
   return db
     .select({
       id: nazoratchiTutor.id,
       subject: nazoratchiTutor.subject,
+      book: nazoratchiTutor.book,
       time: nazoratchiTutor.time,
       durationMin: nazoratchiTutor.durationMin,
       days: nazoratchiTutor.days,
@@ -307,6 +309,10 @@ export interface TestDraft {
   topic?: string;
   /** Ota-ona yaratayotgan bo'lsa — qaysi farzand (linkId) */
   linkId?: number;
+  /** Nechta savol (kamida 10) */
+  count?: number;
+  /** Takrorlovchi dars (repetitor) testi — fan/kitob avtomatik olinadi */
+  review?: { tutorId: number; subject: string; book?: string | null };
 }
 
 export function parseTestDraft(json: string | null): TestDraft | null {
@@ -319,129 +325,217 @@ export function parseTestDraft(json: string | null): TestDraft | null {
 }
 
 export function testSourceLabel(d: TestDraft): string {
+  if (d.review) {
+    return `🧑‍🏫 ${d.review.subject}${d.review.book ? ` · 📚 ${d.review.book}` : ""}${d.topic ? ` — ${d.topic}` : ""}`;
+  }
   return d.mode === "book"
     ? `📚 ${d.title || "?"}${d.author ? ` (${d.author})` : ""}${d.pages ? ` — betlar: ${d.pages}` : ""}`
     : `🧑‍🏫 ${d.topic || "?"}`;
 }
 
-/** Test yaratadi: AI savol → bazaga yozadi → ikkala tomonga yuboradi. */
+/** Test to'plami yaratadi: N ta savol (qiyinlik pastdan yuqoriga) → ikkala tomonga. */
 export async function createAndDeliverTest(
   link: NazoratchiLink,
   draft: TestDraft,
 ): Promise<{ ok: boolean; message: string }> {
-  // Ota-onalar (bir nechta bo'lsa — hammasi)
   const links = await activeLinksForChild(link.childTelegramId);
   const parentIds = [...new Set(links.map((l) => l.parentTelegramId))];
-  let question;
+  const count = Math.min(50, Math.max(10, Number(draft.count) || 10));
+  const level = Math.min(5, Math.max(1, Number(link.testLevel) || 1));
+
+  let questions;
   try {
-    question = await generateTestQuestion({
-      mode: draft.mode,
-      bookTitle: draft.title,
-      bookAuthor: draft.author,
-      pages: draft.pages,
-      topic: draft.topic,
-    });
+    questions = await generateTestQuestions(
+      {
+        mode: draft.mode,
+        bookTitle: draft.review?.book || draft.title,
+        bookAuthor: draft.author,
+        pages: draft.pages,
+        topic: draft.topic,
+      },
+      count,
+      level,
+    );
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     return {
       ok: false,
-      message: `⚠️ Test yaratib bo'lmadi: ${escapeHtml(msg)}\n\nAdmin bilan bog'laning yoki keyinroq qayta urinib ko'ring.`,
+      message: `\u26A0\uFE0F Test yaratib bo'lmadi: ${escapeHtml(msg)}\n\nAdmin bilan bog'laning yoki keyinroq qayta urinib ko'ring.`,
     };
   }
+
   const primaryParent = parentIds[0] ?? link.parentTelegramId;
-  const [row] = await db
-    .insert(nazoratchiTests)
-    .values({
-      linkId: link.id,
-      childTelegramId: link.childTelegramId,
-      parentTelegramId: primaryParent,
-      mode: draft.mode,
-      source: testSourceLabel(draft),
-      question: question.question,
-      options: JSON.stringify(question.options),
-      correctIndex: question.correctIndex,
-    })
-    .returning();
+  const quizId = `${link.id}-${Date.now().toString(36)}`;
+  const sourceLine = testSourceLabel(draft);
+  const rows = questions.map((q, i) => ({
+    linkId: link.id,
+    childTelegramId: link.childTelegramId,
+    parentTelegramId: primaryParent,
+    mode: draft.review ? "topic" : draft.mode,
+    source: sourceLine,
+    quizId,
+    qIndex: i,
+    difficulty: q.difficulty ?? 1,
+    question: q.question,
+    options: JSON.stringify(q.options),
+    correctIndex: q.correctIndex,
+  }));
+  await db.insert(nazoratchiTests).values(rows);
 
   const letters = ["A", "B", "C", "D"];
-  const optionText = question.options.map((o, i) => `${letters[i]}) ${o}`).join("\n");
-  const sourceLine = testSourceLabel(draft);
-  const engineNote =
-    question.engine === "local"
-      ? `\n\n<i>💡 Soddalashtirilgan savol (AI kalit kiritilsa — chuqurroq savollar: admin → 🤖 AI sozlamalari)</i>`
-      : "";
 
-  // Bolaga — TO'G'RI JAVOBSIZ variantlar
+  // Ota-onalarga — to'liq javoblar kitobi (bo'lib yuboriladi)
+  const keyLines = questions
+    .map(
+      (q, i) =>
+        `${i + 1}. ${q.question}\n   \u2705 ${letters[q.correctIndex]}) ${q.options[q.correctIndex]} \u00b7 daraja ${q.difficulty ?? 1}`,
+    )
+    .join("\n");
+  const parentHeader =
+    `\U0001F4DD <b>Test yuborildi</b> \u2014 \U0001F464 ${escapeHtml(childLabel(link))}\n${escapeHtml(sourceLine)}\n\n` +
+    `Savollar: <b>${questions.length}</b> ta (qiyinlik avtomatik, pastdan yuqoriga).\n` +
+    `\u2705 To'g'ri javoblar:\n\n`;
+  for (const chunk of chunkText(parentHeader + keyLines)) {
+    await sendSafe(primaryParent, chunk, undefined, false, link.id);
+  }
+  for (const pid of parentIds) {
+    if (pid !== primaryParent) {
+      await sendSafe(pid, parentHeader + keyLines.slice(0, 3000), undefined, false, link.id);
+    }
+  }
+
+  // Bolaga — birinchi savol (javoblar yo'q, bosqichma-bosqich)
+  await sendQuizQuestion(link, quizId, 0);
+  return { ok: true, message: `\u2705 <b>${questions.length} ta savol</b> tayyor va bolaga yuborildi!` };
+}
+
+function chunkText(text: string, max = 3500): string[] {
+  const parts: string[] = [];
+  let cur = "";
+  for (const line of text.split("\n")) {
+    if ((cur + line).length > max && cur) {
+      parts.push(cur);
+      cur = "";
+    }
+    cur += line + "\n";
+  }
+  if (cur.trim()) parts.push(cur);
+  return parts;
+}
+
+/** Quizning ma'lum savolini bolaga yuboradi. */
+async function sendQuizQuestion(link: NazoratchiLink, quizId: string, qIndex: number): Promise<void> {
+  const rows = await db
+    .select()
+    .from(nazoratchiTests)
+    .where(and(eq(nazoratchiTests.quizId, quizId), eq(nazoratchiTests.qIndex, qIndex)))
+    .limit(1);
+  const t = rows[0];
+  if (!t) return;
+  const all = await db.select().from(nazoratchiTests).where(eq(nazoratchiTests.quizId, quizId));
+  const options = JSON.parse(t.options) as string[];
+  const letters = ["A", "B", "C", "D"];
   const childKb = kb(
-    question.options.map((_, i) => [
-      { text: letters[i], callback_data: `nz:ans:${row.id}:${i}` },
-    ]),
+    options.map((_, i) => [{ text: letters[i], callback_data: `nz:ans:${quizId}:${qIndex}:${i}` }]),
   );
   await sendSafe(
     link.childTelegramId,
-    `📝 <b>Test savoli</b>\n${sourceLine}\n\n❓ ${escapeHtml(question.question)}\n\n${optionText}\n\n<i>To'g'ri javobni tanlang:</i>`,
+    `\U0001F4DD <b>Savol ${qIndex + 1}/${all.length}</b>\n\n` +
+      `\u2753 ${escapeHtml(t.question)}\n\n` +
+      options.map((o, i) => `${letters[i]}) ${o}`).join("\n") +
+      `\n\n<i>To'g'ri javobni tanlang:</i>`,
     childKb,
     true,
     link.id,
   );
-
-  // Ota-onalarga — JAVOB BILAN
-  const parentText =
-    `📝 <b>Test yuborildi</b> — 👤 ${escapeHtml(childLabel(link))}\n${sourceLine}\n\n` +
-    `❓ ${escapeHtml(question.question)}\n\n${optionText}\n\n` +
-    `✅ <b>To'g'ri javob: ${letters[question.correctIndex]}</b>\n\n` +
-    `<i>Bola javob bergach natija shu yerga keladi.</i>${engineNote}`;
-  for (const pid of parentIds) {
-    await sendSafe(pid, parentText, undefined, false, link.id);
-  }
-  return { ok: true, message: "✅ Test yaratildi va yuborildi!" };
 }
 
-/** Bolaning javobi → natija ota-onalarga. */
+/** Bolaning javobi → keyingi savol yoki yakuniy natija. */
 export async function answerTest(
-  testId: number,
+  quizId: string,
+  qIndex: number,
   childTg: number,
   index: number,
 ): Promise<{ ok: boolean; message: string }> {
-  const rows = await db.select().from(nazoratchiTests).where(eq(nazoratchiTests.id, testId)).limit(1);
-  const t = rows[0];
-  if (!t) return { ok: false, message: "❌ Test topilmadi." };
-  if (t.childTelegramId !== childTg) return { ok: false, message: "⛔ Bu test sizga tegishli emas." };
-  if (t.answeredAt) return { ok: false, message: "ℹ️ Bu testga allaqachon javob bergansiz." };
+  const all = (
+    await db.select().from(nazoratchiTests).where(eq(nazoratchiTests.quizId, quizId))
+  ).sort((a, b) => a.qIndex - b.qIndex);
+  if (all.length === 0) return { ok: false, message: "\u274C Test topilmadi." };
+  const t = all.find((r) => r.qIndex === qIndex);
+  if (!t) return { ok: false, message: "\u274C Savol topilmadi." };
+  if (all[0].childTelegramId !== childTg) return { ok: false, message: "\u26D4 Bu test sizga tegishli emas." };
+  if (t.answeredAt) return { ok: false, message: "\u2139\uFE0F Bu savolga allaqachon javob bergansiz." };
+  if (all.some((r) => r.qIndex < qIndex && !r.answeredAt)) {
+    return { ok: false, message: "\u26A0\uFE0F Avvalgi savollarga javob bering." };
+  }
 
   const correct = index === t.correctIndex;
   await db
     .update(nazoratchiTests)
-    .set({
-      childAnswer: index,
-      answeredAt: new Date(),
-      isCorrect: correct ? "yes" : "no",
-    })
-    .where(eq(nazoratchiTests.id, testId));
+    .set({ childAnswer: index, answeredAt: new Date(), isCorrect: correct ? "yes" : "no" })
+    .where(eq(nazoratchiTests.id, t.id));
 
+  const linkRows = await db
+    .select()
+    .from(nazoratchiLinks)
+    .where(eq(nazoratchiLinks.id, t.linkId))
+    .limit(1);
+  const link = linkRows[0];
   const letters = ["A", "B", "C", "D"];
-  const options = JSON.parse(t.options) as string[];
-  const sourceLine = t.source ?? "";
 
-  // Ota-onalarga natija
+  // Keyingi savol bormi?
+  const next = all.find((r) => !r.answeredAt && r.qIndex > qIndex);
+  if (next && link) {
+    await sendQuizQuestion(link, quizId, next.qIndex);
+    return {
+      ok: true,
+      message: correct
+        ? "\u2705 <b>To'g'ri!</b> Keyingi savol yuborildi \u2192"
+        : `\u274C Noto'g'ri (to'g'ri javob: <b>${letters[t.correctIndex]}</b>). Keyingi savol \u2192`,
+    };
+  }
+
+  // Test yakunlandi — natija + qiyinlik darajasi
+  const total = all.length;
+  const right = all.filter((r) => r.isCorrect === "yes").length;
+  const pct = total > 0 ? right / total : 0;
+  let levelNote = "";
+  if (link) {
+    let level = Math.min(5, Math.max(1, Number(link.testLevel) || 1));
+    const before = level;
+    if (pct >= 0.7 && level < 5) level++;
+    else if (pct < 0.4 && level > 1) level--;
+    if (level !== before) {
+      await db
+        .update(nazoratchiLinks)
+        .set({ testLevel: level })
+        .where(eq(nazoratchiLinks.id, link.id));
+      levelNote =
+        level > before
+          ? `\n\n\U0001F4C8 Qiyinlik darajasi oshdi: <b>${before} \u2192 ${level}</b>`
+          : `\n\n\U0001F4C9 Qiyinlik darajasi pasaydi: <b>${before} \u2192 ${level}</b> (keyingi test osonroq)`;
+    }
+  }
+
+  const detail = all
+    .map((r) => `${r.qIndex + 1}. ${r.isCorrect === "yes" ? "\u2705" : "\u274C"} ${letters[r.childAnswer ?? 0]} (to'g'ri: ${letters[r.correctIndex]})`)
+    .join("\n");
+
+  // Ota-onalarga yakuniy natija
   const links = await activeLinksForChild(childTg);
   const parentIds = [...new Set(links.map((l) => l.parentTelegramId))];
   const parentText =
-    `📝 <b>Test natijasi</b> — 👤 ${escapeHtml(links[0]?.childName || "Farzand")}\n` +
-    `${escapeHtml(sourceLine)}\n\n` +
-    `${correct ? "✅ <b>TO'G'RI javob berdi!</b>" : "❌ <b>Noto'g'ri javob berdi.</b>"}\n` +
-    `• Bolaning javobi: ${letters[index]}) ${escapeHtml(options[index] ?? "")}\n` +
-    `• To'g'ri javob: ${letters[t.correctIndex]}) ${escapeHtml(options[t.correctIndex] ?? "")}`;
+    `\U0001F4DD <b>Test yakunlandi</b> \u2014 \U0001F464 ${escapeHtml(links[0]?.childName || "Farzand")}\n` +
+    `Natija: <b>${right}/${total}</b> to'g'ri${levelNote}\n\n${detail}`;
   for (const pid of parentIds) {
     await sendSafe(pid, parentText, undefined, false, links[0]?.id ?? 0);
   }
 
-  // Bolaga qisqa natija
+  const emoji = pct >= 0.7 ? "\U0001F389 Zo'r!" : pct >= 0.4 ? "\U0001F44D Yaxshi, davom eting!" : "\U0001F4AA Keyingi safar albatta olasiz!";
   return {
     ok: true,
-    message: correct
-      ? "✅ <b>To'g'ri javob!</b> Zo'r!"
-      : `❌ <b>Noto'g'ri.</b> To'g'ri javob: <b>${letters[t.correctIndex]}</b>\n\nKeyingi safar albatta olasiz! 💪`,
+    message:
+      `\U0001F3C1 <b>Test yakunlandi!</b>\n\nNatijangiz: <b>${right}/${total}</b> to'g'ri\n${emoji}${levelNote}`,
   };
 }
 
@@ -587,6 +681,40 @@ interface DueItem {
   toParent: string;
   toChild?: string;
   parentKb?: ReplyMarkup;
+  /** Bolaga yuborilganda avtomatik boshlanadigan test draft (JSON) */
+  childDraft?: string;
+}
+
+// ---------------------------------------------------------------------------
+// ⏰ Kechiktirish (ota-ona) + takrorlovchi darslar yordamchilari
+// ---------------------------------------------------------------------------
+
+export async function getTutorPostpones(linkId: number, day: string): Promise<Record<string, string>> {
+  try {
+    const raw = await getSetting(`nzpost:${linkId}:${day}`);
+    return raw ? (JSON.parse(raw) as Record<string, string>) : {};
+  } catch {
+    return {};
+  }
+}
+
+export async function setTutorPostpone(
+  linkId: number,
+  tutorId: number,
+  day: string,
+  hhmm: string,
+): Promise<void> {
+  const cur = await getTutorPostpones(linkId, day);
+  cur[String(tutorId)] = hhmm;
+  await setSetting(`nzpost:${linkId}:${day}`, JSON.stringify(cur));
+}
+
+export async function countTestsSince(linkId: number, sinceMs: number): Promise<number> {
+  const rows = await db
+    .select({ n: count() })
+    .from(nazoratchiTests)
+    .where(and(eq(nazoratchiTests.linkId, linkId), gte(nazoratchiTests.createdAt, new Date(sinceMs))));
+  return rows[0]?.n ?? 0;
 }
 
 interface DayWindow {
@@ -659,8 +787,9 @@ async function dueForLink(link: NazoratchiLink, day: string, weekday: number, mi
     }
   }
 
-  // Repetitor
+  // Repetitor + takrorlovchi darslar zanjiri
   const tutors = await tutorsForLink(link.id);
+  const postpones = await getTutorPostpones(link.id, day);
   for (const t of tutors) {
     const days = parseDays(t.days);
     if (!days.includes(weekday)) continue;
@@ -668,27 +797,77 @@ async function dueForLink(link: NazoratchiLink, day: string, weekday: number, mi
     if (tMin === null) continue;
     const dur = Number(t.durationMin) || 60;
     const place = t.place ? ` (${escapeHtml(t.place)})` : "";
+    const book = t.book ? `\n\U0001F4DA ${escapeHtml(t.book)}` : "";
+    const postKb = kb([
+      [{ text: "\u23F0 Kechiktirish", callback_data: `nz:post:${link.id}:${t.id}` }],
+      [{ text: "\U0001F476 Bolaga yozish", url: `tg://user?id=${link.childTelegramId}` }],
+    ]);
+
+    // 1) Repetitor eslatmasi (bir kunga ikkita dars bo'lsa ham — har biri o'ziga)
     if (minutes >= tMin - 15 && minutes <= tMin + 20) {
       out.push({
         type: "tutor",
         key: String(t.id),
         toParent:
-          `👨‍🏫 <b>Repetitor eslatmasi</b>\n👤 ${label}\n` +
-          `⏰ ${escapeHtml(t.time)} — ${escapeHtml(t.subject)}${place}`,
-        toChild: `👨‍🏫 <b>Repetitor darsingiz bor!</b>\n⏰ ${escapeHtml(t.time)} — ${escapeHtml(t.subject)}${place}\n\nBorishni unutmang!`,
+          `\U0001F468\u200D\U0001F469\u200D\U0001F467 <b>Repetitor eslatmasi</b>\n` +
+          `\U0001F464 ${label}\n\u23F0 ${escapeHtml(t.time)} \u2014 ${escapeHtml(t.subject)}${place}${book}`,
+        toChild:
+          `\U0001F468\u200D\U0001F393 <b>Repetitor darsingiz bor!</b>\n` +
+          `\u23F0 ${escapeHtml(t.time)} \u2014 ${escapeHtml(t.subject)}${place}${book}\n\nBorishni unutmang!`,
       });
     }
+
     const endMin = tMin + dur;
-    if (minutes >= endMin && minutes <= endMin + 40) {
+
+    // 2) Repetitordan chiqdi — uyga jo'nab ketmoqda (faqat ota-onaga)
+    if (minutes >= endMin && minutes <= endMin + 30) {
       out.push({
         type: "tutor_end",
         key: String(t.id),
         toParent:
-          `👨‍🏫 Farzandingiz repetitordan chiqdi — ${escapeHtml(t.subject)}.\n` +
-          `📝 Endi bugungi mavzu bo'yicha test yarating:`,
-        toChild: `👨‍🏫 <b>Repetitor darsi tugadi!</b> (${escapeHtml(t.subject)})\n\nEndi bugungi mavzu bo'yicha test yarating:`,
-        parentKb: kb([[{ text: "📝 Test yaratish", callback_data: "nz:test" }]]),
+          `\U0001F468\u200D\U0001F393 <b>Farzandingiz repetitordan chiqdi</b>\n` +
+          `\U0001F464 ${label} \u2014 ${escapeHtml(t.subject)}${place}\n\n` +
+          `Uyga jo'nab ketmoqda.`,
+        parentKb: postKb,
       });
+    }
+
+    // 3) Uyga yetib kelgach — bolaga "Mavzuni mustahkamlash" + test oqimi boshlanadi
+    const post = postpones[String(t.id)];
+    const reviewMin = post ? hhmmToMinutes(post) ?? endMin + 30 : endMin + 30;
+    if (minutes >= reviewMin && minutes <= reviewMin + 25) {
+      out.push({
+        type: "review_remind",
+        key: String(t.id),
+        toParent: "",
+        toChild:
+          `\U0001F4DA <b>Mavzuni mustahkamlash</b>\n\n` +
+          `\U0001F9D1\u200D\U0001F3EB ${escapeHtml(t.subject)}${t.book ? ` \u00b7 \U0001F4DA ${escapeHtml(t.book)}` : ""}\n\n` +
+          `Nechta savol kerak? <b>10 yoki undan yuqori</b> son kiriting:`,
+        childDraft: JSON.stringify({
+          mode: "topic",
+          linkId: link.id,
+          review: { tutorId: t.id, subject: t.subject, book: t.book },
+        }),
+      });
+    }
+
+    // 4) Boshlamasa — ota-onaga ogohlantirish
+    const nagMin = reviewMin + 45;
+    if (minutes >= nagMin && minutes <= nagMin + 40) {
+      const sinceMs = dayStartTs(day) * 1000 + reviewMin * 60 * 1000;
+      const started = await countTestsSince(link.id, sinceMs);
+      if (started === 0) {
+        out.push({
+          type: "review_nag",
+          key: String(t.id),
+          toParent:
+            `\u26A0\uFE0F <b>Farzandingiz bugungi takrorlovchi darslarni hali boshlamadi</b>\n` +
+            `\U0001F464 ${label}\n\U0001F9D1\u200D\U0001F3EB ${escapeHtml(t.subject)}${t.book ? ` \u00b7 \U0001F4DA ${escapeHtml(t.book)}` : ""}\n\n` +
+            `Bilan bog'laning yoki takrorlovchi darsni boshqa vaqtga ko'chiring:`,
+          parentKb: postKb,
+        });
+      }
     }
   }
   return out;
@@ -719,19 +898,20 @@ export async function runDueNotifications(): Promise<{ sent: number; skipped: bo
       const items = await dueForLink(link, day, weekday, minutes);
       for (const item of items) {
         if (await alreadySent(link.id, day, item.type, item.key)) continue;
-        await sendSafe(link.parentTelegramId, item.toParent, item.parentKb, false, link.id);
+        if (item.toParent) {
+          await sendSafe(link.parentTelegramId, item.toParent, item.parentKb, false, link.id);
+        }
         const ck = `${link.childTelegramId}|${item.type}|${item.key}`;
         if (item.toChild && !childSent.has(ck)) {
           childSent.add(ck);
-          await sendSafe(
-            link.childTelegramId,
-            item.toChild,
-            item.type === "tutor_end"
-              ? kb([[{ text: "📝 Test yaratish", callback_data: "nz:test" }]])
-              : undefined,
-            true,
-            link.id,
-          );
+          await sendSafe(link.childTelegramId, item.toChild, undefined, true, link.id);
+          if (item.childDraft) {
+            // "Mavzuni mustahkamlash" — test oqimi avtomatik boshlanadi
+            await db
+              .update(botUsers)
+              .set({ state: "nz:tcount", tempText: item.childDraft, updatedAt: new Date() })
+              .where(eq(botUsers.telegramId, link.childTelegramId));
+          }
         }
         sent++;
       }
@@ -771,21 +951,29 @@ Agar bola botni bloklasa — ota-ona darhol ogohlantirish oladi.
 • 👨‍🏫 <b>Repetitor</b> — soati yetganda eslatma (agar qo'shilgan bo'lsa).
 
 <b>3️⃣ Repetitor qo'shish</b>
-👁 Nazoratchi → ⏰ Repetitor → ➕ Qo'shish → fan, soat, kunlar, joy.
-Bola repetitorga ketganda va chiqqanda xabarlar boradi.
+👁 Nazoratchi → ⏰ Repetitor → ➕ Qo'shish → <b>fan, kitob</b>, soat, kunlar, joy.
+(Bir kunga ikkita dars ham qo'shish mumkin!)
+
+Avtomatik zanjir:
+1. 👨‍🎓 Repetitor eslatmasi — soati yetganda.
+2. 👨‍👩‍👧 <b>"repetitordan chiqdi, uyga jo'nab ketmoqda"</b> — ota-onaga.
+3. 📚 <b>"Mavzuni mustahkamlash"</b> — bolaga (uyga yetgach) va test boshlanadi.
+4. Agar bola boshlamasa — ota-onaga ogohlantirish + ⏰ <b>Kechiktirish</b>
+   tugmasi (kerakli soatni yozasiz) va 👶 Bolaga yozish (Telegram).
 
 <b>4️⃣ 📝 Test (AI bilan)</b>
 👁 Nazoratchi → 📝 Test → (bola o'zi yoki ota-ona farzand uchun)
+1. <b>Nechta savol?</b> — o'zingiz yozasiz (<b>10 yoki undan yuqori</b>).
+2. Kitob bo'yicha (nomi → muallif → betlar) yoki mavzu bo'yicha.
 
-• <b>Kitob bo'yicha</b>: kitob nomi → muallifi → betlar;
-• <b>Mavzu bo'yicha</b>: bugungi mavzu (repetitordan keyin).
+Sun'iy agent savollarni <b>qiyinlik darajasi bilan</b> tuzadi — daraja
+<b>avtomatik</b>, tanlash shart emas: osondan qiyinga <b>asta-osa</b> (birdan emas).
+Yaxshi javob bersangiz daraja oshib boradi, qiynalsangiz pasayadi.
 
-Sun'iy agent savol yaratadi va <b>bir vaqtda</b> yuboradi:
-• 👨‍👩‍👧 Ota-onaga — <b>to'g'ri javob BILAN</b>;
-• 👦 Bolaga — faqat variantlar (javob aytilmaydi).
+• 👨‍👩‍👧 Ota-onaga — <b>to'liq javoblar kitobi</b> + yakuniy natija;
+• 👦 Bolaga — savollar <b>ketma-ket</b>, javob aytilmaydi.
 
-Bola variantni bosadi → natija <b>darhol ota-onaga</b> ko'rinadi
-(to'g'ri/xato, nima tanlagani).
+Bola javob beradi → natija <b>darhol ota-onaga</b> ko'rinadi.
 
 <b>5️⃣ 📊 Bugungi baholar</b>
 🏁 "Dars tugadi" xabari ostidagi tugma — eMaktabdagi <b>aynan bugungi</b>

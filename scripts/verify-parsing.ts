@@ -584,5 +584,60 @@ check("looksLikeName: ko'rish rad", !looksLikeName("Ko'rish"), true);
   check("sys: hash 64 belgi", hashSecret("pass", "y").length === 64);
 }
 
+{
+  // 🆕 Yangi kontraktlar (2026-10-30): savollar soni, daraja, kitob, zanjir, Bolalar, rol
+  const src = (rel: string) => readFileSync(new URL(`../src/${rel}`, import.meta.url), "utf-8");
+  const bot = src("lib/bot.ts");
+  const nz = src("lib/nazoratchi.ts");
+  const ai = src("lib/ai.ts");
+  const schema = src("db/schema.ts");
+  const migrate = src("app/api/admin/migrate-schema/route.ts");
+  const probe = src("app/api/admin/probe-login/route.ts");
+  const fmt = src("lib/format.ts");
+
+  check("son: 10 dan kamiga ogohlantirish", bot.includes("10 yoki undan yuqori son kiriting"));
+  check("son: nz:tcount holati", bot.includes('st === "nz:tcount"'));
+  check("kitob: repetitor qadam (nz:tub)", bot.includes('st === "nz:tub"'));
+  check("kitob: saqlashda book", bot.includes("book: tuDraft.book"));
+  check("kechiktirish: nz:post callback", bot.includes("nz:post:"));
+  check("kechiktirish: setTutorPostpone chaqiruvi", bot.includes("setTutorPostpone("));
+  check("javob: quiz format (nz:ans:quizId:qIndex:opt)", bot.includes("nz:ans:([A-Za-z0-9-]+)"));
+  check("bolalar: settings tugma (text)", bot.includes('text: "👶 Bolalar", callback_data: "settings:children"'));
+  check("bolalar: sahifa hint", bot.includes("Yangi farzand qo'shish uchun"));
+  check("bolalar: yoriqnoma bandi", bot.includes("Bolalar:</b> Sozlamalar"));
+  check("bolalar: formatAccount qatori", fmt.includes("Bolalar</b> — farzandlar ro'yxati"));
+  check("rol: roleOverride hurmati (finishLoginSuccess)", bot.includes("overrideRole"));
+  check("rol: admin panel tugmasi", bot.includes("adm:roleset:"));
+  check("rol: persons>1 fallback", bot.includes("persons?.length ?? 0) > 1"));
+  check("rol: emaktab chat-roles parent", src("lib/emaktab.ts").includes('lowRoles.includes("parent")'));
+  check("rol: emaktab persons>1 parent", src("lib/emaktab.ts").includes("persons.length > 1) role = \"parent\"") || src("lib/emaktab.ts").includes("persons.length > 1) role = 'parent'") || src("lib/emaktab.ts").includes("role = \"parent\""));
+
+  check("zanjir: Mavzuni mustahkamlash", nz.includes("Mavzuni mustahkamlash"));
+  check("zanjir: repetitordan chiqdi (ota-onaga)", nz.includes("repetitordan chiqdi"));
+  check("zanjir: boshlamadi ogohlantirish", nz.includes("boshlamadi"));
+  check("zanjir: Bolaga yozish url", nz.includes("tg://user?id="));
+  check("zanjir: kechiktirish (nz:post)", nz.includes("nz:post:"));
+  check("zanjir: postpone saqlash", nz.includes("setTutorPostpone") && nz.includes("nzpost:"));
+  check("zanjir: review_nag test tekshiruvi", nz.includes("countTestsSince"));
+  check("quiz: quizId bilan yaratish", nz.includes("quizId"));
+  check("quiz: ketma-ket savol (sendQuizQuestion)", nz.includes("sendQuizQuestion"));
+  check("quiz: daraja oshadi/pasayadi", nz.includes("Qiyinlik darajasi oshdi") && nz.includes("Qiyinlik darajasi pasaydi"));
+
+  check("daraja: 3 band (oson→o'rtacha→qiyin)", ai.includes("const bands: Array<{ difficulty: number; size: number }>"));
+  check("daraja: generateTestQuestions count+level", ai.includes("count: number") && ai.includes("level = 1"));
+
+  check("schema: role_override", schema.includes("role_override"));
+  check("schema: nazoratchi_tutor.book", schema.includes('varchar("book"'));
+  check("schema: test_level", schema.includes("test_level"));
+  check("schema: quiz_id + q_index + difficulty", schema.includes("quiz_id") && schema.includes("q_index") && schema.includes("difficulty"));
+  check("migrate: 6 yangi ALTER", migrate.includes("role_override") && migrate.includes("test_level") && migrate.includes("q_index") && migrate.includes("difficulty") && migrate.includes("nazoratchi_tutor.book") && migrate.includes("quiz_id"));
+
+  check("probe: kids rejimi", probe.includes('sp.get("kids")'));
+  check("probe: setrole rejimi", probe.includes('sp.get("setrole")'));
+
+  const q4 = localQuestion({ mode: "topic", topic: "Kesimlar" }, 2, 7);
+  check("ai: local difficulty+variant (kalitsiz)", q4.options.length === 4 && q4.engine === "local");
+}
+
 console.log(`\nNatija: ${passed} o'tdi, ${failed} yiqildi`);
 process.exit(failed > 0 ? 1 : 0);

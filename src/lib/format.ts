@@ -266,8 +266,11 @@ export function formatAccount(user: {
     `🎓 Sinf: <b>${escapeHtml(user.groupName || "—")}</b>`,
     `🔐 eMaktab login: <code>${escapeHtml(user.emaktabLogin || "—")}</code>`,
   ];
-  if (childrenCount > 1) {
+  if (childrenCount > 0) {
     lines.push(`👶 Bog'langan farzandlar: <b>${childrenCount}</b> ta`);
+  }
+  if (user.role === "parent" || childrenCount > 0) {
+    lines.push(`👶 <b>Bolalar</b> — farzandlar ro'yxati (tugma orqali)`);
   }
   {
     const active =

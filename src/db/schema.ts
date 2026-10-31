@@ -63,6 +63,8 @@ export const botUsers = pgTable("bot_users", {
   tempText: text("temp_text"),
   // Tizim boshqaruvi sessiyasi (maxfiy login+parol+2FA orqali beriladi) — "no" | "yes"
   sysAdmin: varchar("sys_admin", { length: 8 }).notNull().default("no"),
+  // Qo'lda belgilangan rol (admin paneldan) — aniqlash xato bo'lganda ishlatiladi
+  roleOverride: varchar("role_override", { length: 16 }),
 
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -130,6 +132,8 @@ export const nazoratchiLinks = pgTable("nazoratchi_links", {
   status: varchar("status", { length: 16 }).notNull().default("active"),
   // bola botni bloklagan bo'lsa — ogohlantirish uchun
   childBlocked: varchar("child_blocked", { length: 8 }).notNull().default("no"),
+  // Test qiyinlik darajasi (1..5) — avtomatik, pastdan yuqoriga oshadi
+  testLevel: bigint("test_level", { mode: "number" }).notNull().default(1),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   removedAt: timestamp("removed_at", { withTimezone: true }),
 });
@@ -139,6 +143,8 @@ export const nazoratchiTutor = pgTable("nazoratchi_tutor", {
   id: serial("id").primaryKey(),
   linkId: bigint("link_id", { mode: "number" }).notNull(),
   subject: varchar("subject", { length: 64 }).notNull(),
+  // Qaysi kitobdan o'tilayotgani (testlar shu kitobdan tuziladi)
+  book: varchar("book", { length: 255 }),
   time: varchar("time", { length: 5 }).notNull(), // HH:MM
   durationMin: bigint("duration_min", { mode: "number" }).notNull().default(60),
   // hafta kunlari: [1,3,5] = Dushanba, Chorshanba, Juma (0=Dushanba)
@@ -156,6 +162,10 @@ export const nazoratchiTests = pgTable("nazoratchi_tests", {
   parentTelegramId: bigint("parent_telegram_id", { mode: "number" }).notNull(),
   mode: varchar("mode", { length: 8 }).notNull(), // book | topic
   source: varchar("source", { length: 255 }), // "Kitob (muallif, betlar)" yoki mavzu
+  // Test to'plami (bir nechta savol bitta quizId ostida)
+  quizId: varchar("quiz_id", { length: 24 }),
+  qIndex: bigint("q_index", { mode: "number" }).notNull().default(0),
+  difficulty: bigint("difficulty", { mode: "number" }).notNull().default(1),
   question: text("question").notNull(),
   options: text("options").notNull(), // JSON ["A","B","C","D"]
   correctIndex: bigint("correct_index", { mode: "number" }).notNull(),

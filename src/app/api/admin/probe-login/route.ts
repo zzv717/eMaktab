@@ -52,6 +52,42 @@ export async function GET(req: NextRequest) {
       out.name = result.session.fullName;
       out.role = result.session.role;
 
+      // ?kids=1 — bolalar API xom javobi + personlar + me (rol aniqlash diagnostikasi)
+      if (sp.get("kids")) {
+        try {
+          const raw = await pageGet(result.session.cookies, "https://emaktab.uz/api/v2/users/me/children");
+          (out as Record<string, unknown>).kidsRaw = raw.replace(/\s+/g, " ").slice(0, 500);
+        } catch (e1) {
+          (out as Record<string, unknown>).kidsRaw = "xato " + String(e1).slice(0, 60);
+        }
+        try {
+          const meRaw = await pageGet(result.session.cookies, "https://emaktab.uz/api/v2/users/me");
+          const rolesM = meRaw.match(/"roles"\s*:\s*\[[^\]]{0,120}/);
+          const typeM = meRaw.match(/"type"\s*:\s*"[^"]{0,30}/);
+          (out as Record<string, unknown>).meRaw = `${rolesM?.[0] ?? "-"} | ${typeM?.[0] ?? "-"}`.slice(0, 300);
+        } catch (e2) {
+          (out as Record<string, unknown>).meRaw = "xato " + String(e2).slice(0, 60);
+        }
+        (out as Record<string, unknown>).persons = (
+          (result.session as unknown as { persons?: Array<Record<string, unknown>> }).persons ?? []
+        )
+          .map((p) => `${String(p.personId ?? "").slice(-5)}:${String(p.fullName ?? "?").slice(0, 20)}:${String(p.groupName ?? "")}`)
+          .join(" | ")
+          .slice(0, 500);
+        return NextResponse.json(out);
+      }
+
+      // ?setrole=parent|student|teacher — bot_users da rolni qo'lda belgilash (role_override)
+      const setrole = sp.get("setrole");
+      if (setrole === "parent" || setrole === "student" || setrole === "teacher") {
+        await db
+          .update(botUsers)
+          .set({ roleOverride: setrole, role: setrole, updatedAt: new Date() })
+          .where(eq(botUsers.emaktabLogin, login));
+        (out as Record<string, unknown>).setrole = setrole;
+        return NextResponse.json(out);
+      }
+
       // ?diag=1 — bazadagi o'quvchi hisoblaridan XOM diary (duplikat/smena tahlili)
       if (sp.get("diag")) {
         try {

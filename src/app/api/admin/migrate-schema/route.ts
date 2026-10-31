@@ -80,6 +80,12 @@ const STATEMENTS: { name: string; run: string }[] = [
   { name: "bot_users.last_seen_at", run: `ALTER TABLE bot_users ADD COLUMN IF NOT EXISTS last_seen_at timestamptz` },
   { name: "bot_users.temp_text", run: `ALTER TABLE bot_users ADD COLUMN IF NOT EXISTS temp_text text` },
   { name: "bot_users.sys_admin", run: `ALTER TABLE bot_users ADD COLUMN IF NOT EXISTS sys_admin varchar(8) NOT NULL DEFAULT 'no'` },
+  { name: "bot_users.role_override", run: `ALTER TABLE bot_users ADD COLUMN IF NOT EXISTS role_override varchar(16)` },
+  { name: "nazoratchi_tutor.book", run: `ALTER TABLE nazoratchi_tutor ADD COLUMN IF NOT EXISTS book varchar(255)` },
+  { name: "nazoratchi_links.test_level", run: `ALTER TABLE nazoratchi_links ADD COLUMN IF NOT EXISTS test_level bigint NOT NULL DEFAULT 1` },
+  { name: "nazoratchi_tests.quiz_id", run: `ALTER TABLE nazoratchi_tests ADD COLUMN IF NOT EXISTS quiz_id varchar(24)` },
+  { name: "nazoratchi_tests.q_index", run: `ALTER TABLE nazoratchi_tests ADD COLUMN IF NOT EXISTS q_index bigint NOT NULL DEFAULT 0` },
+  { name: "nazoratchi_tests.difficulty", run: `ALTER TABLE nazoratchi_tests ADD COLUMN IF NOT EXISTS difficulty bigint NOT NULL DEFAULT 1` },
   { name: "bot_users.created_at", run: `ALTER TABLE bot_users ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now()` },
   { name: "bot_users.updated_at", run: `ALTER TABLE bot_users ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now()` },
   {
