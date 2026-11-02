@@ -677,5 +677,36 @@ check("looksLikeName: ko'rish rad", !looksLikeName("Ko'rish"), true);
   check("pwa: UI platformAuthenticator tekshiruvi", appClient.includes("platformAuthenticatorIsAvailable"));
 }
 
+{
+  // 📱 PWA panellari (tez orada → ishlaydigan) kontraktlari
+  const exists = (rel: string) => {
+    try {
+      readFileSync(new URL(`../${rel}`, import.meta.url), "utf-8");
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  const src = (rel: string) => readFileSync(new URL(`../src/${rel}`, import.meta.url), "utf-8");
+  check("panel: schema pwa_accounts", src("db/schema.ts").includes("pwa_accounts"));
+  check("panel: migrate pwa_accounts", src("app/api/admin/migrate-schema/route.ts").includes("create pwa_accounts"));
+  check("panel: withEmaktabSession kesh bilan", src("lib/pwa.ts").includes("withEmaktabSession"));
+  check("panel: hisob saqlanadi (login)", src("app/api/pwa/login/route.ts").includes("saveAccount"));
+  check("panel: baholar route", exists("src/app/api/pwa/data/grades/route.ts"));
+  check("panel: jadval route", exists("src/app/api/pwa/data/schedule/route.ts"));
+  check("panel: yangiliklar route", exists("src/app/api/pwa/data/news/route.ts"));
+  check("panel: nazoratchi route", exists("src/app/api/pwa/data/nazoratchi/route.ts"));
+  check("panel: testlar route (GET+POST)", exists("src/app/api/pwa/data/tests/route.ts"));
+  check("panel: maqom route (GET+POST)", exists("src/app/api/pwa/data/maqom/route.ts"));
+  const panels = src("app/app/panels.tsx");
+  check("panel: 6 ta panel mavjud",
+    panels.includes("GradesPanel") && panels.includes("SchedulePanel") && panels.includes("NewsPanel") &&
+    panels.includes("NazoratchiPanel") && panels.includes("TestsPanel") && panels.includes("MaqomPanel"));
+  check("panel: test kamida 10", panels.includes("count < 10"));
+  check("panel: maqom Bajarildi", panels.includes("Bajarildi"));
+  check("panel: hafta navigatsiyasi", panels.includes("Oldingi") && panels.includes("Keyingi"));
+  check("panel: menyu tugmalari ishlaydigan", src("app/app/app-client.tsx").includes('setView(m.id)'));
+}
+
 console.log(`\nNatija: ${passed} o'tdi, ${failed} yiqildi`);
 process.exit(failed > 0 ? 1 : 0);
