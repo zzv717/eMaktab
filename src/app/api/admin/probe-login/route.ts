@@ -132,10 +132,39 @@ export async function GET(req: NextRequest) {
                   .from(ma)
                   .where(eq2(ma.teacherTelegramId, rows[0].telegramId));
                 pw.diagMemberAccs = accs.length;
-                pw.diagSample = accs
+              }
+              // PWA teacher_login orqali saqlanganlar
+              const accs2 = await db2
+                .select()
+                .from(ma)
+                .where(sql2`lower(${ma.teacherLogin}) = ${login.toLowerCase()}`);
+              pw.diagPwaAccs = accs2.length;
+            }
+            // Provisioning diagnostikasi — birinchi sinf bo'yicha
+            if (groups[0]) {
+              try {
+                const info = await fetchClassMembers(result.session, groups[0].classId, groups[0].className);
+                pw.diagStudents = info.students.length;
+                pw.diagCreds = info.credentials.length;
+                pw.diagCredSample = info.credentials
                   .slice(0, 3)
-                  .map((a) => `${a.kind}:${a.classId?.slice(-4)}:${a.emaktabLogin ? "login-bor" : "login-yoq"}`)
-                  .join(" | ");
+                  .map((c) => c.login.slice(0, 8))
+                  .join("|");
+                const c0 = info.credentials[0];
+                if (c0) {
+                  const r1 = await loginEmaktab(c0.login, c0.password);
+                  pw.diagFirstCred = r1.status;
+                  if (r1.status === "ok") {
+                    pw.diagPersons = (r1.session.persons ?? [])
+                      .map((pp) => pp.groupName ?? "?")
+                      .join("|")
+                      .slice(0, 60);
+                    const person = pickPersonForClass(r1.session.persons, groups[0].classId, groups[0].className);
+                    pw.diagPersonPick = person ? "ok" : "null";
+                  }
+                }
+              } catch (e3) {
+                pw.diagProvision = "xato " + String(e3).slice(0, 70);
               }
             }
             if (groups[0] && groups[0].subjects?.[0]) {
