@@ -1703,8 +1703,13 @@ async function handleConductCallback(chatId: number, user: BotUser, data: string
         await finishProgress(chatId, progress, "Dars maqomi");
         await sendMessage(
           chatId,
-          `✅ <b>Dars o'tildi deb belgilandi!</b>\n\n📅 ${dayKey.slice(8)}.${dayKey.slice(5, 7)}.${dayKey.slice(0, 4)} — ${escapeHtml(subject)}${cl?.className ? ` (${escapeHtml(cl.className)})` : ""}`,
-          { replyMarkup: menuFor(user) },
+          `✅ <b>Dars o'tildi deb belgilandi!</b>\n\n📅 ${dayKey.slice(8)}.${dayKey.slice(5, 7)}.${dayKey.slice(0, 4)} — ${escapeHtml(subject)}${cl?.className ? ` (${escapeHtml(cl.className)})` : ""}\n\n❓ <b>Davom ettirasizmi?</b>`,
+          {
+            replyMarkup: kb([
+              [{ text: "🏫 Boshqa sinfni tanlash", callback_data: "t:conduct" }],
+              [{ text: "🏠 Asosiy menyu", callback_data: "menu:home" }],
+            ]),
+          },
         );
       } else {
         await failProgress(chatId, progress, "Dars maqomi");
@@ -1883,7 +1888,8 @@ async function handleMaqomCallback(
           {
             replyMarkup: kb([
               [{ text: "➡️ Keyingisi", callback_data: `maqoms:${classId}:${subjIdxS}` }],
-              [{ text: "❌ Bekor qilish", callback_data: "menu:home" }],
+              [{ text: "🏫 Boshqa sinfni tanlash", callback_data: "t:maqom" }],
+              [{ text: "🏠 Asosiy menyu", callback_data: "menu:home" }],
             ]),
           },
         );
