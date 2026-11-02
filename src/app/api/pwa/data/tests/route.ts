@@ -77,6 +77,7 @@ export async function POST(req: NextRequest) {
     linkId?: number;
     count?: number;
     mode?: "book" | "topic";
+    subject?: string;
     title?: string;
     author?: string;
     pages?: string;
@@ -108,6 +109,7 @@ export async function POST(req: NextRequest) {
 
   const draft: TestDraft = {
     mode: body.mode,
+    subject: (body.subject ?? "").trim() || undefined,
     count,
     title: (body.title ?? "").trim() || undefined,
     author: (body.author ?? "").trim() || undefined,

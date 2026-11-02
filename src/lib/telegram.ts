@@ -172,6 +172,7 @@ export const MENU_TEXT = {
   checkAll: "⚡ Barchani tekshirish",
   profile: "👤 Profil",
   news: "📰 Yangiliklar",
+  install: "📱 Ilovani o'rnatish",
   settings: "⚙️ Sozlamalar",
   grades: "📊 Baholar",
   schedule: "📚 Dars jadvali",
@@ -190,9 +191,10 @@ export function teacherReplyKeyboard(isClassTeacher: boolean, admin = false) {
     rows.push([{ text: MENU_TEXT.myClass }, { text: MENU_TEXT.parents }]);
     rows.push([{ text: MENU_TEXT.checkAll }, { text: MENU_TEXT.profile }]);
     rows.push([{ text: MENU_TEXT.news }, { text: MENU_TEXT.settings }]);
+    rows.push([{ text: MENU_TEXT.install }]);
   } else {
     rows.push([{ text: MENU_TEXT.news }, { text: MENU_TEXT.profile }]);
-    rows.push([{ text: MENU_TEXT.settings }]);
+    rows.push([{ text: MENU_TEXT.install }, { text: MENU_TEXT.settings }]);
   }
   rows.push([{ text: MENU_TEXT.nazoratchi }]);
   if (admin) rows.push([{ text: MENU_TEXT.admin }]);
@@ -205,6 +207,7 @@ export function mainReplyKeyboard(admin = false) {
   const rows: ReplyButton[][] = [
     [{ text: MENU_TEXT.grades }, { text: MENU_TEXT.schedule }],
     [{ text: MENU_TEXT.news }, { text: MENU_TEXT.settings }],
+    [{ text: MENU_TEXT.install }],
   ];
   rows.push([{ text: MENU_TEXT.nazoratchi }]);
   if (admin) rows.push([{ text: MENU_TEXT.admin }]);

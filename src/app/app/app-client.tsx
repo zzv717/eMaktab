@@ -10,17 +10,32 @@ import {
 } from "@simplewebauthn/browser";
 import { api } from "./api";
 import {
+  ConductPanel,
   GradesPanel,
+  GuidePanel,
   MaqomPanel,
   NazoratchiPanel,
   NewsPanel,
   SchedulePanel,
+  SettingsPanel,
+  SinfimPanel,
   TestsPanel,
 } from "./panels";
 
 type Profile = { login: string; name: string; role: string; school: string; group: string };
 type Screen = "boot" | "login" | "setup" | "home";
-type View = "home" | "grades" | "schedule" | "news" | "nazoratchi" | "tests" | "maqom";
+type View =
+  | "home"
+  | "grades"
+  | "schedule"
+  | "news"
+  | "nazoratchi"
+  | "tests"
+  | "maqom"
+  | "sinfim"
+  | "conduct"
+  | "settings"
+  | "guide";
 
 const ROLE_LABEL: Record<string, string> = {
   student: "O'quvchi 🎒",
@@ -219,16 +234,25 @@ export default function AppClient() {
     nazoratchi: "👁 Nazoratchi",
     tests: "📝 Testlar",
     maqom: "✅ Maqom",
+    sinfim: "🏫 Sinfim",
+    conduct: "✅ Darsni o'tildi qilish",
+    settings: "⚙️ Sozlamalar",
+    guide: "📖 Yoriqnoma",
   };
 
   const isTeacher = profile?.role === "teacher";
+  // Botdagi menyu bilan bir xil — barcha bo'limlar
   const menuItems: { id: View; label: string }[] = isTeacher
     ? [
         { id: "schedule", label: "📚 Dars jadvali" },
         { id: "maqom", label: "✅ Maqom" },
+        { id: "conduct", label: "✅ Darsni o'tildi" },
+        { id: "sinfim", label: "🏫 Sinfim" },
         { id: "nazoratchi", label: "👁 Nazoratchi" },
         { id: "tests", label: "📝 Testlar" },
         { id: "news", label: "📰 Yangiliklar" },
+        { id: "settings", label: "⚙️ Sozlamalar" },
+        { id: "guide", label: "📖 Yoriqnoma" },
       ]
     : [
         { id: "grades", label: "📊 Baholar" },
@@ -236,6 +260,8 @@ export default function AppClient() {
         { id: "nazoratchi", label: "👁 Nazoratchi" },
         { id: "tests", label: "📝 Testlar" },
         { id: "news", label: "📰 Yangiliklar" },
+        { id: "settings", label: "⚙️ Sozlamalar" },
+        { id: "guide", label: "📖 Yoriqnoma" },
       ];
 
   return (
@@ -403,6 +429,10 @@ export default function AppClient() {
               {view === "nazoratchi" && <NazoratchiPanel />}
               {view === "tests" && <TestsPanel />}
               {view === "maqom" && <MaqomPanel />}
+              {view === "sinfim" && <SinfimPanel />}
+              {view === "conduct" && <ConductPanel />}
+              {view === "settings" && <SettingsPanel profile={profile} hasPasskey={hasPasskey} />}
+              {view === "guide" && <GuidePanel />}
             </div>
           ) : (
             <>

@@ -1426,6 +1426,35 @@ async function handleMessage(message: TelegramMessage) {
       await runActivation(chatId, user, "parent", homeroom.classId);
       return;
     }
+    if (text === "/install" || text === MENU_TEXT.install) {
+      await sendMessage(
+        chatId,
+        `📱 <b>eMaktab ilovasini telefonga o'rnatish</b>\n\n` +
+          `<b>Android uchun (APK):</b>\n` +
+          `1. Tugmani bosing — <b>eMaktab.apk</b> fayli yuklanadi\n` +
+          `2. Yuklangan faylni oching\n` +
+          `3. "Noma'lum manbalar" ruxsatini bering va <b>O'rnatish</b> tugmasini bosing\n\n` +
+          `<b>iPhone uchun:</b>\n` +
+          `1. Quyidagi <b>🌐 Web ilova</b> tugmasini bosing\n` +
+          `2. Safari'da <b>Ulashish</b> → <b>Uy ekraniga qo'shish</b>\n\n` +
+          `Ilova haqiqiy eMaktab ma'lumotlari bilan ishlaydi: baholar, dars jadvali, yangiliklar, Nazoratchi va testlar — shu yerda.\n` +
+          `<i>Kirish: eMaktab login/parol + Face ID.</i>`,
+        {
+          replyMarkup: kb([
+            [
+              {
+                text: "📲 APK yuklab olish (Android)",
+                url: "https://github.com/zzv717/eMaktab/releases/latest/download/eMaktab.apk",
+              },
+            ],
+            [{ text: "🌐 Web ilova (iPhone/Android)", url: "https://e-maktab-azizbek-9ad4.vercel.app/app" }],
+            [{ text: MENU_TEXT.home }],
+          ]),
+        },
+      );
+      return;
+    }
+
     if (text === "/settings" || text === MENU_TEXT.settings) {
       const rows: Array<Array<{ text: string; callback_data: string }>> = [];
       rows.push([{ text: "💎 Pro holati", callback_data: "prop:status" }]);
@@ -2259,7 +2288,7 @@ async function sendGuideView(chatId: number, user: BotUser) {
         `<b>👤 Profil</b> — hisob ma'lumotlari.\n` +
         `<b>📰 Yangiliklar</b> — maktabning barcha yangiliklari.\n` +
         `<b>⚙️ Sozlamalar</b> — 🔄 login/parolni yangilash, 🚪 hisobdan chiqish.\n\n` +
-        `💡 <i>Barcha amallar haqiqiy eMaktab tizimida bajariladi.</i>\n\n<b>\U0001F441 Nazoratchi</b>\nOta-ona nazorati: \U0001F517 Ulanish (kod olish) orqali bolangiz telefonini ulang \u2014 dars boshlanishi/tugashi, repetitor eslatmalari, \U0001F4CA Bugungi baholar va \U0001F4DD AI testlar. To'liq qo'llanma: \U0001F441 Nazoratchi \u2192 \U0001F4D6 Yoriqnoma.`,
+        `💡 <i>Barcha amallar haqiqiy eMaktab tizimida bajariladi.</i>\n\n<b>👁 Nazoratchi</b>\nOta-ona nazorati: 🔗 Ulanish (kod olish) orqali bolangiz telefonini ulang \u2014 dars boshlanishi/tugashi, repetitor eslatmalari, 📊 Bugungi baholar va 📝 AI testlar. To'liq qo'llanma: 👁 Nazoratchi \u2192 📖 Yoriqnoma.`,
       home,
     );
     return;
@@ -2279,7 +2308,7 @@ async function sendGuideView(chatId: number, user: BotUser) {
         `<b>⚙️ Sozlamalar</b>\n` +
         `• 🔄 login/parolni yangilash · 🚪 hisobdan chiqish.\n\n` +
         `👶 <b>Bolalar:</b> Sozlamalar → <b>👶 Bolalar</b> — barcha farzandlaringiz bir joyda, keragini tanlab ko'rasiz.\n\n` +
-        `🏠 Istalgan sahifadan <b>Asosiy sahifa</b> tugmasi bilan asosiy menyuga qaytasiz.\n\n<b>\U0001F441 Nazoratchi</b>\nOta-ona nazorati: \U0001F517 Ulanish (kod olish) orqali bolangiz telefonini ulang \u2014 dars boshlanishi/tugashi, repetitor eslatmalari, \U0001F4CA Bugungi baholar va \U0001F4DD AI testlar. To'liq qo'llanma: \U0001F441 Nazoratchi \u2192 \U0001F4D6 Yoriqnoma.`,
+        `🏠 Istalgan sahifadan <b>Asosiy sahifa</b> tugmasi bilan asosiy menyuga qaytasiz.\n\n<b>👁 Nazoratchi</b>\nOta-ona nazorati: 🔗 Ulanish (kod olish) orqali bolangiz telefonini ulang \u2014 dars boshlanishi/tugashi, repetitor eslatmalari, 📊 Bugungi baholar va 📝 AI testlar. To'liq qo'llanma: 👁 Nazoratchi \u2192 📖 Yoriqnoma.`,
       home,
     );
     return;
@@ -2296,7 +2325,7 @@ async function sendGuideView(chatId: number, user: BotUser) {
       `• 📝 Uy vazifalari — vazifalar (so'nggi 2 kun + keyingi 10 kun)\n\n` +
       `<b>📰 Yangiliklar</b> — maktabning barcha yangiliklari.\n\n` +
       `<b>⚙️ Sozlamalar</b> — 🔄 login/parolni yangilash, 🚪 hisobdan chiqish.\n\n` +
-      `🏠 Istalgan sahifadan <b>Asosiy sahifa</b> tugmasi bilan asosiy menyuga qaytasiz.\n\n<b>\U0001F441 Nazoratchi</b>\nOta-ona nazorati: \U0001F517 Ulanish (kod olish) orqali bolangiz telefonini ulang \u2014 dars boshlanishi/tugashi, repetitor eslatmalari, \U0001F4CA Bugungi baholar va \U0001F4DD AI testlar. To'liq qo'llanma: \U0001F441 Nazoratchi \u2192 \U0001F4D6 Yoriqnoma.`,
+      `🏠 Istalgan sahifadan <b>Asosiy sahifa</b> tugmasi bilan asosiy menyuga qaytasiz.\n\n<b>👁 Nazoratchi</b>\nOta-ona nazorati: 🔗 Ulanish (kod olish) orqali bolangiz telefonini ulang \u2014 dars boshlanishi/tugashi, repetitor eslatmalari, 📊 Bugungi baholar va 📝 AI testlar. To'liq qo'llanma: 👁 Nazoratchi \u2192 📖 Yoriqnoma.`,
     home,
   );
 }

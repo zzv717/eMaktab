@@ -750,3 +750,290 @@ export function MaqomPanel() {
     </div>
   );
 }
+
+// ------------------------------------------------------------ 🏫 Sinfim (ro'yxat)
+type ClassInfoOut = {
+  classId: string;
+  className: string;
+  students: { memberId: string; fullName: string }[];
+  parents: { memberId: string; fullName: string }[];
+  staff: { memberId: string; fullName: string }[];
+};
+
+export function SinfimPanel() {
+  const [groups, setGroups] = useState<ClassInfoOut[] | null>(null);
+  const [error, setError] = useState("");
+  const [tab, setTab] = useState<"students" | "parents" | "staff">("students");
+  const [classIdx, setClassIdx] = useState(0);
+
+  useEffect(() => {
+    void (async () => {
+      const r = await api<{ ok: boolean; error?: string; groups?: ClassInfoOut[] }>("/api/pwa/data/class");
+      if (!r.ok) setError(r.error ?? "Yuklab bo'lmadi");
+      else setGroups(r.groups ?? []);
+    })();
+  }, []);
+
+  if (error) return <Err msg={error} />;
+  if (groups === null) return <Loading />;
+  if (groups.length === 0) return <div className={card}>Sinf topilmadi.</div>;
+
+  const g = groups[Math.min(classIdx, groups.length - 1)]!;
+  const list = g[tab];
+  return (
+    <div>
+      {groups.length > 1 && (
+        <div className="mb-3 flex flex-wrap gap-2">
+          {groups.map((x, i) => (
+            <button
+              key={x.classId}
+              onClick={() => setClassIdx(i)}
+              className={`${chip} ${i === classIdx ? "bg-teal-700 text-white" : "bg-slate-100 text-slate-600"}`}
+            >
+              🏫 {x.className}
+            </button>
+          ))}
+        </div>
+      )}
+      <div className={`${card} mb-3`}>
+        <div className="flex gap-2">
+          {(
+            [
+              ["students", `🎒 O'quvchilar (${g.students.length})`],
+              ["parents", `👪 Ota-onalar (${g.parents.length})`],
+              ["staff", `🧑‍🏫 Xodimlar (${g.staff.length})`],
+            ] as const
+          ).map(([k, label]) => (
+            <button
+              key={k}
+              onClick={() => setTab(k)}
+              className={`${chip} ${tab === k ? "bg-teal-700 text-white" : "bg-slate-100 text-slate-600"}`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <div className="mt-3 space-y-1.5">
+          {list.length === 0 && <p className="text-sm text-slate-400">Ro'yxat bo'sh.</p>}
+          {list.map((m, i) => (
+            <div key={m.memberId || i} className="flex items-center gap-3 rounded-2xl bg-slate-50 px-3 py-2">
+              <div className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-teal-100 text-sm font-bold text-teal-800">
+                {m.fullName.slice(0, 1).toUpperCase()}
+              </div>
+              <p className="min-w-0 truncate text-sm text-slate-800">{m.fullName}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ------------------------------------------------------ ✅ Darsni o'tildi qilish
+export function ConductPanel() {
+  const [data, setData] = useState<{
+    classes: { classId: string; className: string; subjects: string[] }[];
+    date: string;
+    lessons: { number: number; subject: string; date: string }[];
+  } | null>(null);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [classId, setClassId] = useState("");
+
+  const load = useCallback(async (cid: string) => {
+    setError("");
+    const r = await api<{
+      ok: boolean;
+      error?: string;
+      classes: { classId: string; className: string; subjects: string[] }[];
+      date: string;
+      lessons: { number: number; subject: string; date: string }[];
+    }>(`/api/pwa/data/conduct${cid ? `?classId=${encodeURIComponent(cid)}` : ""}`);
+    if (!r.ok) setError(r.error ?? "Yuklab bo'lmadi");
+    else setData(r);
+  }, []);
+
+  useEffect(() => {
+    void load(classId);
+  }, [classId, load]);
+
+  const mark = async (l: { number: number; subject: string; date: string }) => {
+    const g = data?.classes.find((c) => c.classId === classId);
+    if (!g) return;
+    setBusy(true);
+    setError("");
+    setNotice("");
+    const r = await api<Ok & { message?: string }>("/api/pwa/data/conduct", {
+      classId: g.classId,
+      className: g.className,
+      subjectName: l.subject,
+      date: l.date,
+      lessonNumber: l.number,
+    });
+    setBusy(false);
+    if (!r.ok) setError(r.error ?? "Belgilab bo'lmadi");
+    else {
+      setNotice(`✅ ${l.number}-dars (${l.subject}) o'tildi deb belgilandi`);
+      void load(classId);
+    }
+  };
+
+  if (error && !data) return <Err msg={error} />;
+  if (!data) return <Loading />;
+
+  return (
+    <div>
+      {notice && <p className="mb-3 rounded-2xl bg-emerald-50 p-3 text-sm text-emerald-700">{notice}</p>}
+      {error && <Err msg={error} />}
+
+      <div className={`${card} mb-3`}>
+        <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Sinfni tanlang</p>
+        <div className="mt-2 flex flex-wrap gap-2">
+          {data.classes.map((c) => (
+            <button
+              key={c.classId}
+              onClick={() => setClassId(c.classId)}
+              className={`${chip} ${c.classId === classId ? "bg-teal-700 text-white" : "bg-slate-100 text-slate-600"}`}
+            >
+              🏫 {c.className}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {classId && (
+        <div className={`${card} mb-3`}>
+          <p className="font-semibold text-slate-900">📅 Bugungi darslar ({fmtDate(data.date)})</p>
+          {data.lessons.length === 0 && (
+            <p className="mt-2 text-sm text-slate-400">Bugun uchun dars topilmadi.</p>
+          )}
+          <div className="mt-2 space-y-2">
+            {data.lessons.map((l) => (
+              <div key={l.number} className="flex items-center justify-between rounded-2xl bg-slate-50 p-3">
+                <div>
+                  <p className="text-sm font-medium text-slate-800">
+                    {l.number}. {l.subject}
+                  </p>
+                  <p className="text-xs text-slate-400">{fmtDate(l.date)}</p>
+                </div>
+                <button
+                  onClick={() => void mark(l)}
+                  disabled={busy}
+                  className={`${btn} shrink-0 bg-teal-700 text-white`}
+                >
+                  ✅ O'tildi
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ------------------------------------------------------------- ⚙️ Sozlamalar
+export function SettingsPanel({ profile, hasPasskey }: { profile: { name: string; role: string; login: string }; hasPasskey: boolean }) {
+  const [children, setChildren] = useState<{ personId: string; fullName: string; groupName: string }[]>([]);
+
+  useEffect(() => {
+    if (profile.role !== "parent" && profile.role !== "student") return;
+    void (async () => {
+      const r = await api<{ ok: boolean; persons?: { personId: string; fullName: string; groupName: string }[] }>(
+        "/api/pwa/data/grades",
+      );
+      if (r.ok && r.persons) setChildren(r.persons);
+    })();
+  }, [profile.role]);
+
+  return (
+    <div>
+      <div className={`${card} mb-3`}>
+        <p className="font-semibold text-slate-900">👤 Profil</p>
+        <div className="mt-3 space-y-1.5 rounded-2xl bg-slate-50 p-4 text-sm">
+          <p className="flex justify-between gap-4">
+            <span className="text-slate-500">Ism</span>
+            <span className="text-right font-medium text-slate-800">{profile.name}</span>
+          </p>
+          <p className="flex justify-between gap-4">
+            <span className="text-slate-500">Login</span>
+            <span className="text-right font-medium text-slate-800">{profile.login}</span>
+          </p>
+          <p className="flex justify-between gap-4">
+            <span className="text-slate-500">Kirish</span>
+            <span className="text-right font-medium text-slate-800">{hasPasskey ? "Face ID ✅" : "Login/parol"}</span>
+          </p>
+        </div>
+      </div>
+
+      {children.length > 0 && (
+        <div className={`${card} mb-3`}>
+          <p className="font-semibold text-slate-900">👶 Bolalar</p>
+          <div className="mt-2 space-y-1.5">
+            {children.map((c) => (
+              <div key={c.personId} className="flex items-center justify-between rounded-2xl bg-slate-50 p-3 text-sm">
+                <p className="text-slate-800">{c.fullName}</p>
+                <p className="text-slate-500">🏫 {c.groupName}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className={`${card} mb-3`}>
+        <p className="font-semibold text-slate-900">📱 Ilovani o'rnatish</p>
+        <p className="mt-2 text-sm text-slate-600">
+          Android uchun APK faylini yuklab oling yoki telefonga to'g'ridan-to'g'ri o'rnating.
+        </p>
+        <a
+          href="https://github.com/zzv717/eMaktab/releases/latest/download/eMaktab.apk"
+          className={`${btn} mt-3 block bg-teal-700 text-center text-white`}
+        >
+          📲 APK yuklab olish
+        </a>
+        <p className="mt-3 text-xs text-slate-400">
+          iPhone: <b>Safari</b> → <b>Ulashish</b> → <b>Uy ekraniga qo'shish</b>
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// ------------------------------------------------------------- 📖 Yoriqnoma
+export function GuidePanel() {
+  return (
+    <div className={card}>
+      <p className="font-semibold text-slate-900">📖 Qo'llanma</p>
+      <div className="mt-3 space-y-3 text-sm text-slate-700">
+        <div className="rounded-2xl bg-slate-50 p-3">
+          <p className="font-semibold">📊 Baholar</p>
+          <p className="mt-1 text-slate-600">Farzandlaringizning oxirgi 14 kunlik baholari — fanlar kesimida, o'rtacha bilan.</p>
+        </div>
+        <div className="rounded-2xl bg-slate-50 p-3">
+          <p className="font-semibold">📚 Dars jadvali</p>
+          <p className="mt-1 text-slate-600">Haftalik jadval: darslar vaqti, fan, o'qituvchi, uy vazifasi va baholar.</p>
+        </div>
+        <div className="rounded-2xl bg-slate-50 p-3">
+          <p className="font-semibold">👁 Nazoratchi</p>
+          <p className="mt-1 text-slate-600">
+            Telegram bot orqali farzandingizni ulang — dars boshlanishi/tugashi, repetitor eslatmalari va AI testlar shu yerda ko'rinadi.
+          </p>
+        </div>
+        <div className="rounded-2xl bg-slate-50 p-3">
+          <p className="font-semibold">📝 Testlar</p>
+          <p className="mt-1 text-slate-600">
+            Kitob yoki mavzu bo'yicha test yarating (kamida 10 savol). Savollar bolaga Telegramga, javoblar kitobi esa sizga yuboriladi.
+          </p>
+        </div>
+        <div className="rounded-2xl bg-slate-50 p-3">
+          <p className="font-semibold">✅ Maqom (o'qituvchi)</p>
+          <p className="mt-1 text-slate-600">Uy vazifasi bajarilganini belgilang — eMaktabga yoziladi.</p>
+        </div>
+        <p className="text-xs text-slate-400">
+          Barcha ma'lumotlar haqiqiy eMaktab tizimidan olinadi. Yordam uchun: Telegram bot → 📖 Yoriqnoma.
+        </p>
+      </div>
+    </div>
+  );
+}

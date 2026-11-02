@@ -571,10 +571,28 @@ check("looksLikeName: ko'rish rad", !looksLikeName("Ko'rish"), true);
   const q1 = localQuestion({ mode: "book", bookTitle: "Alpomish", bookAuthor: "Xolquloq", pages: "12-20" });
   check("ai: local kitob savoli 4 variant", q1.options.length === 4 && q1.engine === "local");
   check("ai: local muallif savoli", q1.question.includes("Alpomish") && q1.options[q1.correctIndex] === "Xolquloq");
+  // Mavzu rejimi (fan noma'lum) — umumiy bilimlar banki: 4 variant, to'g'ri indeks 0..3
   const q2 = localQuestion({ mode: "topic", topic: "Kesimlar to'plami" });
-  check("ai: local mavzu savoli", q2.options[q2.correctIndex] === "Kesimlar to'plami" && q2.options.length === 4);
+  check(
+    "ai: local mavzu savoli",
+    q2.options.length === 4 &&
+      q2.correctIndex >= 0 &&
+      q2.correctIndex <= 3 &&
+      new Set(q2.options.map((o) => o.toLowerCase())).size === 4 &&
+      q2.engine === "local" &&
+      !/qaysi mavzu/i.test(q2.question),
+  );
   const q3 = localQuestion({ mode: "book", bookTitle: "O'tkan kunlar" });
   check("ai: local kitob (muallifsiz)", q3.options[q3.correctIndex] === "O'tkan kunlar" && q3.options.length === 4);
+  // Matematika fani — HAQIQIY hisoblash savoli
+  const q4 = localQuestion({ mode: "topic", subject: "Matematika", topic: "Ko'paytirish" }, 3, 2);
+  check(
+    "ai: matematika savoli hisoblangan",
+    /= \?/.test(q4.question) && q4.options.length === 4 && q4.options.some((o) => /^-?\d+$/.test(o)),
+  );
+  // Ingliz tili — tarjima banki
+  const q5 = localQuestion({ mode: "topic", subject: "Ingliz tili", topic: "Food" }, 2, 5);
+  check("ai: ingliz tili banki", q5.options.length === 4 && q5.engine === "local" && q5.question.includes("tarjimasi"));
 }
 
 {
@@ -722,6 +740,32 @@ check("looksLikeName: ko'rish rad", !looksLikeName("Ko'rish"), true);
   check("login: sessiya cookie saqlanadi", src("app/api/pwa/login/route.ts").includes("result.session.cookies"));
   check("probe: pwadata rejimi", src("app/api/admin/probe-login/route.ts").includes('sp.get("pwadata")'));
   check("lookup: login case-insensitive", src("app/api/pwa/data/nazoratchi/route.ts").includes("lower("));
+}
+
+{
+  // 🧪 Test sifati + 📱 APK + 👨‍🏫 O'qituvchi bo'limi kontraktlari
+  const src = (rel: string) => readFileSync(new URL(`../src/${rel}`, import.meta.url), "utf-8");
+  const ai = src("lib/ai.ts");
+  check("test: emoji xom emas (U0001F yo'q)", !src("lib/nazoratchi.ts").includes("\u005cU000") && !src("lib/bot.ts").includes("\u005cU000"));
+  check("test: javob joyi aralashtiriladi", ai.includes("shuffleOptions"));
+  check("test: fan bo'yicha prompt", ai.includes("subject") && ai.includes("QOIDALAR"));
+  check("test: matematika generatori", ai.includes("mathQuestion"));
+  check("test: ingliz tili banki", ai.includes("ENG_BANK"));
+  check("test: adabiyot banki", ai.includes("LIT_BANK"));
+  check("test: meta-savol rad etiladi", ai.includes("qaysi mavzu"));
+  check("test: fan createAndDeliverTestda", src("lib/nazoratchi.ts").includes("tutorsForLink(link.id)"));
+  check("bot: Ilovani o'rnatish tugmasi", src("lib/telegram.ts").includes("Ilovani o'rnatish") && src("lib/bot.ts").includes("eMaktab.apk"));
+  check("apk: twa-manifest", readFileSync(new URL("../twa-manifest.json", import.meta.url), "utf-8").includes("uz.emaktab.app"));
+  check("apk: workflow mavjud", readFileSync(new URL("../.github/workflows/build-apk.yml", import.meta.url), "utf-8").includes("bubblewrap"));
+  check("apk: signing-key route", src("app/api/admin/signing-key/route.ts").includes("android_keystore_b64"));
+  check("apk: assetlinks dinamik", src("app/.well-known/assetlinks.json/route.ts").includes("android_signing_fp"));
+  check("apk: release URL botda", src("lib/bot.ts").includes("releases/latest/download/eMaktab.apk"));
+  check("oqituvchi: Sinfim paneli", src("app/app/panels.tsx").includes("SinfimPanel"));
+  check("oqituvchi: Darsni o'tildi paneli", src("app/app/panels.tsx").includes("ConductPanel"));
+  check("oqituvchi: Sozlamalar paneli", src("app/app/panels.tsx").includes("SettingsPanel"));
+  check("oqituvchi: class route", src("app/api/pwa/data/class/route.ts").includes("fetchClassMembers"));
+  check("oqituvchi: conduct route", src("app/api/pwa/data/conduct/route.ts").includes("setLessonConducted"));
+  check("oqituvchi: menyu 9 ta", src("app/app/app-client.tsx").includes("conduct") && src("app/app/app-client.tsx").includes("sinfim"));
 }
 
 console.log(`\nNatija: ${passed} o'tdi, ${failed} yiqildi`);
