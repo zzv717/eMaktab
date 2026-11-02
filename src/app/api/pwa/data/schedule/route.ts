@@ -39,6 +39,7 @@ export async function GET(req: NextRequest) {
       // 2) Bo'sh bo'lsa — botdagi kabi sinf a'zolari diary'sidan
       if (days.reduce((n, d) => n + d.lessons.length, 0) === 0) {
         days = await buildPwaTeacherWeek(
+          s,
           session.login,
           s.fullName ?? "",
           groups.map((g) => ({ classId: g.classId, className: g.className, subjects: g.subjects ?? [] })),

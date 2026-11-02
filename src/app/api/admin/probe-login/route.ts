@@ -101,6 +101,7 @@ export async function GET(req: NextRequest) {
               const tash2 = tashkentDayKey();
               const mon2 = shiftDayKey(tash2, -((new Date().getUTCDay() + 6) % 7));
               const tw = await buildPwaTeacherWeek(
+                result.session,
                 login,
                 result.session.fullName ?? "",
                 groups.map((g) => ({ classId: g.classId, className: g.className, subjects: g.subjects ?? [] })),

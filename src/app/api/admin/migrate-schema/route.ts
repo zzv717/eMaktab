@@ -218,6 +218,7 @@ const STATEMENTS: { name: string; run: string }[] = [
     )`,
   },
   { name: "pwa_accounts.session_enc", run: `ALTER TABLE pwa_accounts ADD COLUMN IF NOT EXISTS session_enc text` },
+  { name: "member_accounts.teacher_login", run: `ALTER TABLE member_accounts ADD COLUMN IF NOT EXISTS teacher_login varchar(128)` },
   {
     name: "create bot_settings (sozlamalar)",
     run: `CREATE TABLE IF NOT EXISTS bot_settings (

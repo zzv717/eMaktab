@@ -25,6 +25,7 @@ import {
 import { decryptSecret, encryptSecret } from "@/lib/crypto";
 import {
   EmaktabAuthError,
+  fetchClassMembers,
   fetchDiaryDays,
   lessonMatchesTeacherLoad,
   loginEmaktab,
@@ -229,38 +230,96 @@ export function dedupeScheduleDays(days: DaySchedule[]): DaySchedule[] {
     .sort((a, b) => a.date.localeCompare(b.date));
 }
 
+const teacherWeekCache = new Map<string, { days: DaySchedule[]; exp: number }>();
+const TEACHER_WEEK_TTL = 25 * 60 * 1000;
+
+function normalizeName(t: string): string {
+  return t.replace(/\s+/g, " ").trim().toLowerCase();
+}
+
 export async function buildPwaTeacherWeek(
+  session: EmaktabSession,
   emaktabLogin: string,
   fullName: string,
   groups: { classId: string; className: string; subjects: string[] }[],
   start: string,
   end: string,
 ): Promise<DaySchedule[]> {
+  const key = `${emaktabLogin.toLowerCase()}|${start}`;
+  const cached = teacherWeekCache.get(key);
+  if (cached && cached.exp > Date.now()) return cached.days;
+
+  const loginKey = emaktabLogin.toLowerCase();
+  // Botdagi ham, PWA dagi ham saqlangan hisoblar
+  const byLogin = await db
+    .select()
+    .from(memberAccounts)
+    .where(sql`lower(${memberAccounts.teacherLogin}) = ${loginKey}`);
   const rows = await db
     .select()
     .from(botUsers)
-    .where(sql`lower(${botUsers.emaktabLogin}) = ${emaktabLogin.toLowerCase()}`)
+    .where(sql`lower(${botUsers.emaktabLogin}) = ${loginKey}`)
     .limit(1);
   const tg = rows[0]?.telegramId;
-  if (!tg) return [];
-  const saved = await db
-    .select()
-    .from(memberAccounts)
-    .where(eq(memberAccounts.teacherTelegramId, tg));
+  const byTg = tg
+    ? await db.select().from(memberAccounts).where(eq(memberAccounts.teacherTelegramId, tg))
+    : [];
+  const saved = [...byLogin, ...byTg];
 
   let all: DaySchedule[] = [];
   for (const cl of groups) {
     const subjects = cl.subjects ?? [];
-    const candidates = saved
+    let candidates = saved
       .filter((s) => classIdMatch(s.classId, cl.classId) && s.emaktabLogin && s.emaktabPasswordEnc)
       .sort((a, b) => (a.kind === "student" ? 0 : 1) - (b.kind === "student" ? 0 : 1))
-      .slice(0, 3);
+      .slice(0, 3)
+      .map((s) => ({ login: s.emaktabLogin!, passwordEnc: s.emaktabPasswordEnc! }));
+
+    // Avto-faollashtirish (botdagi runActivation 3-bosqich kabi):
+    // eMaktab sinf sahifasidagi ochiq login/parollar bilan sinab, saqlaymiz.
+    if (candidates.length === 0) {
+      try {
+        const info = await fetchClassMembers(session, cl.classId, cl.className);
+        const tried = new Set<string>();
+        for (const cred of info.credentials.slice(0, 4)) {
+          if (tried.has(cred.login)) continue;
+          tried.add(cred.login);
+          try {
+            const res = await loginEmaktab(cred.login, cred.password);
+            if (res.status !== "ok") continue;
+            const name = res.session.fullName || cred.login;
+            const matched = info.students.find((m) => normalizeName(m.fullName) === normalizeName(name));
+            const passwordEnc = encryptSecret(cred.password);
+            await db
+              .insert(memberAccounts)
+              .values({
+                teacherTelegramId: 0,
+                teacherLogin: loginKey,
+                classId: cl.classId,
+                memberId: matched?.memberId ?? null,
+                kind: "student",
+                fullName: name,
+                emaktabLogin: cred.login,
+                emaktabPasswordEnc: passwordEnc,
+                activatedAt: new Date(),
+              })
+              .onConflictDoNothing();
+            candidates.push({ login: cred.login, passwordEnc });
+            if (candidates.length >= 3) break;
+          } catch {
+            /* keyingi credential */
+          }
+        }
+      } catch {
+        /* sinf sahifasi olinmasa — davom */
+      }
+    }
 
     const perDate = new Map<string, { weekday: number; byKey: Map<string, Lesson> }>();
     for (const acc of candidates) {
       try {
-        const password = decryptSecret(acc.emaktabPasswordEnc!);
-        const res = await loginEmaktab(acc.emaktabLogin!, password);
+        const password = decryptSecret(acc.passwordEnc);
+        const res = await loginEmaktab(acc.login, password);
         if (res.status !== "ok") continue;
         // Ota-ona hisobida FARZANDLAR aralashib ketmasligi uchun aynan shu sinf personi
         const person = pickPersonForClass(res.session.persons, cl.classId, cl.className);
@@ -274,8 +333,8 @@ export async function buildPwaTeacherWeek(
             perDate.set(day.date, slot);
           }
           for (const l of day.lessons) {
-            const key = `${l.number}|${l.subject}|${l.startTime ?? ""}`;
-            if (!slot.byKey.has(key)) slot.byKey.set(key, l);
+            const k = `${l.number}|${l.subject}|${l.startTime ?? ""}`;
+            if (!slot.byKey.has(k)) slot.byKey.set(k, l);
           }
         }
         if (sched.length > 0) break; // bitta ishlaydigan a'zo yetarli
@@ -294,6 +353,8 @@ export async function buildPwaTeacherWeek(
       }
     }
   }
+
+  teacherWeekCache.set(key, { days: all, exp: Date.now() + TEACHER_WEEK_TTL });
   return all;
 }
 
