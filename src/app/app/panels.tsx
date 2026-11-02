@@ -199,6 +199,15 @@ export function SchedulePanel() {
           Keyingi →
         </button>
       </div>
+      {data.role === "teacher" && days.every((d) => d.lessons.length === 0) && (
+        <div className="rounded-3xl border border-amber-200 bg-amber-50 p-4">
+          <p className="text-sm text-amber-900">
+            <b>Jadval hali bo'sh.</b> O'qituvchi jadvali sinf o'quvchilarining kirish ma'lumotlari orqali
+            yig'iladi (Telegram botdagi <b>⚡ Barchani tekshirish</b> kabi). Ilova avtomatik sinaydi —
+            ma'lumotlar qo'shilgach shu yerda ko'rinadi.
+          </p>
+        </div>
+      )}
       {days.map((d) => (
         <div key={d.date} className={`${card} mb-3`}>
           <p className="font-semibold text-slate-900">
