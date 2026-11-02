@@ -18,14 +18,19 @@ const ROLE_LABEL: Record<string, string> = {
   teacher: "O'qituvchi 📖",
 };
 
-async function api<T>(url: string, body?: unknown): Promise<T> {
+async function api<T>(url: string, body?: unknown, method?: "GET" | "POST"): Promise<T> {
+  const m = method ?? (body === undefined ? "GET" : "POST");
   const res = await fetch(url, {
-    method: body === undefined ? "GET" : "POST",
-    headers: { "Content-Type": "application/json" },
-    body: body === undefined ? undefined : JSON.stringify(body),
+    method: m,
+    headers: m === "POST" ? { "Content-Type": "application/json" } : undefined,
+    body: m === "POST" ? JSON.stringify(body ?? {}) : undefined,
     credentials: "same-origin",
   });
-  return res.json() as Promise<T>;
+  try {
+    return (await res.json()) as T;
+  } catch {
+    return { ok: false, error: `Server javob bermadi (${res.status})` } as T;
+  }
 }
 
 export default function AppClient() {
@@ -116,7 +121,11 @@ export default function AppClient() {
     setBusy(true);
     setError("");
     try {
-      const opt = await api<{ ok: boolean; error?: string; options?: unknown }>("/api/pwa/passkey/options");
+      const opt = await api<{ ok: boolean; error?: string; options?: unknown }>(
+        "/api/pwa/passkey/options",
+        {},
+        "POST",
+      );
       if (!opt.ok || !opt.options) {
         setError(opt.error ?? "Boshlab bo'lmadi");
         return;
@@ -300,9 +309,15 @@ export default function AppClient() {
             tasdiqlasangiz kifoya — keyin bir zumda kirasiz.
           </p>
           <div className="mt-5 space-y-3">
-            <button className={btnPrimary} disabled={busy} onClick={() => void doRegisterPasskey()}>
-              {busy ? "⏳ Kuting…" : "🔒 Face ID o'rnatish"}
-            </button>
+            {faceOk ? (
+              <button className={btnPrimary} disabled={busy} onClick={() => void doRegisterPasskey()}>
+                {busy ? "⏳ Kuting…" : "🔒 Face ID o'rnatish"}
+              </button>
+            ) : (
+              <p className="rounded-2xl bg-amber-50 p-3 text-sm text-amber-800">
+                ⚠️ Bu qurilmada yuz/panja tekshiruvi topilmadi. Boshqa telefondan kirib oʻrnatishingiz mumkin.
+              </p>
+            )}
             <button className={btnGhost} disabled={busy} onClick={() => setScreen("home")}>
               Hozircha kerak emas
             </button>
