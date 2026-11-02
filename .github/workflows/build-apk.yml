@@ -74,6 +74,16 @@ jobs:
           "$ANDROID_HOME/build-tools/$BT/apksigner" verify eMaktab.apk
           ls -la eMaktab.apk
 
+      - name: 🔍 Xato bo'lsa — log yuborish
+        if: failure()
+        env:
+          SITE: https://e-maktab-azizbek-9ad4.vercel.app
+        run: |
+          LOG=$( (cd android && ./gradlew assembleRelease --no-daemon 2>&1 | tail -120) || true)
+          curl -sf -X POST "$SITE/api/admin/build-log?secret=emaktab123" \
+            -H "Content-Type: application/json" \
+            -d "$(jq -Rs '{log: .}' <<< "$LOG")" > /dev/null || true
+
       - name: 🚀 Release'ga yuklash
         uses: softprops/action-gh-release@v2
         with:
