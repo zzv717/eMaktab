@@ -76,6 +76,8 @@ export const botUsers = pgTable("bot_users", {
 export const memberAccounts = pgTable("member_accounts", {
   id: serial("id").primaryKey(),
   teacherTelegramId: bigint("teacher_telegram_id", { mode: "number" }).notNull(),
+  // PWA orqali faollashtirilgan bo'lsa — o'qituvchining eMaktab logini (0 o'rniga)
+  teacherLogin: varchar("teacher_login", { length: 128 }),
   classId: varchar("class_id", { length: 32 }),
   // eMaktab user id of the member (from schools.emaktab.uz user?user=NNN links)
   memberId: varchar("member_id", { length: 32 }),
