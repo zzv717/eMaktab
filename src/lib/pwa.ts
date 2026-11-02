@@ -15,8 +15,9 @@ import { createHash } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
-import { pwaCredentials, type PwaCredential } from "@/db/schema";
+import { pwaAccounts, pwaCredentials, type PwaCredential } from "@/db/schema";
 import { decryptSecret, encryptSecret } from "@/lib/crypto";
+import { EmaktabAuthError, loginEmaktab, type EmaktabSession } from "@/lib/emaktab";
 
 export const PWA_SESSION_COOKIE = "pwa_sid";
 export const PWA_CHALLENGE_COOKIE = "pwa_chal";
@@ -180,6 +181,88 @@ export async function deleteCredentialFor(login: string, credentialId: string): 
     .where(and(eq(pwaCredentials.emaktabLogin, login.toLowerCase()), eq(pwaCredentials.credentialId, credentialId)))
     .returning({ id: pwaCredentials.id });
   return deleted.length > 0;
+}
+
+// ---------------------------------------------------------------------------
+// PWA hisobi (eMaktab kirish — serverda shifrlangan)
+// ---------------------------------------------------------------------------
+
+export async function saveAccount(
+  login: string,
+  password: string,
+  profile: PwaProfile,
+): Promise<void> {
+  const key = login.toLowerCase();
+  const values = {
+    passwordEnc: encryptSecret(password),
+    profileJson: JSON.stringify(profile),
+    lastLoginAt: new Date(),
+  };
+  const updated = await db.update(pwaAccounts).set(values).where(eq(pwaAccounts.emaktabLogin, key)).returning({ id: pwaAccounts.id });
+  if (updated.length === 0) {
+    await db.insert(pwaAccounts).values({ emaktabLogin: key, ...values });
+  }
+}
+
+export async function getAccount(login: string): Promise<{ passwordEnc: string; profileJson: string | null } | null> {
+  const rows = await db
+    .select({ passwordEnc: pwaAccounts.passwordEnc, profileJson: pwaAccounts.profileJson })
+    .from(pwaAccounts)
+    .where(eq(pwaAccounts.emaktabLogin, login.toLowerCase()))
+    .limit(1);
+  return rows[0] ?? null;
+}
+
+// ---------------------------------------------------------------------------
+// eMaktab sessiyasi (kesh bilan — ma'lumot route'lari uchun)
+// ---------------------------------------------------------------------------
+
+const sessCache = new Map<string, { session: EmaktabSession; exp: number }>();
+const SESS_CACHE_TTL = 20 * 60 * 1000;
+
+export async function withEmaktabSession<T>(
+  login: string,
+  fn: (s: EmaktabSession) => Promise<T>,
+): Promise<{ ok: true; data: T } | { ok: false; error: string; auth?: boolean }> {
+  const key = login.toLowerCase();
+  const acc = await getAccount(key);
+  if (!acc) return { ok: false, error: "Hisob topilmadi — qayta kiring", auth: true };
+  let cached = sessCache.get(key);
+  if (cached && cached.exp < Date.now()) {
+    sessCache.delete(key);
+    cached = undefined;
+  }
+  let session = cached?.session;
+  if (!session) {
+    let password = "";
+    try {
+      password = decryptSecret(acc.passwordEnc);
+    } catch {
+      return { ok: false, error: "Hisob ma'lumotlari buzilgan — qayta kiring", auth: true };
+    }
+    const res = await loginEmaktab(key, password);
+    if (res.status !== "ok") {
+      return { ok: false, error: res.message || "eMaktabga ulanib bo'lmadi", auth: true };
+    }
+    session = res.session;
+    sessCache.set(key, { session, exp: Date.now() + SESS_CACHE_TTL });
+  }
+  try {
+    return { ok: true, data: await fn(session) };
+  } catch (error) {
+    if (error instanceof EmaktabAuthError) {
+      sessCache.delete(key);
+      return { ok: false, error: "eMaktab sessiyasi tugadi — qayta kiring", auth: true };
+    }
+    return { ok: false, error: error instanceof Error ? error.message.slice(0, 140) : "Xatolik" };
+  }
+}
+
+/** Sessiyada farzand kontekstini tanlash (ota-ona uchun). */
+export function withPerson(session: EmaktabSession, personId?: string | null): EmaktabSession {
+  if (!personId) return session;
+  const p = session.persons.find((x) => x.personId === personId);
+  return p ? { ...session, active: p } : session;
 }
 
 /** Credential satridan tekshirish uchun ko'rinish. */

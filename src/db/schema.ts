@@ -234,6 +234,18 @@ export const pwaCredentials = pgTable("pwa_credentials", {
 
 export type PwaCredential = typeof pwaCredentials.$inferSelect;
 
+/** PWA foydalanuvchi hisobi — eMaktab kirish (shifrlangan) ma'lumot paneli uchun. */
+export const pwaAccounts = pgTable("pwa_accounts", {
+  id: serial("id").primaryKey(),
+  emaktabLogin: varchar("emaktab_login", { length: 128 }).notNull().unique(),
+  passwordEnc: text("password_enc").notNull(),
+  profileJson: text("profile_json"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
+});
+
+export type PwaAccount = typeof pwaAccounts.$inferSelect;
+
 export type NazoratchiEvent = typeof nazoratchiEvents.$inferSelect;
 export type ChildContext = {
   personId: string;

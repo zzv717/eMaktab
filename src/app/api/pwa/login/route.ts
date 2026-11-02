@@ -1,7 +1,7 @@
 // 📱 PWA — eMaktab login/parol bilan kirish (haqiqiy eMaktabdan tekshiriladi)
 import { NextRequest, NextResponse } from "next/server";
 import { loginEmaktab } from "@/lib/emaktab";
-import { credentialsForLogin, issueSessionCookie, type PwaProfile } from "@/lib/pwa";
+import { credentialsForLogin, issueSessionCookie, saveAccount, type PwaProfile } from "@/lib/pwa";
 
 export const dynamic = "force-dynamic";
 
@@ -33,6 +33,8 @@ export async function POST(req: NextRequest) {
       school: result.session.active.schoolName ?? "-",
       group: result.session.active.groupName ?? "-",
     };
+    // Ma'lumot paneli uchun hisobni serverda saqlaymiz (shifrlangan)
+    await saveAccount(login, password, profile);
     const creds = await credentialsForLogin(login);
     const res = NextResponse.json({ ok: true, profile, hasPasskey: creds.length > 0 });
     issueSessionCookie(res, profile);

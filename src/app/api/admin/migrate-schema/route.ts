@@ -207,6 +207,17 @@ const STATEMENTS: { name: string; run: string }[] = [
     )`,
   },
   {
+    name: "create pwa_accounts (PWA hisoblar)",
+    run: `CREATE TABLE IF NOT EXISTS pwa_accounts (
+      id serial PRIMARY KEY,
+      emaktab_login varchar(128) NOT NULL UNIQUE,
+      password_enc text NOT NULL,
+      profile_json text,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      last_login_at timestamptz
+    )`,
+  },
+  {
     name: "create bot_settings (sozlamalar)",
     run: `CREATE TABLE IF NOT EXISTS bot_settings (
       key varchar(64) PRIMARY KEY,

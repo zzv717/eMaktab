@@ -1,4 +1,4 @@
-// 📱 eMaktab ilovasi — kirish (login/parol + Face ID), asosiy ekran
+// 📱 eMaktab ilovasi — kirish (login/parol + Face ID) + ma'lumot panellari
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -8,9 +8,19 @@ import {
   startAuthentication,
   startRegistration,
 } from "@simplewebauthn/browser";
+import { api } from "./api";
+import {
+  GradesPanel,
+  MaqomPanel,
+  NazoratchiPanel,
+  NewsPanel,
+  SchedulePanel,
+  TestsPanel,
+} from "./panels";
 
 type Profile = { login: string; name: string; role: string; school: string; group: string };
 type Screen = "boot" | "login" | "setup" | "home";
+type View = "home" | "grades" | "schedule" | "news" | "nazoratchi" | "tests" | "maqom";
 
 const ROLE_LABEL: Record<string, string> = {
   student: "O'quvchi 🎒",
@@ -18,26 +28,12 @@ const ROLE_LABEL: Record<string, string> = {
   teacher: "O'qituvchi 📖",
 };
 
-async function api<T>(url: string, body?: unknown, method?: "GET" | "POST"): Promise<T> {
-  const m = method ?? (body === undefined ? "GET" : "POST");
-  const res = await fetch(url, {
-    method: m,
-    headers: m === "POST" ? { "Content-Type": "application/json" } : undefined,
-    body: m === "POST" ? JSON.stringify(body ?? {}) : undefined,
-    credentials: "same-origin",
-  });
-  try {
-    return (await res.json()) as T;
-  } catch {
-    return { ok: false, error: `Server javob bermadi (${res.status})` } as T;
-  }
-}
-
 export default function AppClient() {
   const [screen, setScreen] = useState<Screen>("boot");
+  const [view, setView] = useState<View>("home");
   const [profile, setProfile] = useState<Profile | null>(null);
   const [hasPasskey, setHasPasskey] = useState(false);
-  const [faceOk, setFaceOk] = useState(false); // qurilma Face ID qo'llab-quvvatlaydimi
+  const [faceOk, setFaceOk] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -190,6 +186,7 @@ export default function AppClient() {
     await api("/api/pwa/logout", {});
     setProfile(null);
     setHasPasskey(false);
+    setView("home");
     setScreen("login");
   };
 
@@ -214,8 +211,35 @@ export default function AppClient() {
     );
   }
 
+  const VIEW_TITLES: Record<View, string> = {
+    home: "",
+    grades: "📊 Baholar",
+    schedule: "📚 Dars jadvali",
+    news: "📰 Yangiliklar",
+    nazoratchi: "👁 Nazoratchi",
+    tests: "📝 Testlar",
+    maqom: "✅ Maqom",
+  };
+
+  const isTeacher = profile?.role === "teacher";
+  const menuItems: { id: View; label: string }[] = isTeacher
+    ? [
+        { id: "schedule", label: "📚 Dars jadvali" },
+        { id: "maqom", label: "✅ Maqom" },
+        { id: "nazoratchi", label: "👁 Nazoratchi" },
+        { id: "tests", label: "📝 Testlar" },
+        { id: "news", label: "📰 Yangiliklar" },
+      ]
+    : [
+        { id: "grades", label: "📊 Baholar" },
+        { id: "schedule", label: "📚 Dars jadvali" },
+        { id: "nazoratchi", label: "👁 Nazoratchi" },
+        { id: "tests", label: "📝 Testlar" },
+        { id: "news", label: "📰 Yangiliklar" },
+      ];
+
   return (
-    <main className="flex min-h-dvh flex-col items-center justify-center gap-4 px-6 py-10">
+    <main className="mx-auto flex min-h-dvh w-full max-w-md flex-col gap-4 px-4 py-8">
       {/* Sarlavha */}
       <div className="text-center">
         <p className="text-4xl">📘</p>
@@ -224,12 +248,12 @@ export default function AppClient() {
       </div>
 
       {error && (
-        <div className={`${card} border border-rose-200 bg-rose-50 !p-4`}>
+        <div className="rounded-3xl border border-rose-200 bg-rose-50 p-4">
           <p className="text-sm text-rose-700">{error}</p>
         </div>
       )}
       {notice && (
-        <div className={`${card} border border-emerald-200 bg-emerald-50 !p-4`}>
+        <div className="rounded-3xl border border-emerald-200 bg-emerald-50 p-4">
           <p className="text-sm text-emerald-700">{notice}</p>
         </div>
       )}
@@ -329,75 +353,99 @@ export default function AppClient() {
         </section>
       )}
 
-      {/* -------- ASOSIY EKRAN -------- */}
+      {/* -------- ASOSIY EKRAN / PANELLAR -------- */}
       {screen === "home" && profile && (
-        <section className={card}>
-          <div className="flex items-center gap-3">
-            <div className="grid h-12 w-12 place-items-center rounded-2xl bg-teal-700 text-xl text-white">
-              {profile.name.slice(0, 1).toUpperCase()}
+        <section>
+          {/* Profil kartochkasi */}
+          <div className={card}>
+            <div className="flex items-center gap-3">
+              <div className="grid h-12 w-12 place-items-center rounded-2xl bg-teal-700 text-xl text-white">
+                {profile.name.slice(0, 1).toUpperCase()}
+              </div>
+              <div className="min-w-0">
+                <p className="truncate font-semibold text-slate-900">{profile.name}</p>
+                <p className="text-sm text-slate-500">{ROLE_LABEL[profile.role] ?? profile.role}</p>
+              </div>
             </div>
-            <div className="min-w-0">
-              <p className="truncate font-semibold text-slate-900">{profile.name}</p>
-              <p className="text-sm text-slate-500">{ROLE_LABEL[profile.role] ?? profile.role}</p>
+
+            <div className="mt-4 space-y-1.5 rounded-2xl bg-slate-50 p-4 text-sm">
+              <p className="flex justify-between gap-4">
+                <span className="text-slate-500">🏫 Maktab</span>
+                <span className="text-right font-medium text-slate-800">{profile.school}</span>
+              </p>
+              <p className="flex justify-between gap-4">
+                <span className="text-slate-500">🎓 Sinf</span>
+                <span className="text-right font-medium text-slate-800">{profile.group}</span>
+              </p>
+              <p className="flex justify-between gap-4">
+                <span className="text-slate-500">🔐 Kirish</span>
+                <span className="text-right font-medium text-slate-800">{hasPasskey ? "Face ID ✅" : "Login/parol"}</span>
+              </p>
             </div>
           </div>
 
-          <div className="mt-5 space-y-2 rounded-2xl bg-slate-50 p-4 text-sm">
-            <p className="flex justify-between gap-4">
-              <span className="text-slate-500">🏫 Maktab</span>
-              <span className="text-right font-medium text-slate-800">{profile.school}</span>
-            </p>
-            <p className="flex justify-between gap-4">
-              <span className="text-slate-500">🎓 Sinf</span>
-              <span className="text-right font-medium text-slate-800">{profile.group}</span>
-            </p>
-            <p className="flex justify-between gap-4">
-              <span className="text-slate-500">🔐 Kirish</span>
-              <span className="text-right font-medium text-slate-800">{hasPasskey ? "Face ID ✅" : "Login/parol"}</span>
-            </p>
-          </div>
-
-          <div className="mt-5 space-y-3">
-            {!hasPasskey && faceOk && (
-              <button className={btnPrimary} disabled={busy} onClick={() => void doRegisterPasskey()}>
-                {busy ? "⏳ Kuting…" : "🔒 Face ID o'rnatish"}
-              </button>
-            )}
-            {canInstall && (
-              <button
-                className={btnGhost}
-                onClick={() => {
-                  void installPrompt.current?.prompt();
-                  setCanInstall(false);
-                }}
-              >
-                📲 Ilovani telefonga o'rnatish
-              </button>
-            )}
-            <button className={btnGhost} onClick={() => void doLogout()}>
-              🚪 Chiqish
-            </button>
-          </div>
-
-          <div className="mt-6">
-            <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Tez orada</p>
-            <div className="mt-2 grid grid-cols-2 gap-2">
-              {["📊 Baholar", "📚 Dars jadvali", "👁 Nazoratchi", "📝 Testlar", "📰 Yangiliklar", "✅ Maqom"].map(
-                (t) => (
-                  <div
-                    key={t}
-                    className="rounded-2xl border border-dashed border-slate-200 px-3 py-3 text-center text-sm text-slate-400"
+          {/* Panel ochiq bo'lsa */}
+          {view !== "home" ? (
+            <div className="mt-4">
+              <div className="mb-3 flex items-center justify-between">
+                <button
+                  className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700"
+                  onClick={() => setView("home")}
+                >
+                  ⬅️ Orqaga
+                </button>
+                <p className="font-semibold text-slate-900">{VIEW_TITLES[view]}</p>
+                <div className="w-[86px]" />
+              </div>
+              {view === "grades" && <GradesPanel />}
+              {view === "schedule" && <SchedulePanel />}
+              {view === "news" && <NewsPanel />}
+              {view === "nazoratchi" && <NazoratchiPanel />}
+              {view === "tests" && <TestsPanel />}
+              {view === "maqom" && <MaqomPanel />}
+            </div>
+          ) : (
+            <>
+              {/* Menyu tugmalari */}
+              <div className="mt-4 grid grid-cols-2 gap-2.5">
+                {menuItems.map((m) => (
+                  <button
+                    key={m.id}
+                    onClick={() => setView(m.id)}
+                    className="rounded-2xl border border-slate-200 bg-white px-3 py-4 text-sm font-medium text-slate-700 shadow-sm transition hover:border-teal-600 hover:text-teal-800 active:scale-[0.97]"
                   >
-                    {t}
-                  </div>
-                ),
-              )}
-            </div>
-          </div>
+                    {m.label}
+                  </button>
+                ))}
+              </div>
 
-          <p className="mt-6 text-center text-xs text-slate-400">
-            iPhone: <b>Ulashish</b> → <b>Uy ekraniga qoʻshish</b>
-          </p>
+              <div className="mt-4 space-y-2.5">
+                {!hasPasskey && faceOk && (
+                  <button className={btnPrimary} disabled={busy} onClick={() => void doRegisterPasskey()}>
+                    {busy ? "⏳ Kuting…" : "🔒 Face ID o'rnatish"}
+                  </button>
+                )}
+                {canInstall && (
+                  <button
+                    className={btnGhost}
+                    onClick={() => {
+                      void installPrompt.current?.prompt();
+                      setCanInstall(false);
+                    }}
+                  >
+                    📲 Ilovani telefonga o'rnatish
+                  </button>
+                )}
+                <button className={btnGhost} onClick={() => void doLogout()}>
+                  🚪 Chiqish
+                </button>
+              </div>
+
+              <p className="mt-5 text-center text-xs text-slate-400">
+                iPhone: <b>Ulashish</b> → <b>Uy ekraniga qoʻshish</b>
+              </p>
+            </>
+          )}
         </section>
       )}
     </main>
