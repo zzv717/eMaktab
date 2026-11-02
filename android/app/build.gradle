@@ -55,7 +55,7 @@ android {
     namespace "uz.emaktab.app"
     defaultConfig {
         applicationId "uz.emaktab.app"
-        minSdkVersion 21
+        minSdkVersion 24
         targetSdkVersion 36
         versionCode 1
         versionName ""
