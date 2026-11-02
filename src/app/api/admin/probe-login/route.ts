@@ -94,21 +94,25 @@ export async function GET(req: NextRequest) {
               .slice(0, 3)
               .map((g) => `${g.className}:${(g.subjects ?? []).join("+").slice(0, 20)}`)
               .join(" | ");
-            // Aynan PWA schedule route dagidek: sinflar bo'yicha fetchSchedule
+            // Aynan PWA schedule route dagidek: diary fallback (buildPwaTeacherWeek)
             {
               const { shiftDayKey } = await import("@/lib/emaktab");
+              const { buildPwaTeacherWeek } = await import("@/lib/pwa");
               const tash2 = tashkentDayKey();
               const mon2 = shiftDayKey(tash2, -((new Date().getUTCDay() + 6) % 7));
-              let nLessons = 0;
-              let nDays = 0;
-              for (const g of groups) {
-                const gs = { ...result.session, active: { ...result.session.active, groupId: g.classId, groupName: g.className } };
-                const part = await fetchSchedule(gs, mon2, shiftDayKey(mon2, 6)).catch(() => []);
-                nDays += part.length;
-                nLessons += part.reduce((n, d) => n + d.lessons.length, 0);
-              }
-              pw.perClassWeekDays = nDays;
-              pw.perClassWeekLessons = nLessons;
+              const tw = await buildPwaTeacherWeek(
+                login,
+                result.session.fullName ?? "",
+                groups.map((g) => ({ classId: g.classId, className: g.className, subjects: g.subjects ?? [] })),
+                mon2,
+                shiftDayKey(mon2, 6),
+              );
+              pw.teacherWeekDays = tw.length;
+              pw.teacherWeekLessons = tw.reduce((n, d) => n + d.lessons.length, 0);
+              pw.teacherWeekSample = tw
+                .flatMap((d) => d.lessons.slice(0, 2).map((l) => `${d.date.slice(5)}:${l.startTime ?? "-"}:${l.subject.slice(0, 8)}`))
+                .slice(0, 5)
+                .join(" | ");
             }
             if (groups[0] && groups[0].subjects?.[0]) {
               const hw = await fetchHomeworkRows(result.session, {
