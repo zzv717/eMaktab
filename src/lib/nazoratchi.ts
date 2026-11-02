@@ -303,6 +303,8 @@ export function formatDays(days: string): string {
 
 export interface TestDraft {
   mode: "book" | "topic";
+  /** Test fani (masalan "Matematika") — savollar shu fanga oid bo'ladi */
+  subject?: string;
   title?: string;
   author?: string;
   pages?: string;
@@ -343,15 +345,28 @@ export async function createAndDeliverTest(
   const count = Math.min(50, Math.max(10, Number(draft.count) || 10));
   const level = Math.min(5, Math.max(1, Number(link.testLevel) || 1));
 
+  // Fan: aniq ko'rsatilgan → repetitor fani → birinchi repetitor
+  let subject = draft.subject || draft.review?.subject || "";
+  if (!subject) {
+    try {
+      const tutors = await tutorsForLink(link.id);
+      subject = tutors[0]?.subject ?? "";
+    } catch {
+      /* fan topilmasa — umumiy generator */
+    }
+  }
+
   let questions;
   try {
     questions = await generateTestQuestions(
       {
         mode: draft.mode,
+        subject,
         bookTitle: draft.review?.book || draft.title,
         bookAuthor: draft.author,
         pages: draft.pages,
         topic: draft.topic,
+        gradeLevel: (link.childClass || "").replace(/[^0-9]/g, "") || undefined,
       },
       count,
       level,
@@ -392,7 +407,7 @@ export async function createAndDeliverTest(
     )
     .join("\n");
   const parentHeader =
-    `\U0001F4DD <b>Test yuborildi</b> \u2014 \U0001F464 ${escapeHtml(childLabel(link))}\n${escapeHtml(sourceLine)}\n\n` +
+    `📝 <b>Test yuborildi</b> \u2014 👤 ${escapeHtml(childLabel(link))}\n${escapeHtml(sourceLine)}\n\n` +
     `Savollar: <b>${questions.length}</b> ta (qiyinlik avtomatik, pastdan yuqoriga).\n` +
     `\u2705 To'g'ri javoblar:\n\n`;
   for (const chunk of chunkText(parentHeader + keyLines)) {
@@ -440,7 +455,7 @@ async function sendQuizQuestion(link: NazoratchiLink, quizId: string, qIndex: nu
   );
   await sendSafe(
     link.childTelegramId,
-    `\U0001F4DD <b>Savol ${qIndex + 1}/${all.length}</b>\n\n` +
+    `📝 <b>Savol ${qIndex + 1}/${all.length}</b>\n\n` +
       `\u2753 ${escapeHtml(t.question)}\n\n` +
       options.map((o, i) => `${letters[i]}) ${o}`).join("\n") +
       `\n\n<i>To'g'ri javobni tanlang:</i>`,
@@ -512,8 +527,8 @@ export async function answerTest(
         .where(eq(nazoratchiLinks.id, link.id));
       levelNote =
         level > before
-          ? `\n\n\U0001F4C8 Qiyinlik darajasi oshdi: <b>${before} \u2192 ${level}</b>`
-          : `\n\n\U0001F4C9 Qiyinlik darajasi pasaydi: <b>${before} \u2192 ${level}</b> (keyingi test osonroq)`;
+          ? `\n\n📈 Qiyinlik darajasi oshdi: <b>${before} \u2192 ${level}</b>`
+          : `\n\n📉 Qiyinlik darajasi pasaydi: <b>${before} \u2192 ${level}</b> (keyingi test osonroq)`;
     }
   }
 
@@ -525,17 +540,17 @@ export async function answerTest(
   const links = await activeLinksForChild(childTg);
   const parentIds = [...new Set(links.map((l) => l.parentTelegramId))];
   const parentText =
-    `\U0001F4DD <b>Test yakunlandi</b> \u2014 \U0001F464 ${escapeHtml(links[0]?.childName || "Farzand")}\n` +
+    `📝 <b>Test yakunlandi</b> \u2014 👤 ${escapeHtml(links[0]?.childName || "Farzand")}\n` +
     `Natija: <b>${right}/${total}</b> to'g'ri${levelNote}\n\n${detail}`;
   for (const pid of parentIds) {
     await sendSafe(pid, parentText, undefined, false, links[0]?.id ?? 0);
   }
 
-  const emoji = pct >= 0.7 ? "\U0001F389 Zo'r!" : pct >= 0.4 ? "\U0001F44D Yaxshi, davom eting!" : "\U0001F4AA Keyingi safar albatta olasiz!";
+  const emoji = pct >= 0.7 ? "🎉 Zo'r!" : pct >= 0.4 ? "👍 Yaxshi, davom eting!" : "💪 Keyingi safar albatta olasiz!";
   return {
     ok: true,
     message:
-      `\U0001F3C1 <b>Test yakunlandi!</b>\n\nNatijangiz: <b>${right}/${total}</b> to'g'ri\n${emoji}${levelNote}`,
+      `🏁 <b>Test yakunlandi!</b>\n\nNatijangiz: <b>${right}/${total}</b> to'g'ri\n${emoji}${levelNote}`,
   };
 }
 
@@ -797,10 +812,10 @@ async function dueForLink(link: NazoratchiLink, day: string, weekday: number, mi
     if (tMin === null) continue;
     const dur = Number(t.durationMin) || 60;
     const place = t.place ? ` (${escapeHtml(t.place)})` : "";
-    const book = t.book ? `\n\U0001F4DA ${escapeHtml(t.book)}` : "";
+    const book = t.book ? `\n📚 ${escapeHtml(t.book)}` : "";
     const postKb = kb([
       [{ text: "\u23F0 Kechiktirish", callback_data: `nz:post:${link.id}:${t.id}` }],
-      [{ text: "\U0001F476 Bolaga yozish", url: `tg://user?id=${link.childTelegramId}` }],
+      [{ text: "👶 Bolaga yozish", url: `tg://user?id=${link.childTelegramId}` }],
     ]);
 
     // 1) Repetitor eslatmasi (bir kunga ikkita dars bo'lsa ham — har biri o'ziga)
@@ -809,10 +824,10 @@ async function dueForLink(link: NazoratchiLink, day: string, weekday: number, mi
         type: "tutor",
         key: String(t.id),
         toParent:
-          `\U0001F468\u200D\U0001F469\u200D\U0001F467 <b>Repetitor eslatmasi</b>\n` +
-          `\U0001F464 ${label}\n\u23F0 ${escapeHtml(t.time)} \u2014 ${escapeHtml(t.subject)}${place}${book}`,
+          `👨\u200D👩\u200D👧 <b>Repetitor eslatmasi</b>\n` +
+          `👤 ${label}\n\u23F0 ${escapeHtml(t.time)} \u2014 ${escapeHtml(t.subject)}${place}${book}`,
         toChild:
-          `\U0001F468\u200D\U0001F393 <b>Repetitor darsingiz bor!</b>\n` +
+          `👨\u200D🎓 <b>Repetitor darsingiz bor!</b>\n` +
           `\u23F0 ${escapeHtml(t.time)} \u2014 ${escapeHtml(t.subject)}${place}${book}\n\nBorishni unutmang!`,
       });
     }
@@ -825,8 +840,8 @@ async function dueForLink(link: NazoratchiLink, day: string, weekday: number, mi
         type: "tutor_end",
         key: String(t.id),
         toParent:
-          `\U0001F468\u200D\U0001F393 <b>Farzandingiz repetitordan chiqdi</b>\n` +
-          `\U0001F464 ${label} \u2014 ${escapeHtml(t.subject)}${place}\n\n` +
+          `👨\u200D🎓 <b>Farzandingiz repetitordan chiqdi</b>\n` +
+          `👤 ${label} \u2014 ${escapeHtml(t.subject)}${place}\n\n` +
           `Uyga jo'nab ketmoqda.`,
         parentKb: postKb,
       });
@@ -841,8 +856,8 @@ async function dueForLink(link: NazoratchiLink, day: string, weekday: number, mi
         key: String(t.id),
         toParent: "",
         toChild:
-          `\U0001F4DA <b>Mavzuni mustahkamlash</b>\n\n` +
-          `\U0001F9D1\u200D\U0001F3EB ${escapeHtml(t.subject)}${t.book ? ` \u00b7 \U0001F4DA ${escapeHtml(t.book)}` : ""}\n\n` +
+          `📚 <b>Mavzuni mustahkamlash</b>\n\n` +
+          `🧑\u200D🏫 ${escapeHtml(t.subject)}${t.book ? ` \u00b7 📚 ${escapeHtml(t.book)}` : ""}\n\n` +
           `Nechta savol kerak? <b>10 yoki undan yuqori</b> son kiriting:`,
         childDraft: JSON.stringify({
           mode: "topic",
@@ -863,7 +878,7 @@ async function dueForLink(link: NazoratchiLink, day: string, weekday: number, mi
           key: String(t.id),
           toParent:
             `\u26A0\uFE0F <b>Farzandingiz bugungi takrorlovchi darslarni hali boshlamadi</b>\n` +
-            `\U0001F464 ${label}\n\U0001F9D1\u200D\U0001F3EB ${escapeHtml(t.subject)}${t.book ? ` \u00b7 \U0001F4DA ${escapeHtml(t.book)}` : ""}\n\n` +
+            `👤 ${label}\n🧑\u200D🏫 ${escapeHtml(t.subject)}${t.book ? ` \u00b7 📚 ${escapeHtml(t.book)}` : ""}\n\n` +
             `Bilan bog'laning yoki takrorlovchi darsni boshqa vaqtga ko'chiring:`,
           parentKb: postKb,
         });

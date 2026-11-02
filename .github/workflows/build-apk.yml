@@ -1,0 +1,84 @@
+# 📱 Android APK (TWA) — eMaktab ilovasi
+# Ishga tushirish: Actions → "Build Android APK" → Run workflow
+# Natija: GitHub Release "app-latest" → eMaktab.apk
+name: Build Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ["twa-manifest.json", ".github/workflows/build-apk.yml"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: 🔐 Keystore (bazadan olish yoki birinchi marta yaratish)
+        env:
+          SITE: https://e-maktab-azizbek-9ad4.vercel.app
+        run: |
+          RESP=$(curl -sf "$SITE/api/admin/signing-key?secret=emaktab123" || echo '{"ok":false}')
+          if echo "$RESP" | grep -q '"ok":true'; then
+            echo "$RESP" | jq -r '.b64' | base64 -d > emaktab-release.p12
+            echo "$RESP" | jq -r '.password' > ks-pass.txt
+            echo "Keystore bazadan olindi."
+          else
+            PASS=$(openssl rand -hex 12)
+            keytool -genkeypair -keystore emaktab-release.p12 -storetype PKCS12 \
+              -alias emaktab -keyalg RSA -keysize 2048 -validity 10000 \
+              -storepass "$PASS" -keypass "$PASS" \
+              -dname "CN=eMaktab Android, O=eMaktab, C=UZ"
+            echo "$PASS" > ks-pass.txt
+            FP=$(keytool -exportcert -rfc -keystore emaktab-release.p12 -storepass "$PASS" -alias emaktab 2>/dev/null \
+              | openssl x509 -fingerprint -sha256 -noout | cut -d= -f2 | tr -d ':' | tr 'a-f' 'A-F')
+            curl -sf -X POST "$SITE/api/admin/signing-key?secret=emaktab123" \
+              -H "Content-Type: application/json" \
+              -d "{\"b64\":\"$(base64 -w0 emaktab-release.p12)\",\"password\":\"$PASS\",\"fingerprint\":\"$FP\"}" > /dev/null
+            echo "Yangi keystore yaratildi va bazaga saqlandi."
+          fi
+
+      - name: 📦 Bubblewrap o'rnatish
+        run: npm install -g @bubblewrap/cli
+
+      - name: 🏗 Loyiha yaratish (init)
+        run: |
+          mkdir -p ~/.bubblewrap
+          SDK="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          echo "{\"jdkPath\":\"$JAVA_HOME\",\"androidSdkPath\":\"$SDK\"}" > ~/.bubblewrap/config.json
+          npx @bubblewrap/cli init --manifest twa-manifest.json --skipPngGeneration || \
+            npx @bubblewrap/cli update --skipPngGeneration
+
+      - name: 🤖 APK yaratish
+        run: |
+          export BUBBLEWRAP_KEYSTORE_PASSWORD=$(cat ks-pass.txt)
+          export BUBBLEWRAP_KEY_PASSWORD=$(cat ks-pass.txt)
+          npx @bubblewrap/cli build --skipPngGeneration --signingKeyPath ./emaktab-release.p12 --signingKeyAlias emaktab
+          APK=$(ls app-release-signed.apk *.apk 2>/dev/null | head -1)
+          cp "$APK" eMaktab.apk
+          ls -la eMaktab.apk
+
+      - name: 🚀 Release'ga yuklash
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: app-latest
+          name: "📱 eMaktab ilovasi (APK)"
+          body: |
+            eMaktab Android ilovasi (TWA — haqiqiy eMaktab ma'lumotlari bilan).
+            Faylni telefoningizga yuklab o'rnating: eMaktab.apk
+            Yangi versiya chiqsa — shu sahifa yangilanadi.
+          files: eMaktab.apk
+          fail_on_unmatched_files: true
