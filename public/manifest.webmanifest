@@ -1,0 +1,27 @@
+{
+  "name": "eMaktab",
+  "short_name": "eMaktab",
+  "description": "Maktab ilovasi — kirish, Face ID, dars jadvali va baholar",
+  "lang": "uz",
+  "dir": "ltr",
+  "start_url": "/app",
+  "scope": "/app",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f8fafc",
+  "theme_color": "#0f766e",
+  "icons": [
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "1024x1024",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "1024x1024",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

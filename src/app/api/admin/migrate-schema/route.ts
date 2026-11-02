@@ -191,6 +191,22 @@ const STATEMENTS: { name: string; run: string }[] = [
     )`,
   },
   {
+    name: "create pwa_credentials (PWA passkey / Face ID)",
+    run: `CREATE TABLE IF NOT EXISTS pwa_credentials (
+      id serial PRIMARY KEY,
+      emaktab_login varchar(128) NOT NULL,
+      credential_id varchar(512) NOT NULL UNIQUE,
+      public_key text NOT NULL,
+      counter bigint NOT NULL DEFAULT 0,
+      transports varchar(128),
+      device_type varchar(32),
+      backed_up varchar(8),
+      profile_json text,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      last_used_at timestamptz
+    )`,
+  },
+  {
     name: "create bot_settings (sozlamalar)",
     run: `CREATE TABLE IF NOT EXISTS bot_settings (
       key varchar(64) PRIMARY KEY,

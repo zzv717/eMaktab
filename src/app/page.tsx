@@ -44,6 +44,13 @@ export default async function HomePage() {
           <b>eMaktab (kundalik.com)</b> hisobiga bir zumda kiradi.
         </p>
 
+        <a
+          href="/app"
+          className="mt-6 inline-flex items-center gap-2 rounded-2xl bg-teal-700 px-5 py-3 text-base font-semibold text-white hover:bg-teal-800"
+        >
+          📱 Mobil ilovani ochish
+        </a>
+
         <div className="mt-8 grid grid-cols-2 gap-4">
           <div className="rounded-2xl bg-slate-50 p-4 text-center">
             <p className="text-2xl font-semibold text-slate-900">{stats.total}</p>
