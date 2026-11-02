@@ -31,7 +31,7 @@ jobs:
         env:
           SITE: https://e-maktab-azizbek-9ad4.vercel.app
         run: |
-          RESP=$(curl -sf "$SITE/api/admin/signing-key?secret=emaktab123" || echo '{"ok":false}')
+          RESP=$(curl -sf --retry 3 --retry-delay 5 "$SITE/api/admin/signing-key?secret=emaktab123" || echo '{"ok":false}')
           if echo "$RESP" | grep -q '"ok":true'; then
             echo "$RESP" | jq -r '.b64' | base64 -d > emaktab-release.p12
             echo "$RESP" | jq -r '.password' > ks-pass.txt
@@ -45,10 +45,19 @@ jobs:
             echo "$PASS" > ks-pass.txt
             FP=$(keytool -exportcert -rfc -keystore emaktab-release.p12 -storepass "$PASS" -alias emaktab 2>/dev/null \
               | openssl x509 -fingerprint -sha256 -noout | cut -d= -f2 | tr -d ':' | tr 'a-f' 'A-F')
+            # Saqlash muvaffaqiyatsiz bo'lsa ham davom etamiz (deploy kech qolgan bo'lishi mumkin)
             curl -sf -X POST "$SITE/api/admin/signing-key?secret=emaktab123" \
               -H "Content-Type: application/json" \
-              -d "{\"b64\":\"$(base64 -w0 emaktab-release.p12)\",\"password\":\"$PASS\",\"fingerprint\":\"$FP\"}" > /dev/null
-            echo "Yangi keystore yaratildi va bazaga saqlandi."
+              -d "{\"b64\":\"$(base64 -w0 emaktab-release.p12)\",\"password\":\"$PASS\",\"fingerprint\":\"$FP\"}" > /dev/null \
+              && echo "Yangi keystore bazaga saqlandi." \
+              || echo "⚠️ Keystore bazaga saqlanmadi (keyingi safar saqlanadi)."
+            # Agar bazada eski kalit bo'lsa — uni qayta ishlatamiz (imzo barqaror bo'lsin)
+            RESP2=$(curl -sf "$SITE/api/admin/signing-key?secret=emaktab123" || echo '{"ok":false}')
+            if echo "$RESP2" | grep -q '"ok":true'; then
+              echo "$RESP2" | jq -r '.b64' | base64 -d > emaktab-release.p12
+              echo "$RESP2" | jq -r '.password' > ks-pass.txt
+              echo "(bazadagi kalit ishlatildi)"
+            fi
           fi
 
       - name: 📦 Bubblewrap o'rnatish
