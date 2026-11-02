@@ -756,7 +756,22 @@ check("looksLikeName: ko'rish rad", !looksLikeName("Ko'rish"), true);
   check("test: fan createAndDeliverTestda", src("lib/nazoratchi.ts").includes("tutorsForLink(link.id)"));
   check("bot: Ilovani o'rnatish tugmasi", src("lib/telegram.ts").includes("Ilovani o'rnatish") && src("lib/bot.ts").includes("eMaktab.apk"));
   check("apk: twa-manifest", readFileSync(new URL("../twa-manifest.json", import.meta.url), "utf-8").includes("uz.emaktab.app"));
-  check("apk: workflow mavjud", readFileSync(new URL("../.github/workflows/build-apk.yml", import.meta.url), "utf-8").includes("bubblewrap"));
+  check(
+    "apk: workflow mavjud",
+    (() => {
+      const w = readFileSync(new URL("../.github/workflows/build-apk.yml", import.meta.url), "utf-8");
+      return w.includes("assembleRelease") && w.includes("apksigner") && w.includes("eMaktab.apk");
+    })(),
+  );
+  const exists2 = (rel: string) => {
+    try {
+      readFileSync(new URL(`../${rel}`, import.meta.url), "utf-8");
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  check("apk: android loyihasi generatsiya", exists2("android/app/build.gradle") && exists2("android/app/src/main/AndroidManifest.xml"));
   check("apk: signing-key route", src("app/api/admin/signing-key/route.ts").includes("android_keystore_b64"));
   check("apk: assetlinks dinamik", src("app/.well-known/assetlinks.json/route.ts").includes("android_signing_fp"));
   check("apk: release URL botda", src("lib/bot.ts").includes("releases/latest/download/eMaktab.apk"));
