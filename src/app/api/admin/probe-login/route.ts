@@ -94,6 +94,22 @@ export async function GET(req: NextRequest) {
               .slice(0, 3)
               .map((g) => `${g.className}:${(g.subjects ?? []).join("+").slice(0, 20)}`)
               .join(" | ");
+            // Aynan PWA schedule route dagidek: sinflar bo'yicha fetchSchedule
+            {
+              const { shiftDayKey } = await import("@/lib/emaktab");
+              const tash2 = tashkentDayKey();
+              const mon2 = shiftDayKey(tash2, -((new Date().getUTCDay() + 6) % 7));
+              let nLessons = 0;
+              let nDays = 0;
+              for (const g of groups) {
+                const gs = { ...result.session, active: { ...result.session.active, groupId: g.classId, groupName: g.className } };
+                const part = await fetchSchedule(gs, mon2, shiftDayKey(mon2, 6)).catch(() => []);
+                nDays += part.length;
+                nLessons += part.reduce((n, d) => n + d.lessons.length, 0);
+              }
+              pw.perClassWeekDays = nDays;
+              pw.perClassWeekLessons = nLessons;
+            }
             if (groups[0] && groups[0].subjects?.[0]) {
               const hw = await fetchHomeworkRows(result.session, {
                 schoolId: result.session.active.schoolId,
