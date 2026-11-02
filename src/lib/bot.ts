@@ -1448,7 +1448,7 @@ async function handleMessage(message: TelegramMessage) {
               },
             ],
             [{ text: "🌐 Web ilova (iPhone/Android)", url: "https://e-maktab-azizbek-9ad4.vercel.app/app" }],
-            [{ text: MENU_TEXT.home }],
+            [{ text: MENU_TEXT.home, callback_data: "menu:home" }],
           ]),
         },
       );
