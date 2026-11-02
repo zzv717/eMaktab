@@ -13,11 +13,28 @@
 
 import { createHash } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { pwaAccounts, pwaCredentials, type PwaCredential } from "@/db/schema";
+import {
+  botUsers,
+  memberAccounts,
+  pwaAccounts,
+  pwaCredentials,
+  type PwaCredential,
+} from "@/db/schema";
 import { decryptSecret, encryptSecret } from "@/lib/crypto";
-import { EmaktabAuthError, loginEmaktab, sessionFromCookies, type EmaktabSession } from "@/lib/emaktab";
+import {
+  EmaktabAuthError,
+  fetchDiaryDays,
+  lessonMatchesTeacherLoad,
+  loginEmaktab,
+  pickPersonForClass,
+  scheduleFromDiaryDays,
+  sessionFromCookies,
+  type DaySchedule,
+  type EmaktabSession,
+  type Lesson,
+} from "@/lib/emaktab";
 
 export const PWA_SESSION_COOKIE = "pwa_sid";
 export const PWA_CHALLENGE_COOKIE = "pwa_chal";
@@ -181,6 +198,103 @@ export async function deleteCredentialFor(login: string, credentialId: string): 
     .where(and(eq(pwaCredentials.emaktabLogin, login.toLowerCase()), eq(pwaCredentials.credentialId, credentialId)))
     .returning({ id: pwaCredentials.id });
   return deleted.length > 0;
+}
+
+// ---------------------------------------------------------------------------
+// 👨‍🏫 O'qituvchi haftalik jadvali — botdagi buildTeacherWeek bilan BIR XIL
+// (sinf a'zolari diary'sidan; memberAccounts da login/parollar saqlangan)
+// ---------------------------------------------------------------------------
+
+function classIdMatch(a: string | null | undefined, b: string): boolean {
+  if (!a) return true;
+  return a === b || a.includes(b) || b.includes(a);
+}
+
+export function dedupeScheduleDays(days: DaySchedule[]): DaySchedule[] {
+  const byDate = new Map<string, DaySchedule>();
+  for (const d of days) {
+    const cur = byDate.get(d.date) ?? { date: d.date, weekday: d.weekday, lessons: [] };
+    const seen = new Set<string>();
+    for (const l of [...cur.lessons, ...d.lessons]) {
+      const k = `${l.number}|${l.startTime}|${l.subject}|${l.groupName}`;
+      if (!seen.has(k)) {
+        seen.add(k);
+        cur.lessons.push(l);
+      }
+    }
+    byDate.set(d.date, cur);
+  }
+  return [...byDate.values()]
+    .map((d) => ({ ...d, lessons: d.lessons.sort((a, b) => (a.startTime ?? "").localeCompare(b.startTime ?? "")) }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+}
+
+export async function buildPwaTeacherWeek(
+  emaktabLogin: string,
+  fullName: string,
+  groups: { classId: string; className: string; subjects: string[] }[],
+  start: string,
+  end: string,
+): Promise<DaySchedule[]> {
+  const rows = await db
+    .select()
+    .from(botUsers)
+    .where(sql`lower(${botUsers.emaktabLogin}) = ${emaktabLogin.toLowerCase()}`)
+    .limit(1);
+  const tg = rows[0]?.telegramId;
+  if (!tg) return [];
+  const saved = await db
+    .select()
+    .from(memberAccounts)
+    .where(eq(memberAccounts.teacherTelegramId, tg));
+
+  let all: DaySchedule[] = [];
+  for (const cl of groups) {
+    const subjects = cl.subjects ?? [];
+    const candidates = saved
+      .filter((s) => classIdMatch(s.classId, cl.classId) && s.emaktabLogin && s.emaktabPasswordEnc)
+      .sort((a, b) => (a.kind === "student" ? 0 : 1) - (b.kind === "student" ? 0 : 1))
+      .slice(0, 3);
+
+    const perDate = new Map<string, { weekday: number; byKey: Map<string, Lesson> }>();
+    for (const acc of candidates) {
+      try {
+        const password = decryptSecret(acc.emaktabPasswordEnc!);
+        const res = await loginEmaktab(acc.emaktabLogin!, password);
+        if (res.status !== "ok") continue;
+        // Ota-ona hisobida FARZANDLAR aralashib ketmasligi uchun aynan shu sinf personi
+        const person = pickPersonForClass(res.session.persons, cl.classId, cl.className);
+        if (!person) continue;
+        const diaryDays = await fetchDiaryDays({ ...res.session, active: person }, start, end);
+        const sched = scheduleFromDiaryDays(diaryDays);
+        for (const day of sched) {
+          let slot = perDate.get(day.date);
+          if (!slot) {
+            slot = { weekday: day.weekday, byKey: new Map() };
+            perDate.set(day.date, slot);
+          }
+          for (const l of day.lessons) {
+            const key = `${l.number}|${l.subject}|${l.startTime ?? ""}`;
+            if (!slot.byKey.has(key)) slot.byKey.set(key, l);
+          }
+        }
+        if (sched.length > 0) break; // bitta ishlaydigan a'zo yetarli
+      } catch {
+        /* keyingi a'zo bilan davom */
+      }
+    }
+
+    // Faqat shu o'qituvchining darslari qoladi
+    for (const [date, slot] of perDate.entries()) {
+      const kept = [...slot.byKey.values()].filter((l) =>
+        lessonMatchesTeacherLoad(l.subject, l.teacher, subjects, fullName),
+      );
+      if (kept.length > 0) {
+        all = dedupeScheduleDays([...all, { date, weekday: slot.weekday, lessons: kept }]);
+      }
+    }
+  }
+  return all;
 }
 
 // ---------------------------------------------------------------------------
