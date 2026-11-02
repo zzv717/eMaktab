@@ -1,6 +1,6 @@
 // 📱 PWA — 👁 Nazoratchi (ulangan farzandlar, repetitorlar, testlar holati)
 import { NextRequest, NextResponse } from "next/server";
-import { desc, eq, inArray } from "drizzle-orm";
+import { desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { botUsers, nazoratchiTests, type NazoratchiLink } from "@/db/schema";
 import { activeLinksForChild, activeLinksForParent, tutorsForLink } from "@/lib/nazoratchi";
@@ -59,7 +59,7 @@ export async function GET(req: NextRequest) {
   const rows = await db
     .select()
     .from(botUsers)
-    .where(eq(botUsers.emaktabLogin, session.login.toLowerCase()))
+    .where(sql`lower(${botUsers.emaktabLogin}) = ${session.login.toLowerCase()}`)
     .limit(1);
   const u = rows[0];
   if (!u?.telegramId) {

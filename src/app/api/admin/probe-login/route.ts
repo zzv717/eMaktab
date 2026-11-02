@@ -4,6 +4,8 @@ import { db } from "@/db";
 import { botSettings, botUsers, memberAccounts, payments } from "@/db/schema";
 import { decryptSecret } from "@/lib/crypto";
 import {
+  fetchGrades,
+  fetchHomeworkRows,
   extractTeacherJournals,
   fetchFollowing,
   fetchClassMembers,
@@ -51,6 +53,63 @@ export async function GET(req: NextRequest) {
     if (result.status === "ok") {
       out.name = result.session.fullName;
       out.role = result.session.role;
+
+      // ?pwadata=1 — PWA panellari aynan ishlatadigan funksiyalarni sinash
+      if (sp.get("pwadata")) {
+        const pw: Record<string, unknown> = {};
+        try {
+          const grades = await fetchGrades(result.session, 14);
+          pw.grades = grades.length;
+          pw.gradeSample = grades
+            .slice(0, 4)
+            .map((g) => `${g.date.slice(5)}:${g.subject.slice(0, 8)}:${g.values.join(",")}`)
+            .join(" | ");
+        } catch (e) {
+          pw.grades = "xato " + String(e).slice(0, 60);
+        }
+        try {
+          const tash = tashkentDayKey();
+          const sched = await fetchSchedule(result.session, tash, tash);
+          pw.todayLessons = sched.reduce((n, d) => n + d.lessons.length, 0);
+          const { shiftDayKey } = await import("@/lib/emaktab");
+          const mon = shiftDayKey(tash, -((new Date().getUTCDay() + 6) % 7));
+          const week = await fetchSchedule(result.session, mon, shiftDayKey(mon, 6));
+          pw.weekDays = week.length;
+          pw.weekLessons = week.reduce((n, d) => n + d.lessons.length, 0);
+        } catch (e) {
+          pw.schedule = "xato " + String(e).slice(0, 60);
+        }
+        try {
+          const news = await fetchNews(result.session, 5);
+          pw.news = news.length;
+          pw.newsSample = (news[0]?.title ?? "").slice(0, 40);
+        } catch (e) {
+          pw.news = "xato " + String(e).slice(0, 60);
+        }
+        if (result.session.role === "teacher") {
+          try {
+            const groups = await fetchTeacherGroups(result.session);
+            pw.teacherGroups = groups.length;
+            pw.groupSample = groups
+              .slice(0, 3)
+              .map((g) => `${g.className}:${(g.subjects ?? []).join("+").slice(0, 20)}`)
+              .join(" | ");
+            if (groups[0] && groups[0].subjects?.[0]) {
+              const hw = await fetchHomeworkRows(result.session, {
+                schoolId: result.session.active.schoolId,
+                className: groups[0].className,
+                subjectName: groups[0].subjects[0],
+              });
+              pw.hwRows = hw.rows.length;
+              pw.hwReason = hw.reason ?? "";
+            }
+          } catch (e) {
+            pw.teacher = "xato " + String(e).slice(0, 60);
+          }
+        }
+        (out as Record<string, unknown>).pwa = pw;
+        return NextResponse.json(out);
+      }
 
       // ?kids=1 — bolalar API xom javobi + personlar + me (rol aniqlash diagnostikasi)
       if (sp.get("kids")) {

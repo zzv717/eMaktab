@@ -11,8 +11,24 @@ const card = "rounded-3xl bg-white p-5 shadow-[0_12px_36px_rgba(15,23,42,0.08)]"
 const chip = "rounded-full px-3 py-1.5 text-sm font-medium transition";
 const btn = "rounded-2xl px-4 py-2.5 text-sm font-semibold transition active:scale-[0.98] disabled:opacity-50";
 
-function Err({ msg }: { msg: string }) {
-  return <p className="rounded-2xl bg-rose-50 p-3 text-sm text-rose-700">{msg}</p>;
+function Err({ msg, auth }: { msg: string; auth?: boolean }) {
+  return (
+    <div className="rounded-2xl bg-rose-50 p-3">
+      <p className="text-sm text-rose-700">{msg}</p>
+      {(auth || /qayta kir|sessiya|captcha|hisob/i.test(msg)) && (
+        <button
+          className="mt-2 rounded-xl bg-rose-600 px-4 py-2 text-sm font-semibold text-white"
+          onClick={() => {
+            void fetch("/api/pwa/logout", { method: "POST" }).then(() => {
+              window.location.reload();
+            });
+          }}
+        >
+          🔁 Qayta kirish
+        </button>
+      )}
+    </div>
+  );
 }
 function Loading() {
   return <p className="p-6 text-center text-slate-400">⏳ Yuklanmoqda…</p>;

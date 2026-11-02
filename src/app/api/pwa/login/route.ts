@@ -33,8 +33,8 @@ export async function POST(req: NextRequest) {
       school: result.session.active.schoolName ?? "-",
       group: result.session.active.groupName ?? "-",
     };
-    // Ma'lumot paneli uchun hisobni serverda saqlaymiz (shifrlangan)
-    await saveAccount(login, password, profile);
+    // Ma'lumot paneli uchun hisobni serverda saqlaymiz (shifrlangan) + sessiya cookie'lari
+    await saveAccount(login, password, profile, result.session.cookies);
     const creds = await credentialsForLogin(login);
     const res = NextResponse.json({ ok: true, profile, hasPasskey: creds.length > 0 });
     issueSessionCookie(res, profile);
