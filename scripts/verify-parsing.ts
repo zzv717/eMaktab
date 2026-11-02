@@ -763,7 +763,15 @@ check("looksLikeName: ko'rish rad", !looksLikeName("Ko'rish"), true);
       return w.includes("assembleRelease") && w.includes("apksigner") && w.includes("eMaktab.apk");
     })(),
   );
-  check("apk: android loyihasi generatsiya", exists("android/app/build.gradle") && exists("android/app/src/main/AndroidManifest.xml"));
+  const exists2 = (rel: string) => {
+    try {
+      readFileSync(new URL(`../${rel}`, import.meta.url), "utf-8");
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  check("apk: android loyihasi generatsiya", exists2("android/app/build.gradle") && exists2("android/app/src/main/AndroidManifest.xml"));
   check("apk: signing-key route", src("app/api/admin/signing-key/route.ts").includes("android_keystore_b64"));
   check("apk: assetlinks dinamik", src("app/.well-known/assetlinks.json/route.ts").includes("android_signing_fp"));
   check("apk: release URL botda", src("lib/bot.ts").includes("releases/latest/download/eMaktab.apk"));
