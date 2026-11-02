@@ -240,6 +240,8 @@ export const pwaAccounts = pgTable("pwa_accounts", {
   emaktabLogin: varchar("emaktab_login", { length: 128 }).notNull().unique(),
   passwordEnc: text("password_enc").notNull(),
   profileJson: text("profile_json"),
+  // eMaktab sessiya cookie'lari (botdagidek — qayta login qilmaslik uchun)
+  sessionEnc: text("session_enc"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
 });

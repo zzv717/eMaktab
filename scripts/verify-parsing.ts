@@ -708,5 +708,21 @@ check("looksLikeName: ko'rish rad", !looksLikeName("Ko'rish"), true);
   check("panel: menyu tugmalari ishlaydigan", src("app/app/app-client.tsx").includes('setView(m.id)'));
 }
 
+{
+  // 🔧 PWA ma'lumot qatlami mustahkamlash (sessiya sahlash + qayta kirish UX)
+  const src = (rel: string) => readFileSync(new URL(`../src/${rel}`, import.meta.url), "utf-8");
+  const pwa = src("lib/pwa.ts");
+  check("sessiya: sessionFromCookies (botdek)", pwa.includes("sessionFromCookies"));
+  check("sessiya: cookie'lar saqlanadi", pwa.includes("saveSessionCookies"));
+  check("sessiya: 2 marta urinish (withSessiondek)", pwa.includes("attempt === 1"));
+  check("sessiya: captcha uchun aniq xabar", pwa.includes("captcha"));
+  check("sessiya: schema session_enc", src("db/schema.ts").includes("session_enc"));
+  check("sessiya: migrate session_enc", src("app/api/admin/migrate-schema/route.ts").includes("pwa_accounts.session_enc"));
+  check("ux: Qayta kirish tugmasi", src("app/app/panels.tsx").includes("Qayta kirish"));
+  check("login: sessiya cookie saqlanadi", src("app/api/pwa/login/route.ts").includes("result.session.cookies"));
+  check("probe: pwadata rejimi", src("app/api/admin/probe-login/route.ts").includes('sp.get("pwadata")'));
+  check("lookup: login case-insensitive", src("app/api/pwa/data/nazoratchi/route.ts").includes("lower("));
+}
+
 console.log(`\nNatija: ${passed} o'tdi, ${failed} yiqildi`);
 process.exit(failed > 0 ? 1 : 0);

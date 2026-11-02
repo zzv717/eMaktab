@@ -217,6 +217,7 @@ const STATEMENTS: { name: string; run: string }[] = [
       last_login_at timestamptz
     )`,
   },
+  { name: "pwa_accounts.session_enc", run: `ALTER TABLE pwa_accounts ADD COLUMN IF NOT EXISTS session_enc text` },
   {
     name: "create bot_settings (sozlamalar)",
     run: `CREATE TABLE IF NOT EXISTS bot_settings (

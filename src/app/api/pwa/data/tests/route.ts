@@ -1,6 +1,6 @@
 // 📱 PWA — 📝 Testlar (tarix + yangi test yaratish — Telegramga yuboriladi)
 import { NextRequest, NextResponse } from "next/server";
-import { desc, eq, inArray } from "drizzle-orm";
+import { desc, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { botUsers, nazoratchiLinks, nazoratchiTests } from "@/db/schema";
 import {
@@ -18,7 +18,7 @@ async function ownLink(login: string, linkId: number): Promise<boolean> {
   const rows = await db
     .select()
     .from(botUsers)
-    .where(eq(botUsers.emaktabLogin, login.toLowerCase()))
+    .where(sql`lower(${botUsers.emaktabLogin}) = ${login.toLowerCase()}`)
     .limit(1);
   const u = rows[0];
   if (!u?.telegramId) return false;
