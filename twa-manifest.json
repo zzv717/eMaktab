@@ -20,7 +20,7 @@
     "alias": "emaktab"
   },
   "appVersionName": "1.0.0",
-  "appVersionCode": 1,
+  "appVersionCode": 2,
   "shortcuts": [],
   "generatorApp": "bubblewrap-cli",
   "webManifestUrl": "https://e-maktab-azizbek-9ad4.vercel.app/manifest.webmanifest",

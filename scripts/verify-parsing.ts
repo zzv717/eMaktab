@@ -783,5 +783,25 @@ check("looksLikeName: ko'rish rad", !looksLikeName("Ko'rish"), true);
   check("oqituvchi: menyu 9 ta", src("app/app/app-client.tsx").includes("conduct") && src("app/app/app-client.tsx").includes("sinfim"));
 }
 
+{
+  // 📱 WebView ilova — barqarorlik kontraktlari (TWA kutubxonalari yo'q)
+  const exists2 = (rel: string) => {
+    try {
+      readFileSync(new URL(`../${rel}`, import.meta.url), "utf-8");
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  const manifest = readFileSync(new URL("../android/app/src/main/AndroidManifest.xml", import.meta.url), "utf-8");
+  const gradle = readFileSync(new URL("../android/app/build.gradle", import.meta.url), "utf-8");
+  check("apk: MainActivity WebView", exists2("android/app/src/main/java/uz/emaktab/app/MainActivity.java"));
+  check("apk: androidbrowserhelper olib tashlandi", !gradle.includes("androidbrowserhelper"));
+  check("apk: manifest toza (customtabs yo'q)", !manifest.includes("customtabs") && manifest.includes(".MainActivity"));
+  check("apk: eski klasslar o'chirildi", !exists2("android/app/src/main/java/uz/emaktab/app/LauncherActivity.java"));
+  check("apk: versiya 2", gradle.includes("versionCode 2"));
+  check("apk: WebView JS+DOM", exists2("android/app/src/main/java/uz/emaktab/app/MainActivity.java") && readFileSync(new URL("../android/app/src/main/java/uz/emaktab/app/MainActivity.java", import.meta.url), "utf-8").includes("setDomStorageEnabled"));
+}
+
 console.log(`\nNatija: ${passed} o'tdi, ${failed} yiqildi`);
 process.exit(failed > 0 ? 1 : 0);
