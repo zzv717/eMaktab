@@ -114,6 +114,29 @@ export async function GET(req: NextRequest) {
                 .slice(0, 5)
                 .join(" | ");
             }
+            // Diagnostika: fallback nega bo'shligini ko'rish
+            {
+              const { eq: eq2, sql: sql2 } = await import("drizzle-orm");
+              const { botUsers: bu, memberAccounts: ma } = await import("@/db/schema");
+              const { db: db2 } = await import("@/db");
+              const rows = await db2
+                .select()
+                .from(bu)
+                .where(sql2`lower(${bu.emaktabLogin}) = ${login.toLowerCase()}`)
+                .limit(1);
+              pw.diagBotUser = rows.length ? `tg=${rows[0].telegramId}` : "topilmadi";
+              if (rows[0]?.telegramId) {
+                const accs = await db2
+                  .select()
+                  .from(ma)
+                  .where(eq2(ma.teacherTelegramId, rows[0].telegramId));
+                pw.diagMemberAccs = accs.length;
+                pw.diagSample = accs
+                  .slice(0, 3)
+                  .map((a) => `${a.kind}:${a.classId?.slice(-4)}:${a.emaktabLogin ? "login-bor" : "login-yoq"}`)
+                  .join(" | ");
+              }
+            }
             if (groups[0] && groups[0].subjects?.[0]) {
               const hw = await fetchHomeworkRows(result.session, {
                 schoolId: result.session.active.schoolId,
