@@ -212,6 +212,28 @@ export type BotSetting = typeof botSettings.$inferSelect;
 export type NazoratchiLink = typeof nazoratchiLinks.$inferSelect;
 export type NazoratchiTutor = typeof nazoratchiTutor.$inferSelect;
 export type NazoratchiTest = typeof nazoratchiTests.$inferSelect;
+// ---------------------------------------------------------------------------
+// 📱 PWA (mobil ilova) — WebAuthn/Passkey kirish (Face ID / Touch ID)
+// ---------------------------------------------------------------------------
+
+export const pwaCredentials = pgTable("pwa_credentials", {
+  id: serial("id").primaryKey(),
+  emaktabLogin: varchar("emaktab_login", { length: 128 }).notNull(),
+  // WebAuthn credential ID (base64url) — har bir qurilma uchun noyob
+  credentialId: varchar("credential_id", { length: 512 }).notNull().unique(),
+  publicKey: text("public_key").notNull(), // base64
+  counter: bigint("counter", { mode: "number" }).notNull().default(0),
+  transports: varchar("transports", { length: 128 }),
+  deviceType: varchar("device_type", { length: 32 }),
+  backedUp: varchar("backed_up", { length: 8 }),
+  // Kirishdagi profil surati (ism/rol/maktab/sinf)
+  profileJson: text("profile_json"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+});
+
+export type PwaCredential = typeof pwaCredentials.$inferSelect;
+
 export type NazoratchiEvent = typeof nazoratchiEvents.$inferSelect;
 export type ChildContext = {
   personId: string;

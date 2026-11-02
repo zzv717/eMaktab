@@ -639,5 +639,43 @@ check("looksLikeName: ko'rish rad", !looksLikeName("Ko'rish"), true);
   check("ai: local difficulty+variant (kalitsiz)", q4.options.length === 4 && q4.engine === "local");
 }
 
+{
+  // 📱 PWA (Face ID / passkey) kontraktlari
+  const src = (rel: string) => readFileSync(new URL(`../src/${rel}`, import.meta.url), "utf-8");
+  const pwa = src("lib/pwa.ts");
+  const schema = src("db/schema.ts");
+  const migrate = src("app/api/admin/migrate-schema/route.ts");
+  const exists = (rel: string) => {
+    try {
+      readFileSync(new URL(`../${rel}`, import.meta.url), "utf-8");
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  check("pwa: schema pwa_credentials", schema.includes("pwa_credentials"));
+  check("pwa: migrate pwa_credentials", migrate.includes("create pwa_credentials"));
+  check("pwa: challenge cookie shifrlangan", pwa.includes("encryptSecret") && pwa.includes("pwa_chal"));
+  check("pwa: sessiya TTL", pwa.includes("SESSION_TTL_MS"));
+  check("pwa: rpID dinamik", pwa.includes("x-forwarded-host"));
+  check("pwa: passkey route lar mavjud",
+    exists("src/app/api/pwa/login/route.ts") &&
+    exists("src/app/api/pwa/passkey/options/route.ts") &&
+    exists("src/app/api/pwa/passkey/verify/route.ts") &&
+    exists("src/app/api/pwa/auth/options/route.ts") &&
+    exists("src/app/api/pwa/auth/verify/route.ts"));
+  check("pwa: manifest mavjud", exists("public/manifest.webmanifest"));
+  check("pwa: service worker mavjud", exists("public/sw.js"));
+  check("pwa: ilova sahifasi", exists("src/app/app/app-client.tsx"));
+  const manifest = readFileSync(new URL("../public/manifest.webmanifest", import.meta.url), "utf-8");
+  check("pwa: manifest start_url /app", manifest.includes('"start_url": "/app"'));
+  check("pwa: manifest standalone", manifest.includes('"display": "standalone"'));
+  check("pwa: manifest icon", manifest.includes("/icons/icon-512.png"));
+  const appClient = src("app/app/app-client.tsx");
+  check("pwa: UI uzbekcha (Kirish)", appClient.includes("Kirish"));
+  check("pwa: UI Face ID o'rnatish", appClient.includes("Face ID o'rnatish"));
+  check("pwa: UI platformAuthenticator tekshiruvi", appClient.includes("platformAuthenticatorIsAvailable"));
+}
+
 console.log(`\nNatija: ${passed} o'tdi, ${failed} yiqildi`);
 process.exit(failed > 0 ? 1 : 0);
