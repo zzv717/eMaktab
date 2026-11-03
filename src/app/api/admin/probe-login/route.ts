@@ -54,6 +54,17 @@ export async function GET(req: NextRequest) {
       out.name = result.session.fullName;
       out.role = result.session.role;
 
+      // ?rawpage=<to'liq url> — eMaktab sahifasining xom HTML (faqat emaktab.uz).
+      // Tadqiqot/diagnostika uchun: yangi endpointlar va tugmalarni topishda ishlatiladi.
+      const rawpage = sp.get("rawpage");
+      if (rawpage) {
+        if (!/^https:\/\/([a-z0-9-]+\.)*emaktab\.uz\//i.test(rawpage)) {
+          return NextResponse.json({ ok: false, error: "faqat emaktab.uz manzillari" }, { status: 400 });
+        }
+        const html = await pageGet(result.session.cookies, rawpage);
+        return NextResponse.json({ ok: true, url: rawpage, len: html.length, html: html.slice(0, 120000) });
+      }
+
       // ?pwadata=1 — PWA panellari aynan ishlatadigan funksiyalarni sinash
       if (sp.get("pwadata")) {
         const pw: Record<string, unknown> = {};
