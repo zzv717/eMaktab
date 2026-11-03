@@ -1,10 +1,11 @@
-// ⚡ 3D Fizika laboratoriyasi — elektr zanjiri (MNA), prujina (Hooke), optika (linza)
+// ⚡ 3D Fizika laboratoriyasi — elektr zanjiri (qo'l bilan yig'ish, nosozliklar, motor/LED/gurj…)
 "use client";
 
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
-import { applyWires, lensPhysics, solveCircuit, springPhysics, type CircuitComp } from "./engine";
+import { applyWires, lensPhysics, solveCircuit, springPhysics, type CircuitComp, type CircuitCompType, type CircuitWire } from "./engine";
 import { attachFrameHooks, benchTop, createScene, type SceneHandle } from "./three-utils";
+import { StageBox, labChip, type CatalogItem } from "./StageBox";
 
 type Mode = "circuit" | "spring" | "optics";
 
@@ -37,27 +38,22 @@ export default function PhysLab() {
 }
 
 const card = "rounded-3xl bg-white p-4 shadow-[0_12px_36px_rgba(15,23,42,0.08)]";
-const btn = "rounded-2xl px-4 py-2.5 text-sm font-semibold transition active:scale-[0.98] disabled:opacity-50";
-const chip = "rounded-full px-3 py-1.5 text-sm font-medium transition";
 
 // ============================== 🔌 ELEKTR ZANJIRI ==============================
 
-type AddType = CircuitComp["type"];
-const ADD_LABEL: Record<AddType, string> = {
+const ADD_LABEL: Record<CircuitCompType, string> = {
   battery: "🔋 Batareya",
   bulb: "💡 Lampochka",
   resistor: "🎚 Rezistor",
   switch: "🔛 Kalit",
   ammeter: "📏 Ampermetr",
+  led: "🔴 LED",
+  motor: "⚙️ Motor",
+  buzzer: "🔔 Gurj",
+  galv: "📟 Galvanometr",
+  rheostat: "🎛 Reostat",
+  heater: "♨️ Isitgich",
 };
-
-interface Wire {
-  id: string;
-  fromComp: string;
-  fromTerm: "a" | "b";
-  toComp: string;
-  toTerm: "a" | "b";
-}
 
 function CircuitLab() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -66,26 +62,32 @@ function CircuitLab() {
   const wireGroupRef = useRef<THREE.Group | null>(null);
 
   const [comps, setComps] = useState<CircuitComp[]>([]);
-  const [wires, setWires] = useState<Wire[]>([]);
+  const [wires, setWires] = useState<CircuitWire[]>([]);
   const [selTerm, setSelTerm] = useState<{ comp: string; term: "a" | "b" } | null>(null);
   const [selComp, setSelComp] = useState<string | null>(null);
+  const [power, setPower] = useState(true);
+  const [faultMode, setFaultMode] = useState(false);
+  const [msg, setMsg] = useState("");
 
-  // hisob — simlar tugunlarni birlashtiradi, so'ng Kirchgof bo'yicha yechildi
-  const solved = solveCircuit(applyWires(comps, wires));
+  const powered = solveCircuit(applyWires(comps, wires));
+  const solved = power ? powered : { ...powered, brightness: {}, motorSpeed: {}, buzzerOn: {}, galvNeedle: {}, heatGlow: {}, totalCurrent: 0 };
   const solvedRef = useRef(solved);
   solvedRef.current = solved;
-
   const compRef = useRef(comps);
   compRef.current = comps;
   const wireRef = useRef(wires);
   wireRef.current = wires;
+  const faultModeRef = useRef(faultMode);
+  faultModeRef.current = faultMode;
+  const powerRef = useRef(power);
+  powerRef.current = power;
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const handle = createScene(canvas, { camZ: 11 });
+    const handle = createScene(canvas, { camZ: 12 });
     handleRef.current = handle;
-    handle.scene.add(benchTop(16, 10));
+    handle.scene.add(benchTop(18, 11));
     const compGroup = new THREE.Group();
     const wireGroup = new THREE.Group();
     handle.scene.add(compGroup, wireGroup);
@@ -120,12 +122,24 @@ function CircuitLab() {
                 (w.toComp === prev.comp && w.toTerm === prev.term && w.fromComp === compId && w.fromTerm === term),
             )
               ? ws
-              : [...ws, { id: `w${Date.now()}`, fromComp: prev.comp, fromTerm: prev.term, toComp: compId, toTerm: term }],
+              : [...ws, { fromComp: prev.comp, fromTerm: prev.term, toComp: compId, toTerm: term }],
           );
           return null;
         });
       } else if (obj.userData?.kind === "comp") {
         const id = obj.userData.id as string;
+        if (faultModeRef.current) {
+          // nosozlik sikli: yo'q → open → short → (batareya uchun dead) → yo'q
+          setComps((cs) =>
+            cs.map((c) => {
+              if (c.id !== id) return c;
+              const order: Array<CircuitComp["fault"]> = c.type === "battery" ? [null, "open", "short", "dead"] : [null, "open", "short"];
+              const next = order[(order.indexOf(c.fault ?? null) + 1) % order.length];
+              return { ...c, fault: next ?? undefined };
+            }),
+          );
+          return;
+        }
         setSelComp(id);
         setComps((cs) => cs.map((c) => (c.id === id && c.type === "switch" ? { ...c, closed: !c.closed } : c)));
       }
@@ -133,12 +147,10 @@ function CircuitLab() {
     canvas.addEventListener("click", onClick);
 
     const stop = attachFrameHooks(handle, [
-      () => {
-        // komponentlar
+      (t, dt) => {
         const g = compGroupRef.current;
         if (!g) return;
         const list = compRef.current;
-        // keraksizlarni o'chirish
         for (let i = g.children.length - 1; i >= 0; i--) {
           const child = g.children[i];
           if (!list.some((c) => c.id === child.userData?.id)) {
@@ -156,17 +168,53 @@ function CircuitLab() {
             node.userData = { kind: "comp", id: c.id };
             g.add(node);
           }
-          node.position.set(-6 + (i % 6) * 2.4, 0.2, i >= 6 ? -2.6 : 1.4);
-          node.rotation.y = 0;
-          // yorug'lik (lampochka)
+          node.position.set(-7 + (i % 6) * 2.8, 0.2, i >= 6 ? -2.8 : 1.6);
+          const sol = solvedRef.current;
+          // yorug'lik / harakatlar
           const glow = node.getObjectByName("glow") as THREE.Mesh | undefined;
           if (glow) {
-            const b = solvedRef.current.brightness[c.id] ?? 0;
-            (glow.material as THREE.MeshStandardMaterial).emissiveIntensity = 0.15 + b * 2.4;
+            const b = sol.brightness[c.id] ?? 0;
+            (glow.material as THREE.MeshStandardMaterial).emissiveIntensity = 0.12 + b * 2.6;
             (glow.material as THREE.MeshStandardMaterial).color.set(b > 0.05 ? "#ffd76a" : "#9aa4b2");
+          }
+          const led = node.getObjectByName("led") as THREE.Mesh | undefined;
+          if (led) {
+            const b = sol.brightness[c.id] ?? 0;
+            const rev = sol.ledReversed?.[c.id];
+            (led.material as THREE.MeshStandardMaterial).emissiveIntensity = 0.1 + b * 3;
+            (led.material as THREE.MeshStandardMaterial).color.set(rev ? "#4b5563" : b > 0.02 ? "#ff4d4d" : "#7f1d1d");
+          }
+          const fan = node.getObjectByName("fan") as THREE.Group | undefined;
+          if (fan) fan.rotation.y += (sol.motorSpeed?.[c.id] ?? 0) * dt * 14;
+          const needle = node.getObjectByName("needle") as THREE.Mesh | undefined;
+          if (needle) {
+            const n = sol.galvNeedle?.[c.id] ?? 0;
+            needle.rotation.z = -n * 1.1;
+          }
+          const heat = node.getObjectByName("heat") as THREE.Mesh | undefined;
+          if (heat) {
+            const h = sol.heatGlow?.[c.id] ?? 0;
+            (heat.material as THREE.MeshStandardMaterial).emissiveIntensity = h * (1.6 + Math.sin(t * 6) * 0.3);
+          }
+          const bell = node.getObjectByName("bell") as THREE.Mesh | undefined;
+          if (bell) {
+            const on = sol.buzzerOn?.[c.id] ?? false;
+            bell.scale.setScalar(on ? 1 + Math.sin(t * 22) * 0.12 : 1);
+            (bell.material as THREE.MeshStandardMaterial).emissiveIntensity = on ? 1.1 : 0;
           }
           const lever = node.getObjectByName("lever") as THREE.Mesh | undefined;
           if (lever) lever.rotation.z = c.closed ? -0.6 : 0.5;
+          // nosozlik belgisi
+          let faultMark = node.getObjectByName("faultMark") as THREE.Mesh | undefined;
+          if (c.fault) {
+            if (!faultMark) {
+              faultMark = new THREE.Mesh(new THREE.PlaneGeometry(0.85, 0.85), new THREE.MeshBasicMaterial({ color: "#dc2626", transparent: true, opacity: 0.92, side: THREE.DoubleSide }));
+              faultMark.name = "faultMark";
+              faultMark.position.set(0, 2.15, 0);
+              node.add(faultMark);
+            }
+            faultMark.lookAt(handle.camera.position);
+          } else if (faultMark) node.remove(faultMark);
         });
         // simlar
         const wg = wireGroupRef.current;
@@ -186,7 +234,7 @@ function CircuitLab() {
           mid.y += 0.55;
           const curve = new THREE.CatmullRomCurve3([pa, mid, pb]);
           const tube = new THREE.Mesh(
-            new THREE.TubeGeometry(curve, 18, 0.055, 8, false),
+            new THREE.TubeGeometry(curve, 16, 0.055, 8, false),
             new THREE.MeshStandardMaterial({ color: "#2f3b4a", roughness: 0.5, metalness: 0.35 }),
           );
           wg.add(tube);
@@ -200,103 +248,201 @@ function CircuitLab() {
       handle.dispose();
       handleRef.current = null;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const addComp = (type: AddType) => {
+  const addComp = (type: CircuitCompType) => {
     setComps((cs) => {
       const id = `${type}${Date.now()}`;
-      const value = type === "battery" ? 9 : type === "resistor" ? 10 : type === "bulb" ? 6 : 0;
+      const value = type === "battery" ? 9 : type === "bulb" || type === "led" ? 6 : type === "resistor" ? 10 : type === "rheostat" ? 12 : type === "heater" ? 6 : 0;
       return [...cs, { id, type, a: cs.length * 2 + 1, b: cs.length * 2 + 2, value, closed: type === "switch" ? true : undefined }];
     });
   };
 
+  const loadProject = (key: string) => {
+    const projects: Record<string, { comps: CircuitComp[]; wires: CircuitWire[] }> = {
+      light: {
+        comps: [
+          { id: "bat", type: "battery", a: 1, b: 2, value: 9 },
+          { id: "sw", type: "switch", a: 2, b: 3, value: 0, closed: true },
+          { id: "bulb", type: "bulb", a: 3, b: 1, value: 6 },
+        ],
+        wires: [
+          { fromComp: "bat", fromTerm: "b", toComp: "sw", toTerm: "a" },
+          { fromComp: "sw", fromTerm: "b", toComp: "bulb", toTerm: "a" },
+          { fromComp: "bulb", fromTerm: "b", toComp: "bat", toTerm: "a" },
+        ],
+      },
+      measure: {
+        comps: [
+          { id: "bat", type: "battery", a: 1, b: 2, value: 12 },
+          { id: "am", type: "ammeter", a: 2, b: 3, value: 0 },
+          { id: "r", type: "resistor", a: 3, b: 1, value: 20 },
+        ],
+        wires: [
+          { fromComp: "bat", fromTerm: "b", toComp: "am", toTerm: "a" },
+          { fromComp: "am", fromTerm: "b", toComp: "r", toTerm: "a" },
+          { fromComp: "r", fromTerm: "b", toComp: "bat", toTerm: "a" },
+        ],
+      },
+      motor: {
+        comps: [
+          { id: "bat", type: "battery", a: 1, b: 2, value: 12 },
+          { id: "sw", type: "switch", a: 2, b: 3, value: 0, closed: false },
+          { id: "rh", type: "rheostat", a: 3, b: 4, value: 15 },
+          { id: "m", type: "motor", a: 4, b: 1, value: 0 },
+        ],
+        wires: [
+          { fromComp: "bat", fromTerm: "b", toComp: "sw", toTerm: "a" },
+          { fromComp: "sw", fromTerm: "b", toComp: "rh", toTerm: "a" },
+          { fromComp: "rh", fromTerm: "b", toComp: "m", toTerm: "a" },
+          { fromComp: "m", fromTerm: "b", toComp: "bat", toTerm: "a" },
+        ],
+      },
+      signal: {
+        comps: [
+          { id: "bat", type: "battery", a: 1, b: 2, value: 9 },
+          { id: "sw", type: "switch", a: 2, b: 3, value: 0, closed: true },
+          { id: "led", type: "led", a: 3, b: 4, value: 6 },
+          { id: "bz", type: "buzzer", a: 4, b: 1, value: 0 },
+        ],
+        wires: [
+          { fromComp: "bat", fromTerm: "b", toComp: "sw", toTerm: "a" },
+          { fromComp: "sw", fromTerm: "b", toComp: "led", toTerm: "a" },
+          { fromComp: "led", fromTerm: "b", toComp: "bz", toTerm: "a" },
+          { fromComp: "bz", fromTerm: "b", toComp: "bat", toTerm: "a" },
+        ],
+      },
+    };
+    const p = projects[key];
+    if (!p) return;
+    setComps(p.comps);
+    setWires(p.wires);
+    setSelComp(null);
+    setSelTerm(null);
+    setPower(true);
+    setMsg("📋 Loyiha yuklandi — ▶ ishga tushirib ko'ring!");
+  };
+
   const selected = comps.find((c) => c.id === selComp);
+  const catalog: CatalogItem[] = [
+    ...(Object.keys(ADD_LABEL) as CircuitCompType[]).map((t) => ({ id: `c:${t}`, icon: "🔧", name: ADD_LABEL[t], group: "Qurilmalar (ish stoliga qo'shing)" })),
+    { id: "p:light", icon: "💡", name: "Loyiha: Yoritish", group: "Tayyor loyihalar", desc: "Batareya + kalit + lampochka" },
+    { id: "p:measure", icon: "📏", name: "Loyiha: O'lchov", group: "Tayyor loyihalar", desc: "Ampermetr + rezistor (Om qonuni)" },
+    { id: "p:motor", icon: "⚙️", name: "Loyiha: Motor", group: "Tayyor loyihalar", desc: "Reostat bilan tezlikni boshqaring" },
+    { id: "p:signal", icon: "🔔", name: "Loyiha: Signal", group: "Tayyor loyihalar", desc: "LED + gurj — yorug'lik va tovush" },
+    { id: "t:power", icon: "▶️", name: "Ishga tushirish / to'xtatish", group: "Boshqaruv" },
+    { id: "t:fault", icon: "🔧", name: "Nosozlik rejimi", group: "Boshqaruv", desc: "Qurilmaga bosib nosozlik qo'shing — zanjir ishlamay qoladi!" },
+    { id: "t:clear", icon: "🧹", name: "Hammasini o'chirish", group: "Boshqaruv" },
+    { id: "t:unwire", icon: "↩️", name: "Oxirgi simni o'chirish", group: "Boshqaruv" },
+  ];
+
+  const handleAdd = (id: string) => {
+    if (id.startsWith("c:")) addComp(id.slice(2) as CircuitCompType);
+    else if (id.startsWith("p:")) loadProject(id.slice(2));
+    else if (id === "t:power") setPower((p) => !p);
+    else if (id === "t:fault") setFaultMode((f) => !f);
+    else if (id === "t:clear") {
+      setComps([]);
+      setWires([]);
+      setSelComp(null);
+      setSelTerm(null);
+    } else if (id === "t:unwire") setWires((ws) => ws.slice(0, -1));
+  };
 
   return (
-    <div>
-      <div className={`${card} mb-3 p-2`}>
-        <canvas ref={canvasRef} className="h-[280px] w-full rounded-2xl" />
-        <p className="px-2 pb-1 pt-1.5 text-center text-xs text-slate-400">
-          🟢 Terminalni bosing → ikkinchi terminalga ulang (sim tortiladi) · qurilmaga bosib kalitni oching/yoping
-        </p>
-      </div>
-
-      <div className={`${card} mb-3`}>
-        <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Qurilmalar</p>
-        <div className="mt-2 flex flex-wrap gap-2">
-          {(Object.keys(ADD_LABEL) as AddType[]).map((t) => (
-            <button key={t} onClick={() => addComp(t)} className={`${chip} bg-slate-100 text-slate-700`}>
-              + {ADD_LABEL[t]}
-            </button>
-          ))}
-          <button
-            onClick={() => {
-              setComps([]);
-              setWires([]);
-              setSelComp(null);
-              setSelTerm(null);
-            }}
-            className={`${chip} bg-rose-50 text-rose-600`}
-          >
-            🧹 Hammasini o'chirish
+    <StageBox
+      title="⚡ Elektr zanjiri — qo'l bilan yig'ish"
+      catalog={catalog}
+      onAdd={handleAdd}
+      toolbar={
+        <div className="flex flex-wrap gap-1.5">
+          <button onClick={() => setPower((p) => !p)} className={`${labChip} ${power ? "bg-emerald-600 text-white" : "bg-slate-700 text-white"}`}>
+            {power ? "⏸ To'xtatish" : "▶ Ishga tushirish"}
           </button>
-          {wires.length > 0 && (
-            <button onClick={() => setWires((ws) => ws.slice(0, -1))} className={`${chip} bg-amber-50 text-amber-700`}>
-              ↩️ Oxirgi simni o'chirish
-            </button>
-          )}
+          <button onClick={() => setFaultMode((f) => !f)} className={`${labChip} ${faultMode ? "bg-rose-600 text-white" : "bg-rose-50 text-rose-600"}`}>
+            🔧 Nosozlik rejimi {faultMode ? "(yoqilgan)" : ""}
+          </button>
+          <button onClick={() => setWires((ws) => ws.slice(0, -1))} className={`${labChip} bg-amber-50 text-amber-700`}>↩️ Simni o'chirish</button>
+          <button onClick={() => { setComps([]); setWires([]); setSelComp(null); setSelTerm(null); }} className={`${labChip} bg-slate-100 text-slate-700`}>🧹 Tozalash</button>
         </div>
+      }
+    >
+      <canvas ref={canvasRef} className="h-[300px] w-full rounded-2xl bg-slate-100" />
+      <p className="px-1 pb-1 pt-1.5 text-center text-xs text-slate-400">
+        🟢 Terminalni bosing → sim tortiladi · qurilmaga bosib kalitni oching/yoping{faultMode && " · NOSOZLIK REJIMI: qurilmaga bosib nosozlik qo'shing"}
+      </p>
 
-        {selected && (selected.type === "battery" || selected.type === "resistor" || selected.type === "bulb") && (
-          <div className="mt-3 rounded-2xl bg-slate-50 p-3 text-sm">
-            <p className="font-semibold text-slate-800">{ADD_LABEL[selected.type]}</p>
-            <input
-              type="range"
-              min={selected.type === "battery" ? 1.5 : 1}
-              max={selected.type === "battery" ? 24 : 60}
-              step={0.5}
-              value={selected.value}
-              onChange={(e) =>
-                setComps((cs) => cs.map((c) => (c.id === selected.id ? { ...c, value: Number(e.target.value) } : c)))
-              }
-              className="mt-2 w-full accent-teal-700"
-            />
-            <p className="mt-1 text-xs text-slate-500">
-              {selected.type === "battery" ? `Kuchlanish: ${selected.value} V` : selected.type === "resistor" ? `Qarshilik: ${selected.value} Om` : `Nominal kuchlanish: ${selected.value} V`}
-            </p>
-          </div>
-        )}
-      </div>
+      {msg && <p className="rounded-2xl bg-emerald-50 p-2.5 text-center text-sm text-emerald-700">{msg}</p>}
 
-      <div className={`${card} mb-3`}>
+      {selected && (
+        <div className="rounded-2xl bg-slate-50 p-3 text-sm">
+          <p className="font-semibold text-slate-800">
+            {ADD_LABEL[selected.type]}
+            {selected.fault && <span className="ml-2 rounded-full bg-rose-100 px-2 py-0.5 text-xs text-rose-700">nosozlik: {selected.fault === "open" ? "sindirilgan/ochiq" : selected.fault === "short" ? "qisqa tutashuv" : "o'lik"}</span>}
+          </p>
+          {(selected.type === "battery" || selected.type === "resistor" || selected.type === "bulb" || selected.type === "led" || selected.type === "rheostat" || selected.type === "heater") && (
+            <>
+              <input
+                type="range"
+                min={selected.type === "battery" ? 1.5 : 1}
+                max={selected.type === "battery" ? 24 : 60}
+                step={0.5}
+                value={selected.value}
+                onChange={(e) => setComps((cs) => cs.map((c) => (c.id === selected.id ? { ...c, value: Number(e.target.value) } : c)))}
+                className="mt-2 w-full accent-teal-700"
+              />
+              <p className="mt-1 text-xs text-slate-500">
+                {selected.type === "battery" ? `Kuchlanish: ${selected.value} V` : selected.type === "bulb" || selected.type === "led" ? `Nominal kuchlanish: ${selected.value} V` : `Qarshilik: ${selected.value} Om`}
+              </p>
+            </>
+          )}
+          <button
+            onClick={() => setComps((cs) => cs.filter((c) => c.id !== selected.id))}
+            className="mt-2 rounded-xl bg-rose-100 px-3 py-1.5 text-xs font-semibold text-rose-700"
+          >
+            🗑 O'chirish
+          </button>
+        </div>
+      )}
+
+      <div className="rounded-3xl bg-white p-4 shadow-[0_12px_36px_rgba(15,23,42,0.08)]">
         <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Hisob natijasi (Kirchgof qonuni)</p>
-        {!solved.ok ? (
+        {!power ? (
+          <p className="mt-2 rounded-xl bg-slate-100 px-3 py-2 text-sm text-slate-500">⏸ Zanjir to'xtatilgan — <b>▶ Ishga tushirish</b> tugmasini bosing.</p>
+        ) : !solved.ok ? (
           <p className="mt-2 rounded-xl bg-amber-50 px-3 py-2 text-sm text-amber-700">{solved.error ?? "Zanjir to'liq emas."}</p>
         ) : (
           <div className="mt-2 space-y-1.5 text-sm">
             <p className="rounded-xl bg-emerald-50 px-3 py-2 text-emerald-700">
-              ✅ Zanjir hisoblandi — umumiy tok: <b>{(solved.totalCurrent * 1000).toFixed(1)} mA</b>
+              ✅ Zanjir ishlayapti — umumiy tok: <b>{(solved.totalCurrent * 1000).toFixed(1)} mA</b>
             </p>
-            {comps
-              .filter((c) => c.type === "bulb")
-              .map((c) => (
-                <p key={c.id} className="rounded-xl bg-slate-50 px-3 py-2 text-slate-700">
-                  💡 Lampochka: yorug'lik <b>{Math.round((solved.brightness[c.id] ?? 0) * 100)}%</b> · tok{" "}
-                  <b>{((solved.currents[c.id] ?? 0) * 1000).toFixed(1)} mA</b>
+            {comps.map((c) => {
+              const i = solved.currents[c.id] ?? 0;
+              const extra =
+                c.type === "bulb" || c.type === "led"
+                  ? `yorug'lik ${Math.round((solved.brightness[c.id] ?? 0) * 100)}%${solved.ledReversed?.[c.id] ? " (⚠️ LED teskari ulangan!)" : ""}`
+                  : c.type === "motor"
+                    ? `tezlik ${Math.round((solved.motorSpeed?.[c.id] ?? 0) * 100)}%`
+                    : c.type === "buzzer"
+                      ? (solved.buzzerOn?.[c.id] ? "🔔 OVOZ BERMOQDA" : "jim")
+                      : c.type === "galv"
+                        ? `strelka ${((solved.galvNeedle?.[c.id] ?? 0) * 100).toFixed(0)}%`
+                        : c.type === "heater"
+                          ? `qizish ${Math.round((solved.heatGlow?.[c.id] ?? 0) * 100)}%`
+                          : "";
+              return (
+                <p key={c.id} className={`rounded-xl px-3 py-2 ${c.fault ? "bg-rose-50 text-rose-700" : "bg-slate-50 text-slate-700"}`}>
+                  {ADD_LABEL[c.type]}: <b>{(i * 1000).toFixed(1)} mA</b> {extra}
+                  {c.fault && <span className="ml-1 text-xs">— nosozlik!</span>}
                 </p>
-              ))}
-            {comps
-              .filter((c) => c.type === "ammeter")
-              .map((c) => (
-                <p key={c.id} className="rounded-xl bg-sky-50 px-3 py-2 text-sky-700">
-                  📏 Ampermetr o'qishi: <b>{((solved.currents[c.id] ?? 0) * 1000).toFixed(2)} mA</b>
-                </p>
-              ))}
-            <p className="text-xs text-slate-400">Batareya ichki qarshiligi 0.4 Om hisobga olingan. Fizika: U = I·R (Om qonuni).</p>
+              );
+            })}
+            <p className="text-xs text-slate-400">U = I·R (Om qonuni) · batareya ichki qarshiligi 0.4 Om · nosozliklar hisobga olinadi.</p>
           </div>
         )}
       </div>
-    </div>
+    </StageBox>
   );
 }
 
@@ -308,38 +454,39 @@ function terminalPos(group: THREE.Group, term: "a" | "b"): THREE.Vector3 {
   return v;
 }
 
-function buildCompMesh(type: AddType): THREE.Group {
+function buildCompMesh(type: CircuitCompType): THREE.Group {
   const g = new THREE.Group();
-  const body = new THREE.Mesh(
-    new THREE.BoxGeometry(1.5, 0.55, 0.9),
-    new THREE.MeshStandardMaterial({ color: type === "battery" ? "#3a7d44" : type === "bulb" ? "#5b6b7d" : "#7a6551", roughness: 0.55 }),
-  );
+  const bodyColor = type === "battery" ? "#3a7d44" : type === "bulb" || type === "led" ? "#5b6b7d" : type === "motor" ? "#4b5f7a" : type === "buzzer" ? "#8a4b5f" : type === "galv" ? "#3b4a63" : "#7a6551";
+  const body = new THREE.Mesh(new THREE.BoxGeometry(1.55, 0.55, 0.95), new THREE.MeshStandardMaterial({ color: bodyColor, roughness: 0.55 }));
   body.position.y = 0.32;
   body.castShadow = true;
   g.add(body);
   if (type === "battery") {
     const plus = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 0.22, 12), new THREE.MeshStandardMaterial({ color: "#c0392b" }));
     plus.position.set(0.45, 0.72, 0);
-    const minus = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 0.12, 12), new THREE.MeshStandardMaterial({ color: "#2c3e50" }));
-    minus.position.set(-0.45, 0.66, 0);
-    g.add(plus, minus);
+    g.add(plus);
   } else if (type === "bulb") {
     const stand = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.34, 0.35, 16), new THREE.MeshStandardMaterial({ color: "#8d99ae", metalness: 0.5, roughness: 0.4 }));
     stand.position.y = 0.78;
-    const glow = new THREE.Mesh(new THREE.SphereGeometry(0.52, 22, 16), new THREE.MeshStandardMaterial({ color: "#9aa4b2", emissive: "#ffb84d", emissiveIntensity: 0.15, roughness: 0.25 }));
+    const glow = new THREE.Mesh(new THREE.SphereGeometry(0.52, 20, 14), new THREE.MeshStandardMaterial({ color: "#9aa4b2", emissive: "#ffb84d", emissiveIntensity: 0.12, roughness: 0.25 }));
     glow.position.y = 1.35;
     glow.name = "glow";
     g.add(stand, glow);
-  } else if (type === "resistor") {
-    const cyl = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.22, 1.1, 18), new THREE.MeshStandardMaterial({ color: "#d9c7a3", roughness: 0.6 }));
+  } else if (type === "led") {
+    const led = new THREE.Mesh(new THREE.ConeGeometry(0.42, 0.85, 18), new THREE.MeshStandardMaterial({ color: "#7f1d1d", emissive: "#ff2d2d", emissiveIntensity: 0.1, roughness: 0.3 }));
+    led.position.y = 1.15;
+    led.name = "led";
+    g.add(led);
+  } else if (type === "resistor" || type === "rheostat" || type === "heater") {
+    const cyl = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.24, 1.15, 18), new THREE.MeshStandardMaterial({ color: type === "heater" ? "#6b3b2b" : "#d9c7a3", roughness: 0.6, emissive: type === "heater" ? "#ff3b00" : "#000", emissiveIntensity: 0 }));
     cyl.rotation.z = Math.PI / 2;
-    cyl.position.y = 0.75;
+    cyl.position.y = 0.78;
+    if (type === "heater") cyl.name = "heat";
     g.add(cyl);
-    for (let i = 0; i < 3; i++) {
-      const band = new THREE.Mesh(new THREE.CylinderGeometry(0.235, 0.235, 0.1, 18), new THREE.MeshStandardMaterial({ color: ["#b02a2a", "#222", "#c9a227"][i] }));
-      band.rotation.z = Math.PI / 2;
-      band.position.set(-0.28 + i * 0.28, 0.75, 0);
-      g.add(band);
+    if (type === "rheostat") {
+      const knob = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.3, 0.3), new THREE.MeshStandardMaterial({ color: "#e07b39" }));
+      knob.position.set(0, 1.15, 0);
+      g.add(knob);
     }
   } else if (type === "switch") {
     const lever = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.62, 0.14), new THREE.MeshStandardMaterial({ color: "#e07b39", roughness: 0.5 }));
@@ -347,11 +494,33 @@ function buildCompMesh(type: AddType): THREE.Group {
     lever.name = "lever";
     lever.geometry.translate(0, 0.31, 0);
     g.add(lever);
-  } else if (type === "ammeter") {
-    const face = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.42, 0.14, 24), new THREE.MeshStandardMaterial({ color: "#f4f1de", roughness: 0.4 }));
+  } else if (type === "ammeter" || type === "galv") {
+    const face = new THREE.Mesh(new THREE.CylinderGeometry(0.46, 0.46, 0.14, 24), new THREE.MeshStandardMaterial({ color: "#f4f1de", roughness: 0.4 }));
     face.rotation.x = Math.PI / 2;
-    face.position.set(0, 1.05, 0.28);
-    g.add(face);
+    face.position.set(0, 1.15, 0.3);
+    const needle = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.42, 0.03), new THREE.MeshStandardMaterial({ color: "#b02a2a" }));
+    needle.position.set(0, 1.15, 0.4);
+    needle.geometry.translate(0, 0.2, 0);
+    needle.name = "needle";
+    g.add(face, needle);
+  } else if (type === "motor") {
+    const cyl = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 0.95, 22), new THREE.MeshStandardMaterial({ color: "#4b5f7a", metalness: 0.55, roughness: 0.35 }));
+    cyl.position.y = 1.05;
+    const fan = new THREE.Group();
+    for (let i = 0; i < 3; i++) {
+      const blade = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.045, 0.2), new THREE.MeshStandardMaterial({ color: "#cbd5e1", metalness: 0.4, roughness: 0.4 }));
+      blade.position.y = 1.72;
+      blade.rotation.y = (i / 3) * Math.PI * 2;
+      blade.translateX(0.32);
+      fan.add(blade);
+    }
+    fan.name = "fan";
+    g.add(cyl, fan);
+  } else if (type === "buzzer") {
+    const bell = new THREE.Mesh(new THREE.SphereGeometry(0.55, 20, 12, 0, Math.PI * 2, 0, Math.PI / 2), new THREE.MeshStandardMaterial({ color: "#c9a227", emissive: "#ffdd55", emissiveIntensity: 0, metalness: 0.5, roughness: 0.35 }));
+    bell.position.y = 0.72;
+    bell.name = "bell";
+    g.add(bell);
   }
   for (const term of ["a", "b"] as const) {
     const t = new THREE.Mesh(new THREE.SphereGeometry(0.17, 14, 10), new THREE.MeshStandardMaterial({ color: term === "a" ? "#2e8b57" : "#8b2e2e", emissive: term === "a" ? "#1d5c38" : "#5c1d1d", emissiveIntensity: 0.25 }));
@@ -383,17 +552,11 @@ function SpringLab() {
     const arm = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.28, 0.28), stand.material);
     arm.position.set(-1.25, 4.3, 0);
     handle.scene.add(stand, arm);
-
     const springMat = new THREE.MeshStandardMaterial({ color: "#8b98a8", metalness: 0.7, roughness: 0.3 });
     const weight = new THREE.Mesh(new THREE.BoxGeometry(1.15, 0.9, 1.15), new THREE.MeshStandardMaterial({ color: "#c96f4a", roughness: 0.55 }));
     weight.castShadow = true;
     handle.scene.add(weight);
     let springMesh: THREE.Mesh | null = null;
-
-    const ruler = new THREE.Mesh(new THREE.BoxGeometry(0.12, 3.6, 0.35), new THREE.MeshStandardMaterial({ color: "#f1e9c9", roughness: 0.7 }));
-    ruler.position.set(0.9, 2.2, 0);
-    handle.scene.add(ruler);
-
     const stop = attachFrameHooks(handle, [
       (t) => {
         const { extension } = physRef.current;
@@ -413,7 +576,7 @@ function SpringLab() {
           const tt = i / (coils * 12);
           pts.push(new THREE.Vector3(-1.25 + Math.cos(tt * coils * Math.PI * 2) * 0.42, topY - tt * h, Math.sin(tt * coils * Math.PI * 2) * 0.42));
         }
-        springMesh = new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 140, 0.075, 8, false), springMat);
+        springMesh = new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 130, 0.075, 8, false), springMat);
         handle.scene.add(springMesh);
       },
     ]);
@@ -472,16 +635,13 @@ function OpticsLab() {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const handle = createScene(canvas, { camZ: 10 });
-    // optik o'q
     const axis = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 20, 10), new THREE.MeshStandardMaterial({ color: "#334155" }));
     axis.rotation.z = Math.PI / 2;
     axis.position.y = 1.6;
     handle.scene.add(axis);
-    // stol
     const table = new THREE.Mesh(new THREE.BoxGeometry(18, 0.3, 4), new THREE.MeshStandardMaterial({ color: "#7c5b3f", roughness: 0.8 }));
     table.position.y = -0.6;
     handle.scene.add(table);
-    // linza
     const lens = new THREE.Group();
     const lensMesh = new THREE.Mesh(new THREE.CylinderGeometry(1.55, 1.55, 0.16, 40), new THREE.MeshPhysicalMaterial({ color: "#bfe4f2", transparent: true, opacity: 0.45, transmission: 0.7, roughness: 0.1, thickness: 0.5 }));
     lensMesh.rotation.x = Math.PI / 2;
@@ -490,23 +650,19 @@ function OpticsLab() {
     lens.add(ring);
     lens.position.y = 1.6;
     handle.scene.add(lens);
-
     const obj = new THREE.Mesh(new THREE.ConeGeometry(0.32, 1.7, 18), new THREE.MeshStandardMaterial({ color: "#e05a33", roughness: 0.45 }));
     const img = new THREE.Mesh(new THREE.ConeGeometry(0.32, 1.7, 18), new THREE.MeshStandardMaterial({ color: "#2f80ed", roughness: 0.45, transparent: true, opacity: 0.85 }));
     handle.scene.add(obj, img);
-
     const rayMat = new THREE.LineBasicMaterial({ color: "#d9a23e" });
     const rays = new THREE.Group();
     handle.scene.add(rays);
-
     const focusL = new THREE.Mesh(new THREE.SphereGeometry(0.12, 12, 8), new THREE.MeshStandardMaterial({ color: "#16a34a", emissive: "#0f7a35", emissiveIntensity: 0.5 }));
     const focusR = focusL.clone();
     handle.scene.add(focusL, focusR);
-
     const stop = attachFrameHooks(handle, [
       () => {
         const p = physRef.current;
-        const scale = 0.055; // 1 sm = 0.055 birligi
+        const scale = 0.055;
         const ox = -objectCm * scale;
         obj.position.set(ox, 1.6 + 0.85, 0);
         obj.rotation.x = Math.PI;
@@ -519,12 +675,9 @@ function OpticsLab() {
           const mAbs = Math.min(2.2, Math.abs(p.magnification));
           img.scale.set(mAbs, mAbs, mAbs);
         } else img.visible = false;
-
         focusL.position.set(-Math.abs(p.focal) * scale, 1.6, 0);
         focusR.position.set(Math.abs(p.focal) * scale, 1.6, 0);
         (lensMesh.material as THREE.MeshPhysicalMaterial).color.set(concave ? "#e9c7f2" : "#bfe4f2");
-
-        // nurlar: parallel→fokus, markaz orqali, fokus orqali
         while (rays.children.length) rays.remove(rays.children[0]);
         const topY = 1.6 + 1.15;
         const addRay = (pts: [number, number][]) => {
@@ -557,11 +710,11 @@ function OpticsLab() {
       </div>
       <div className={`${card} mb-3`}>
         <div className="flex gap-2">
-          <button onClick={() => setConcave(false)} className={`${chip} ${!concave ? "bg-teal-700 text-white" : "bg-slate-100 text-slate-600"}`}>
-            🔵 Yig'uvchi (qavariq)
+          <button onClick={() => setConcave(false)} className={`rounded-full px-3 py-1.5 text-sm font-medium transition ${!concave ? "bg-teal-700 text-white" : "bg-slate-100 text-slate-600"}`}>
+            🔵 Yig'uvchi
           </button>
-          <button onClick={() => setConcave(true)} className={`${chip} ${concave ? "bg-teal-700 text-white" : "bg-slate-100 text-slate-600"}`}>
-            🟣 Tarqatuvchi (qavariq emas)
+          <button onClick={() => setConcave(true)} className={`rounded-full px-3 py-1.5 text-sm font-medium transition ${concave ? "bg-teal-700 text-white" : "bg-slate-100 text-slate-600"}`}>
+            🟣 Tarqatuvchi
           </button>
         </div>
         <p className="mt-3 text-sm font-medium text-slate-700">Fokus masofasi: {focal} sm</p>
@@ -579,13 +732,12 @@ function OpticsLab() {
                 d<sub>tasvir</sub> = <b>{phys.image.toFixed(1)} sm</b> ({phys.real ? "haqiqiy" : "virtual"} tasvir)
               </>
             ) : (
-              <b>Tasvir parallel nurlar bilan cheksizlikda</b>
+              <b>Tasvir cheksizlikda</b>
             )}
           </p>
           {Number.isFinite(phys.magnification) && (
             <p className="rounded-xl bg-slate-50 px-3 py-2 text-slate-700">
-              Kattalashtirish m = −d<sub>tasvir</sub>/d<sub>buyum</sub> = <b>{phys.magnification.toFixed(2)}×</b>{" "}
-              {phys.magnification < 0 ? "(tik)" : "(tik emas)"}
+              Kattalashtirish m = <b>{phys.magnification.toFixed(2)}×</b> {phys.magnification < 0 ? "(tik)" : "(tik emas)"}
             </p>
           )}
         </div>
