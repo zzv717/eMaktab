@@ -14,7 +14,7 @@ async function rawCall(method: string, payload?: Record<string, unknown>) {
       headers: { "Content-Type": "application/json" },
       body: payload ? JSON.stringify(payload) : undefined,
       cache: "no-store",
-      signal: AbortSignal.timeout(8000),
+      signal: AbortSignal.timeout(6000),
     });
     const text = (await res.text()).slice(0, 800);
     let json: unknown = null;

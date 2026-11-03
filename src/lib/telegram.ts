@@ -76,43 +76,28 @@ function getToken(): string {
 }
 
 async function callTelegram<T = unknown>(method: string, payload: Record<string, unknown>): Promise<T> {
-  const token = getToken();
-  let lastError = "";
-  // Telegram vaqtinchalik xatolariga chidamli: 2 marta urinish + timeout
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      const res = await fetch(`${API_BASE}/bot${token}/${method}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-        cache: "no-store",
-        signal: AbortSignal.timeout(15000),
-      });
-
-      const json = (await res.json().catch(() => ({ ok: false } as { ok: boolean }))) as {
-        ok: boolean;
-        result?: T;
-        description?: string;
-      };
-      if (json.ok) return json.result as T;
-      lastError = json.description ?? res.statusText ?? "noma'lum xato";
-      // 4xx doimiy xato — qayta urinish foydasiz
-      if (res.status >= 400 && res.status < 500 && res.status !== 429) {
-        throw new Error(`Telegram API error on ${method}: ${lastError}`);
-      }
-    } catch (e) {
-      if (e instanceof Error && e.message.startsWith("Telegram API error on")) throw e;
-      lastError = e instanceof Error ? e.message.slice(0, 120) : "tarmoq xatosi";
-    }
-    if (attempt === 0) await new Promise((r) => setTimeout(r, 1200));
-  }
-  // IPv6 muammosi bo'lsa — IPv4 orqali majbur urinamiz (avtomatik tuzalish)
+  // 1-asosiy yo'l: IPv4 majbur (node:https family:4) — Vercel IPv6 qora tuynugidan qochadi
   try {
     return await callTelegramIpv4<T>(method, payload);
-  } catch {
-    /* IPv4 ham ishlamadi */
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    // Telegram API dan aniq javob keldi (masalan "chat not found") — qayta urinmaymiz
+    if (!/timeout|o'qilmadi|ECONN|ETIMEDOUT|aborted|socket|JSON/i.test(msg)) throw e;
   }
-  throw new Error(`Telegram API error on ${method}: ${lastError}`);
+  // 2-fallback: oddiy fetch (dns ipv4first sozlangan)
+  const token = getToken();
+  const url = `https://api.telegram.org/bot${token}/${method}`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(12000),
+  });
+  const json = (await res.json().catch(() => null)) as
+    | { ok: boolean; result?: T; description?: string }
+    | null;
+  if (json?.ok) return json.result as T;
+  throw new Error(`Telegram API error on ${method}: ${json?.description ?? res.statusText}`);
 }
 
 /**
