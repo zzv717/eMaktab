@@ -103,31 +103,11 @@ function CircuitLab() {
     const detachPointer = attachPointer(handle, canvas, {
       getRoots: () => compGroup.children,
       moveRef,
-      onPick: (root, hit, ev) => {
+      onPick: (root, hit) => {
         const ud = root.userData as { kind: string; id: string };
-        // 🟢 TERMINAL SNAP — bosish yaqinidagi terminalni tortib olish (masofa keng)
-        const rect = canvas.getBoundingClientRect();
-        const mx = ev.clientX - rect.left;
-        const my = ev.clientY - rect.top;
-        let near: { comp: string; term: "a" | "b" } | null = null;
-        let nearD = 52; // piksel — ulash masofasi
-        for (const c of compRef.current) {
-          const node = compGroup.children.find((ch) => ch.userData?.id === c.id);
-          if (!node) continue;
-          for (const tn of ["a", "b"] as const) {
-            const tObj = node.getObjectByName(`term-${tn}`);
-            if (!tObj) continue;
-            const wp = tObj.getWorldPosition(new THREE.Vector3()).project(handle.camera);
-            const sx = (wp.x * 0.5 + 0.5) * rect.width;
-            const sy = (-wp.y * 0.5 + 0.5) * rect.height;
-            const d = Math.hypot(sx - mx, sy - my);
-            if (d < nearD) {
-              nearD = d;
-              near = { comp: c.id, term: tn };
-            }
-          }
-        }
-        const termHit = hit.userData?.kind === "terminal" ? { comp: ud.id, term: hit.userData.term as "a" | "b" } : near;
+        // 🟢 SIM ULASH — faqat TERMINALNING O'ZIGA bosilganda (katta urish zonasi bor).
+        // Qolgan joyga bosilganda qurilma TANLANADI (nomi + Siljitish) — avvalgi xato shu edi.
+        const termHit = hit.userData?.kind === "terminal" ? { comp: ud.id, term: hit.userData.term as "a" | "b" } : null;
         if (termHit) {
           const term = termHit.term;
           const compId = termHit.comp;

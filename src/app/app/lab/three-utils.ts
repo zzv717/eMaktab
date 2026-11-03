@@ -162,6 +162,7 @@ export function attachPointer(handle: SceneHandle, canvas: HTMLCanvasElement, op
   const ptr = new THREE.Vector2();
   const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
   let dragging = false;
+  let dragTarget: THREE.Object3D | null = null;
   let downX = 0;
   let downY = 0;
   let moved = 0;
@@ -204,9 +205,17 @@ export function attachPointer(handle: SceneHandle, canvas: HTMLCanvasElement, op
         o = o.parent;
       }
     }
-    const dragObj = opts.moveRef.current;
-    if (dragObj && onMoveTarget) {
+    // 🖐 TO'G'RIDAN-TO'G'RI SUDRASH — obyektning o'zini bossa-yu sursa, u siljiydi.
+    // Kamera faqat BO'SH JOYdan surilganda aylanadi. "Siljitish" tugmasi ham ishlaydi.
+    const dragObj =
+      opts.moveRef.current && onMoveTarget
+        ? opts.moveRef.current
+        : root && root.userData?.kind
+          ? (root.userData.pickRoot as THREE.Object3D | undefined) ?? root
+          : null;
+    if (dragObj) {
       dragging = true;
+      dragTarget = dragObj;
       // 🔒 obyekt siltayotganda KAMERA harakatlanmasligi uchun
       handle.controls.enabled = false;
       const hitPt = new THREE.Vector3();
@@ -217,12 +226,12 @@ export function attachPointer(handle: SceneHandle, canvas: HTMLCanvasElement, op
   };
   const onMove = (ev: PointerEvent) => {
     moved = Math.max(moved, Math.abs(ev.clientX - downX) + Math.abs(ev.clientY - downY));
-    if (!dragging || !opts.moveRef.current) return;
+    if (!dragging || !dragTarget) return;
     toNdc(ev);
-    const hit = new THREE.Vector3();
-    if (ray.ray.intersectPlane(plane, hit)) {
-      opts.moveRef.current.position.x = THREE.MathUtils.clamp(hit.x + offset.x, -8.5, 8.5);
-      opts.moveRef.current.position.z = THREE.MathUtils.clamp(hit.z + offset.z, -4.5, 5);
+    const hitPt = new THREE.Vector3();
+    if (ray.ray.intersectPlane(plane, hitPt)) {
+      dragTarget.position.x = THREE.MathUtils.clamp(hitPt.x + offset.x, -9.5, 9.5);
+      dragTarget.position.z = THREE.MathUtils.clamp(hitPt.z + offset.z, -5, 5.5);
     }
   };
   const onUp = (ev: PointerEvent) => {
@@ -230,6 +239,7 @@ export function attachPointer(handle: SceneHandle, canvas: HTMLCanvasElement, op
       dragging = false;
       handle.controls.enabled = true; // 🔓 kamera qayta yoqiladi
       if (opts.moveRef.current) opts.onMoveEnd?.(opts.moveRef.current);
+      dragTarget = null;
       return;
     }
     if (moved < 8) {

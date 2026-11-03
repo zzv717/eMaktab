@@ -202,8 +202,10 @@ const sub = (n: number) => (n <= 1 ? "" : String(n).split("").map((d) => SUB[Num
  * Na(+1) + Cl(−1) → NaCl ; Mg(+2) + O(−2) → MgO ; Na(+1) + O(−2) → Na₂O
  */
 export function binaryFormula(a: Element118, b: Element118): string {
-  const metal = a.cat === "metall" ? a : b;
-  const nonmetal = a.cat === "metall" ? b : a;
+  // Kation (oldin yoziladigan element): metall > yarim > metallmas; teng bo'lsa — kichik tartib raqami
+  const score = (e: Element118) => (e.cat === "metall" ? 0 : e.cat === "yarim" ? 1 : 2);
+  const metal = score(a) < score(b) || (score(a) === score(b) && a.num < b.num) ? a : b;
+  const nonmetal = metal === a ? b : a;
   const va = Math.max(1, metal.valence);
   const vb = Math.max(1, nonmetal.valence);
   const g = (x: number, y: number): number => (y === 0 ? x : g(y, x % y));
@@ -382,10 +384,23 @@ export function simulate(contents: VesselContent[], baseTemp = 20): SimResult {
     return k === "element" || k === "metal" ? e : null;
   };
   const metalEls = ids.map(asElem).filter((e): e is Element118 => !!e && e.cat === "metall" && e.valence > 0);
-  const nonmetalEls = ids.map(asElem).filter((e): e is Element118 => !!e && (e.cat === "metallmas" || e.cat === "yarim") && e.valence > 0 && e.id !== "h");
+  // BARCHA elementlar juftlasha oladi: metall+metallmas, H + Cl → HCl va h.k. (nobil gazlar bundan mustasno)
+  const allEls = ids.map(asElem).filter((e): e is Element118 => !!e && e.cat !== "nobil" && e.valence > 0);
   const synthPairs: Array<[Element118, Element118]> = [];
-  for (const m of metalEls) for (const n of nonmetalEls) synthPairs.push([m, n]);
-  for (const [m, n] of synthPairs.slice(0, 3)) {
+  for (let i = 0; i < allEls.length; i++) {
+    for (let j = i + 1; j < allEls.length; j++) {
+      synthPairs.push([allEls[i], allEls[j]]);
+    }
+  }
+  // metall + metallmas birinchi, so'ng qolganlari (masalan H + Cl)
+  synthPairs.sort((x, y) => {
+    const rank = (p: [Element118, Element118]) => (p[0].cat === "metall" || p[1].cat === "metall" ? 0 : 1);
+    return rank(x) - rank(y);
+  });
+  const pairScore = (e: Element118) => (e.cat === "metall" ? 0 : e.cat === "yarim" ? 1 : 2);
+  for (const [x, y] of synthPairs.slice(0, 3)) {
+    // tenglama chap tomoni formuladagi tartibda (Na + Cl → NaCl)
+    const [m, n] = pairScore(x) < pairScore(y) || (pairScore(x) === pairScore(y) && x.num < y.num) ? [x, y] : [y, x];
     const f = binaryFormula(m, n);
     hodisalar.push({
       text: `⚡ SINTEZ reaksiyasi — ${f} hosil bo'ldi! (${m.symbol} + ${n.symbol})`,
