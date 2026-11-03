@@ -5,6 +5,10 @@ import { and, eq, inArray, ne } from "drizzle-orm";
 import { db } from "@/db";
 import { botMessages } from "@/db/schema";
 
+// ⚠️ Vercel IPv6 chiqishi ishlamagani uchun Telegram API ga IPv4 orqali boramiz
+import { setDefaultResultOrder } from "dns";
+setDefaultResultOrder("ipv4first");
+
 const API_BASE = "https://api.telegram.org";
 
 // ---------------------------------------------------------------------------
@@ -102,7 +106,55 @@ async function callTelegram<T = unknown>(method: string, payload: Record<string,
     }
     if (attempt === 0) await new Promise((r) => setTimeout(r, 1200));
   }
+  // IPv6 muammosi bo'lsa — IPv4 orqali majbur urinamiz (avtomatik tuzalish)
+  try {
+    return await callTelegramIpv4<T>(method, payload);
+  } catch {
+    /* IPv4 ham ishlamadi */
+  }
   throw new Error(`Telegram API error on ${method}: ${lastError}`);
+}
+
+/**
+ * IPv4 majbur fallback — Vercel IPv6 orqali osilganda ishlatiladi.
+ * node:https + family: 4 bilan to'g'ridan-to'g'ri so'rov.
+ */
+export async function callTelegramIpv4<T = unknown>(
+  method: string,
+  payload: Record<string, unknown>,
+): Promise<T> {
+  const https = await import("https");
+  const token = getToken();
+  const body = JSON.stringify(payload);
+  return new Promise<T>((resolve, reject) => {
+    const req = https.request(
+      {
+        hostname: "api.telegram.org",
+        path: `/bot${token}/${method}`,
+        method: "POST",
+        family: 4,
+        headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) },
+        timeout: 15000,
+      },
+      (res) => {
+        let data = "";
+        res.on("data", (c) => (data += c));
+        res.on("end", () => {
+          try {
+            const json = JSON.parse(data) as { ok: boolean; result?: T; description?: string };
+            if (json.ok) resolve(json.result as T);
+            else reject(new Error(`Telegram API error on ${method}: ${json.description ?? res.statusCode}`));
+          } catch {
+            reject(new Error(`Telegram API error on ${method}: JSON o'qilmadi (${res.statusCode})`));
+          }
+        });
+      },
+    );
+    req.on("timeout", () => req.destroy(new Error("timeout")));
+    req.on("error", (e) => reject(new Error(`Telegram API error on ${method}: ${e.message}`)));
+    req.write(body);
+    req.end();
+  });
 }
 
 /** Rasm yuboradi (manzil yoki file_id) — captcha rasmlari uchun. */

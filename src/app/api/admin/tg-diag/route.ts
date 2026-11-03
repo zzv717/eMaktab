@@ -35,11 +35,21 @@ export async function GET(req: NextRequest) {
   }
   const getMe = await rawCall("getMe");
   const hookInfo = await rawCall("getWebhookInfo");
+  // IPv4 majbur yo'l bilan ham sinab ko'ramiz
+  let getMeV4: unknown;
+  try {
+    const { callTelegramIpv4 } = await import("@/lib/telegram");
+    const r = await callTelegramIpv4("getMe", {});
+    getMeV4 = { ok: true, username: (r as { username?: string }).username };
+  } catch (e) {
+    getMeV4 = { ok: false, error: e instanceof Error ? e.message.slice(0, 160) : String(e) };
+  }
   return NextResponse.json({
     ok: true,
     tokenSet: Boolean(process.env.TELEGRAM_BOT_TOKEN),
     appUrl: process.env.APP_URL ?? "",
     getMe,
     hookInfo,
+    getMeV4,
   });
 }
