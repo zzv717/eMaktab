@@ -4,8 +4,8 @@
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { SPECIMENS, type Specimen } from "./engine";
-import { attachFrameHooks, benchTop, createScene, glassMaterial, type SceneHandle } from "./three-utils";
-import { StageBox, labChip, type CatalogItem } from "./StageBox";
+import { attachFrameHooks, attachPointer, benchTop, createScene, glassMaterial, type SceneHandle } from "./three-utils";
+import { CameraPad, PickCard, StageBox, labChip, type CatalogItem, type PickInfo } from "./StageBox";
 import SpecimenView from "./SpecimenView";
 
 type Stage = 0 | 1 | 2 | 3 | 4;
@@ -20,9 +20,16 @@ export default function PrepLab() {
   const [focus, setFocus] = useState(0.72);
   const [light, setLight] = useState(0.7);
   const [log, setLog] = useState<string[]>([]);
-  const stateRef = useRef({ stage: 0, hasSpecimen: false });
+  const [pickInfo, setPickInfo] = useState<PickInfo | null>(null);
+  const handleRef = useRef<SceneHandle | null>(null);
+  const [moving, setMoving] = useState(false);
+  const moveRef = useRef<THREE.Object3D | null>(null);
+  const cutAnimRef = useRef<{ t0: number } | null>(null);
+  const knifeRef = useRef<THREE.Group | null>(null);
+  const sliceRef = useRef<THREE.Mesh | null>(null);
+  const stateRef = useRef({ stage: 0, hasSpecimen: false, specimenX: -1.2 });
   const rebuildRef = useRef<((s: Specimen | null, cut: boolean) => void) | null>(null);
-  stateRef.current = { stage, hasSpecimen: Boolean(specimen) };
+  stateRef.current = { stage, hasSpecimen: Boolean(specimen), specimenX: -1.2 };
 
   const push = (l: string) => setLog((x) => [l, ...x].slice(0, 20));
 
@@ -31,6 +38,7 @@ export default function PrepLab() {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const handle = createScene(canvas, { camZ: 9.5 });
+    handleRef.current = handle;
     handle.scene.add(benchTop(14, 9));
 
     // mikroskop
@@ -71,6 +79,7 @@ export default function PrepLab() {
 
     // pichoqcha
     const knife = new THREE.Group();
+    knifeRef.current = knife;
     const handleM = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.22, 0.34), new THREE.MeshStandardMaterial({ color: "#7c4a2d", roughness: 0.6 }));
     const blade = new THREE.Mesh(new THREE.BoxGeometry(1.15, 0.055, 0.42), new THREE.MeshStandardMaterial({ color: "#cbd5e1", metalness: 0.85, roughness: 0.18 }));
     blade.position.x = 1.15;
@@ -99,6 +108,13 @@ export default function PrepLab() {
     stain.userData = { kind: "stain" };
     stain.traverse((o) => (o.userData.pickRoot = stain));
     handle.scene.add(stain);
+
+    // kesilgan tilim (animatsiyada tushadi)
+    const slice = new THREE.Mesh(new THREE.BoxGeometry(0.85, 0.16, 0.6), new THREE.MeshStandardMaterial({ color: "#d98cc8", roughness: 0.55 }));
+    slice.visible = false;
+    slice.position.set(-1.2, 1.2, 1.1);
+    handle.scene.add(slice);
+    sliceRef.current = slice;
 
     const rebuildSpec = (spec: Specimen | null, cut: boolean) => {
       while (specGroup.children.length) {
@@ -138,39 +154,78 @@ export default function PrepLab() {
         specGroup.add(root);
       }
       specGroup.position.set(-1.2, 0, 1.1);
+      if (sliceRef.current) {
+        (sliceRef.current.material as THREE.MeshStandardMaterial).color.set(color);
+        sliceRef.current.visible = cut;
+        sliceRef.current.position.set(-0.15, 0.28, 1.35);
+        sliceRef.current.rotation.set(0, 0.5, 0);
+      }
     };
     rebuildSpec(null, false);
     rebuildRef.current = rebuildSpec;
 
-    const ray = new THREE.Raycaster();
-    const ptr = new THREE.Vector2();
-    const onClick = (ev: MouseEvent) => {
-      const rect = canvas.getBoundingClientRect();
-      ptr.x = ((ev.clientX - rect.left) / rect.width) * 2 - 1;
-      ptr.y = -((ev.clientY - rect.top) / rect.height) * 2 + 1;
-      ray.setFromCamera(ptr, handle.camera);
-      const hits = ray.intersectObjects(handle.scene.children, true);
-      for (const h of hits) {
-        let o: THREE.Object3D | null = h.object;
-        while (o && !o.userData?.kind) o = o.parent;
-        if (!o) continue;
-        window.dispatchEvent(new CustomEvent("prep-tap", { detail: o.userData.kind }));
-        return;
-      }
-    };
-    canvas.addEventListener("click", onClick);
+    // bosish/siljitish
+    const detachPointer = attachPointer(handle, canvas, {
+      getRoots: () => [specGroup, knife, slide, stain, micro],
+      moveRef,
+      onPick: (root) => {
+        const kind = root.userData.kind as string;
+        const labels: Record<string, PickInfo> = {
+          specimen: { icon: "🧫", label: "Namuna", desc: "Pichoqcha bilan kesiladi" },
+          knife: { icon: "🔪", label: "Pichoqcha", desc: "Namunani kesish uchun" },
+          slide: { icon: "🧫", label: "Preparat shishasi", desc: "Kesilgan namuna shu yerga qo'yiladi" },
+          stain: { icon: "💧", label: "Bo'yovchi", desc: "Namunani bo'yash uchun" },
+          microscope: { icon: "🔬", label: "Mikroskop", desc: "Preparatni ko'rish uchun" },
+        };
+        setPickInfo(labels[kind] ?? null);
+        window.dispatchEvent(new CustomEvent("prep-tap", { detail: kind }));
+      },
+    });
 
     const stop = attachFrameHooks(handle, [
       (t) => {
-        knife.rotation.y = -0.5 + Math.sin(t * 0.8) * 0.12;
+        const idle = !cutAnimRef.current;
+        if (idle) {
+          knife.rotation.y = -0.5 + Math.sin(t * 0.8) * 0.12;
+          knife.position.x += (-3.6 - knife.position.x) * 0.04;
+          knife.position.y += (0.45 - knife.position.y) * 0.04;
+        }
         micro.rotation.y = Math.sin(t * 0.22) * 0.16;
+        // 🔪 KESISH ANIMATSIYASI — pichoq ko'tariladi, tushadi, tilim qulaydi
+        const cut = cutAnimRef.current;
+        if (cut) {
+          const e = t - cut.t0;
+          const sp = stateRef.current.specimenX ?? -1.2;
+          if (e < 0.5) {
+            const k = e / 0.5;
+            knife.position.x = -3.6 + (sp + 0.45 + 3.6) * k;
+            knife.position.y = 0.45 + 1.75 * k;
+            knife.rotation.y = -0.5;
+          } else if (e < 0.85) {
+            const k = (e - 0.5) / 0.35;
+            knife.position.y = 2.2 - 1.85 * k;
+            knife.rotation.y = -0.5;
+          } else if (e < 1.7) {
+            const k = (e - 0.85) / 0.85;
+            const sl = sliceRef.current;
+            if (sl && sl.visible) {
+              sl.position.x = -0.15 - k * 1.15;
+              sl.position.y = Math.max(0.28, 1.15 - k * 1.35);
+              sl.rotation.z = k * 1.35;
+            }
+            knife.position.y = 0.35 + k * 0.6;
+          } else {
+            cutAnimRef.current = null;
+          }
+        }
       },
     ]);
 
     return () => {
       stop();
-      canvas.removeEventListener("click", onClick);
+      detachPointer();
       handle.dispose();
+      handleRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -203,8 +258,9 @@ export default function PrepLab() {
   };
   const doCut = () => {
     if (!specimen || stage !== 0) return;
+    cutAnimRef.current = { t0: performance.now() / 1000 };
     setStage(1);
-    push(`🔪 ${specimen.name} dan pichoqcha bilan yupqa qatlam kesildi`);
+    push(`🔪 ${specimen.name} dan pichoqcha bilan yupqa qatlam kesildi (animatsiya!)`);
   };
   const doStain = () => {
     if (!specimen || stage !== 1) return;
@@ -242,9 +298,32 @@ export default function PrepLab() {
 
   return (
     <StageBox title="🧫 Namuna tayyorlash va mikroskop" catalog={catalog} onAdd={handleAdd}>
-      <canvas ref={canvasRef} className="h-[290px] w-full rounded-2xl bg-slate-100" />
+      <div className="relative">
+        <canvas ref={canvasRef} className="lab-canvas h-[290px] w-full rounded-2xl bg-slate-100" />
+        <CameraPad handleRef={handleRef} />
+        <PickCard
+          info={pickInfo}
+          moving={moving}
+          onMove={() => {
+            const kind = pickInfo?.label ?? "";
+            const root =
+              kind === "Pichoqcha" ? knifeRef.current : kind === "Namuna" ? null : null;
+            // barcha asboblar siljitiladi (soddalik uchun pichoqcha/namuna)
+            const target = root ?? knifeRef.current;
+            if (target) {
+              moveRef.current = moving ? null : target;
+              setMoving(!moving);
+            }
+          }}
+          onClose={() => {
+            setPickInfo(null);
+            moveRef.current = null;
+            setMoving(false);
+          }}
+        />
+      </div>
       <p className="px-1 pb-1 pt-1.5 text-center text-xs text-slate-400">
-        🖐 Pichoqcha, namuna, bo'yovchi va mikroskopni <b>bosing</b> — qo'l bilan bajaring
+        🖐 Asbobni <b>bosing</b> — nomi chiqadi · 🔀 Siljitish bilan joylashtiring · 🎮 joystik — atrofni ko'rish
       </p>
 
       {/* Bosqichlar */}

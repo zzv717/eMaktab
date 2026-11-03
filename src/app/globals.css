@@ -1,1 +1,6 @@
 @import "tailwindcss";
+
+/* 🧪 Laboratoriya — to'liq ekranda 3D kanvas kattalashadi (sahna qayta yaratilmaydi) */
+.lab-fullscreen .lab-canvas {
+  height: min(58vh, 560px) !important;
+}

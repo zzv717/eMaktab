@@ -1,13 +1,20 @@
-// 🖥 Ish stoli konteyneri — to'liq ekran + "+" katalog (fanga qarab qidirib qo'shish)
+// 🖥 Ish stoli konteyneri — to'liq ekran + "+" katalog + joystik kamera + tanlash/siljitish
 "use client";
 
-import { useMemo, useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode, type RefObject } from "react";
+import { orbitBy, type SceneHandle } from "./three-utils";
 
 export interface CatalogItem {
   id: string;
   icon: string;
   name: string;
   group: string;
+  desc?: string;
+}
+
+export interface PickInfo {
+  icon: string;
+  label: string;
   desc?: string;
 }
 
@@ -63,7 +70,7 @@ export function StageBox({
   );
 
   const catalogSheet = cat && (
-    <div className="absolute inset-0 z-[80] flex items-end" onClick={() => setCat(false)}>
+    <div className="fixed inset-0 z-[90] flex items-end" onClick={() => setCat(false)}>
       <div className="absolute inset-0 bg-slate-950/45" />
       <div
         className="relative max-h-[72%] w-full overflow-y-auto rounded-t-3xl bg-white p-4 shadow-2xl"
@@ -88,9 +95,7 @@ export function StageBox({
               {items.map((it) => (
                 <button
                   key={it.id}
-                  onClick={() => {
-                    onAdd(it.id);
-                  }}
+                  onClick={() => onAdd(it.id)}
                   className="rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-left text-sm transition hover:border-teal-600 hover:bg-teal-50 active:scale-[0.97]"
                 >
                   <span className="text-base">{it.icon}</span> <span className="font-medium text-slate-800">{it.name}</span>
@@ -104,27 +109,82 @@ export function StageBox({
     </div>
   );
 
-  if (fs) {
-    return (
-      <div className="fixed inset-0 z-[70] flex flex-col bg-slate-950/95 p-3">
-        <div className="rounded-2xl bg-white/95 p-2.5">{header}</div>
-        <div className="relative mt-2 min-h-0 flex-1 overflow-y-auto">
-          <div className="flex min-h-full flex-col gap-2.5">{children}</div>
-          {catalogSheet}
-        </div>
-        {toolbar && <div className="mt-2 rounded-2xl bg-white/95 p-2">{toolbar}</div>}
-      </div>
-    );
-  }
-
+  // MUHIM: bir xil JSX daraxti — kengaytirishda sahna qayta yaratilmaydi (3D saqlanadi)
   return (
-    <div className="relative">
-      <div className="rounded-3xl bg-white p-3 shadow-[0_12px_36px_rgba(15,23,42,0.08)]">
+    <>
+      <div
+        className={
+          fs
+            ? "fixed inset-0 z-[70] flex flex-col bg-slate-950/95 p-2.5"
+            : "relative rounded-3xl bg-white p-3 shadow-[0_12px_36px_rgba(15,23,42,0.08)]"
+        }
+      >
         {header}
-        <div className="mt-2">{children}</div>
+        <div className={fs ? "lab-fullscreen mt-2 min-h-0 flex-1 overflow-y-auto" : "mt-2"}>{children}</div>
         {toolbar && <div className="mt-2">{toolbar}</div>}
       </div>
       {catalogSheet}
+    </>
+  );
+}
+
+/** Tanlangan obyekt kartochkasi — nomi + '🔀 Siljitish' tugmasi. */
+export function PickCard({
+  info,
+  moving,
+  onMove,
+  onClose,
+  extra,
+}: {
+  info: PickInfo | null;
+  moving: boolean;
+  onMove: () => void;
+  onClose: () => void;
+  extra?: ReactNode;
+}) {
+  if (!info) return null;
+  return (
+    <div className="absolute bottom-2 left-2 right-2 z-20 flex items-center gap-2 rounded-2xl border border-slate-200 bg-white/95 px-3 py-2 shadow-xl">
+      <span className="text-xl">{info.icon}</span>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm font-semibold text-slate-900">{info.label}</p>
+        {info.desc && <p className="truncate text-[11px] text-slate-500">{info.desc}</p>}
+      </div>
+      {extra}
+      <button
+        onClick={onMove}
+        className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-bold active:scale-95 ${moving ? "bg-amber-500 text-white" : "bg-amber-50 text-amber-700"}`}
+      >
+        {moving ? "🖐 Siljitilmoqda…" : "🔀 Siljitish"}
+      </button>
+      <button onClick={onClose} className="shrink-0 rounded-full bg-slate-100 px-2.5 py-1.5 text-xs text-slate-500">
+        ✕
+      </button>
+    </div>
+  );
+}
+
+/** 🎮 Joystik — kamerani atrofni aylantirib ko'rish uchun. */
+export function CameraPad({ handleRef }: { handleRef: RefObject<SceneHandle | null> }) {
+  const go = (o: Parameters<typeof orbitBy>[1]) => () => orbitBy(handleRef.current, o);
+  const b = "h-9 w-9 rounded-full bg-slate-800/85 text-sm font-bold text-white active:scale-90 disabled:opacity-40";
+  return (
+    <div className="pointer-events-auto absolute bottom-2 right-2 z-10 flex items-end gap-2">
+      <div className="grid grid-cols-3 gap-1">
+        <span />
+        <button className={b} onClick={go({ dPolar: -0.18 })}>▲</button>
+        <span />
+        <button className={b} onClick={go({ dAz: -0.28 })}>◀</button>
+        <button className={b} onClick={go({ reset: true })}>⌂</button>
+        <button className={b} onClick={go({ dAz: 0.28 })}>▶</button>
+        <span />
+        <button className={b} onClick={go({ dPolar: 0.18 })}>▼</button>
+        <span />
+      </div>
+      <div className="flex flex-col gap-1">
+        <button className={b} onClick={go({ zoom: 0.82 })}>➕</button>
+        <button className={b} onClick={go({ zoom: 1.22 })}>➖</button>
+      </div>
     </div>
   );
 }

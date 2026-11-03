@@ -1,6 +1,7 @@
 // 🧊 Uch o'lchamli sahna yordamchilari — Laboratoriya bo'limi uchun
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 
 export interface SceneHandle {
   scene: THREE.Scene;
@@ -16,30 +17,45 @@ export function createScene(canvas: HTMLCanvasElement, opts?: { camZ?: number; b
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.05;
 
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(opts?.bg ?? "#eef2f7");
+  scene.background = new THREE.Color(opts?.bg ?? "#e8eef4");
+  // haqiqiy xona yorug'ligi — metall/shisha akslari real ko'rinadi
+  try {
+    const pmrem = new THREE.PMREMGenerator(renderer);
+    scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+  } catch {
+    /* muhit kerak emas — oddiy yorug'lik yetarli */
+  }
 
-  const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
-  camera.position.set(0, 2.6, opts?.camZ ?? 7.5);
+  const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 120);
+  camera.position.set(0, 3, opts?.camZ ?? 7.5);
 
   const controls = new OrbitControls(camera, canvas);
   controls.enableDamping = true;
   controls.dampingFactor = 0.08;
   controls.maxPolarAngle = Math.PI * 0.56;
   controls.minDistance = 3;
-  controls.maxDistance = 16;
+  controls.maxDistance = 20;
   controls.target.set(0, 1, 0);
+  // barmoq: 1 tasi = aylantirish, 2 tasi = yaqinlashtirish
+  controls.touches = { ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN };
 
-  const hemi = new THREE.HemisphereLight(0xffffff, 0x8899aa, 1.05);
+  canvas.style.touchAction = "none";
+
+  const hemi = new THREE.HemisphereLight(0xffffff, 0x9aa7b5, 0.85);
   scene.add(hemi);
-  const key = new THREE.DirectionalLight(0xffffff, 1.5);
-  key.position.set(5, 9, 6);
+  const key = new THREE.DirectionalLight(0xffffff, 1.65);
+  key.position.set(6, 10, 7);
   key.castShadow = true;
   key.shadow.mapSize.set(1024, 1024);
+  key.shadow.camera.near = 1;
+  key.shadow.camera.far = 30;
   scene.add(key);
-  const fill = new THREE.DirectionalLight(0xcfe8ff, 0.5);
-  fill.position.set(-6, 4, -4);
+  const fill = new THREE.DirectionalLight(0xcfe8ff, 0.45);
+  fill.position.set(-7, 5, -5);
   scene.add(fill);
 
   const resize = () => {
@@ -69,12 +85,130 @@ export function createScene(canvas: HTMLCanvasElement, opts?: { camZ?: number; b
       const mesh = obj as THREE.Mesh;
       if (mesh.geometry) mesh.geometry.dispose();
       const mats = Array.isArray(mesh.material) ? mesh.material : mesh.material ? [mesh.material] : [];
-      for (const m of mats) m.dispose();
+      for (const m of mats) {
+        const mat = m as THREE.MeshStandardMaterial;
+        if (mat.map) mat.map.dispose();
+        m.dispose();
+      }
     });
     renderer.dispose();
   };
 
   return { scene, camera, renderer, controls, dispose };
+}
+
+/** Joystik/tugmalar uchun kamerani siljitish. */
+export function orbitBy(
+  handle: SceneHandle | null,
+  opts: { dAz?: number; dPolar?: number; zoom?: number; reset?: boolean },
+) {
+  if (!handle) return;
+  const { camera, controls } = handle;
+  const target = controls.target;
+  const off = camera.position.clone().sub(target);
+  const sph = new THREE.Spherical().setFromVector3(off);
+  if (opts.reset) {
+    sph.set(10.5, Math.PI / 3.1, 0);
+  } else {
+    sph.theta += opts.dAz ?? 0;
+    sph.phi = Math.max(0.25, Math.min(Math.PI * 0.55, sph.phi + (opts.dPolar ?? 0)));
+    sph.radius = Math.max(controls.minDistance, Math.min(controls.maxDistance, sph.radius * (opts.zoom ?? 1)));
+  }
+  camera.position.copy(target).add(new THREE.Vector3().setFromSpherical(sph));
+  camera.lookAt(target);
+  controls.update();
+}
+
+export interface PointerOpts {
+  /** tanlanuvchi obyektlar ildizlari */
+  getRoots: () => THREE.Object3D[];
+  /** siljitilayotgan obyekt (null = siljitish rejimi emas) */
+  moveRef: { current: THREE.Object3D | null };
+  /** bosilganda (siljitmasdan) — nomini ko'rsatish uchun (root, urilgan qism) */
+  onPick: (root: THREE.Object3D, hit: THREE.Object3D) => void;
+  /** siljitish boshlanganda/tugaganda */
+  onMoveEnd?: (root: THREE.Object3D) => void;
+}
+
+/**
+ * Bosib tanlash + sudrab siljitish (qo'l bilan boshqarish).
+ * - Qisqa bosish → onPick (obyekt nomi chiqadi)
+ * - Siljitish rejimida sudrash → obyekt ish stolida ko'chadi
+ */
+export function attachPointer(handle: SceneHandle, canvas: HTMLCanvasElement, opts: PointerOpts) {
+  const ray = new THREE.Raycaster();
+  const ptr = new THREE.Vector2();
+  const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+  let dragging = false;
+  let downX = 0;
+  let downY = 0;
+  let moved = 0;
+  const offset = new THREE.Vector3();
+
+  const toNdc = (ev: PointerEvent) => {
+    const rect = canvas.getBoundingClientRect();
+    ptr.x = ((ev.clientX - rect.left) / rect.width) * 2 - 1;
+    ptr.y = -((ev.clientY - rect.top) / rect.height) * 2 + 1;
+    ray.setFromCamera(ptr, handle.camera);
+  };
+  const pickRoot = (ev: PointerEvent): THREE.Object3D | null => {
+    toNdc(ev);
+    const hits = ray.intersectObjects(opts.getRoots(), true);
+    if (hits.length === 0) return null;
+    let o: THREE.Object3D | null = hits[0].object;
+    while (o && !o.userData?.kind) o = o.parent;
+    return o;
+  };
+
+  const onDown = (ev: PointerEvent) => {
+    downX = ev.clientX;
+    downY = ev.clientY;
+    moved = 0;
+    const root = pickRoot(ev);
+    if (root && opts.moveRef.current && root === opts.moveRef.current) {
+      dragging = true;
+      const hit = new THREE.Vector3();
+      ray.ray.intersectPlane(plane, hit);
+      offset.copy(root.position).sub(hit);
+      canvas.setPointerCapture(ev.pointerId);
+    }
+  };
+  const onMove = (ev: PointerEvent) => {
+    moved = Math.max(moved, Math.abs(ev.clientX - downX) + Math.abs(ev.clientY - downY));
+    if (!dragging || !opts.moveRef.current) return;
+    toNdc(ev);
+    const hit = new THREE.Vector3();
+    if (ray.ray.intersectPlane(plane, hit)) {
+      opts.moveRef.current.position.x = THREE.MathUtils.clamp(hit.x + offset.x, -8.5, 8.5);
+      opts.moveRef.current.position.z = THREE.MathUtils.clamp(hit.z + offset.z, -4.5, 5);
+    }
+  };
+  const onUp = (ev: PointerEvent) => {
+    if (dragging) {
+      dragging = false;
+      if (opts.moveRef.current) opts.onMoveEnd?.(opts.moveRef.current);
+      return;
+    }
+    if (moved < 8) {
+      toNdc(ev);
+      const hits = ray.intersectObjects(opts.getRoots(), true);
+      if (hits.length === 0) return;
+      let o: THREE.Object3D | null = hits[0].object;
+      while (o && !o.userData?.kind) o = o.parent;
+      if (o) opts.onPick(o, hits[0].object);
+    }
+  };
+
+  canvas.addEventListener("pointerdown", onDown);
+  canvas.addEventListener("pointermove", onMove);
+  canvas.addEventListener("pointerup", onUp);
+  canvas.addEventListener("pointercancel", onUp);
+  return () => {
+    canvas.removeEventListener("pointerdown", onDown);
+    canvas.removeEventListener("pointermove", onMove);
+    canvas.removeEventListener("pointerup", onUp);
+    canvas.removeEventListener("pointercancel", onUp);
+  };
 }
 
 /** Shaffof shisha materiali (idishlar uchun). */
@@ -83,10 +217,12 @@ export function glassMaterial(color = "#cfe8f2", opacity = 0.28): THREE.MeshPhys
     color,
     transparent: true,
     opacity,
-    roughness: 0.12,
+    roughness: 0.08,
     metalness: 0,
-    transmission: 0.55,
-    thickness: 0.4,
+    transmission: 0.6,
+    thickness: 0.35,
+    ior: 1.45,
+    envMapIntensity: 1.2,
     side: THREE.DoubleSide,
   });
 }
@@ -96,11 +232,11 @@ export function liquidMaterial(color: string): THREE.MeshStandardMaterial {
   return new THREE.MeshStandardMaterial({
     color: new THREE.Color(color),
     transparent: true,
-    opacity: 0.88,
-    roughness: 0.25,
+    opacity: 0.9,
+    roughness: 0.18,
     metalness: 0.02,
     emissive: new THREE.Color(color),
-    emissiveIntensity: 0.12,
+    emissiveIntensity: 0.1,
   });
 }
 
@@ -108,7 +244,7 @@ export function liquidMaterial(color: string): THREE.MeshStandardMaterial {
 export function benchTop(width = 14, depth = 9): THREE.Mesh {
   const bench = new THREE.Mesh(
     new THREE.BoxGeometry(width, 0.35, depth),
-    new THREE.MeshStandardMaterial({ color: "#8a6a4c", roughness: 0.75, metalness: 0.05 }),
+    new THREE.MeshStandardMaterial({ color: "#8a6a4c", roughness: 0.72, metalness: 0.05 }),
   );
   bench.position.y = -0.18;
   bench.receiveShadow = true;
