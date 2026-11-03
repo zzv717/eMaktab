@@ -5,8 +5,9 @@ import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { MEIOSIS, MITOSIS, ORGANELLES, type DivisionStage, type Organelle } from "./engine";
 import { attachFrameHooks, createScene, type SceneHandle } from "./three-utils";
+import PrepLab from "./PrepLab";
 
-type Mode = "cell" | "mitosis" | "meiosis";
+type Mode = "cell" | "prep" | "mitosis" | "meiosis";
 
 export default function BioLab() {
   const [mode, setMode] = useState<Mode>("cell");
@@ -16,6 +17,7 @@ export default function BioLab() {
         {(
           [
             ["cell", "🔬 Hujayra tuzilishi"],
+            ["prep", "🧫 Namuna + mikroskop"],
             ["mitosis", "🧬 Mitoz"],
             ["meiosis", "🧬 Meyoz"],
           ] as const
@@ -30,6 +32,7 @@ export default function BioLab() {
         ))}
       </div>
       {mode === "cell" && <CellLab />}
+      {mode === "prep" && <PrepLab />}
       {mode === "mitosis" && <DivisionLab stages={MITOSIS} meiosis={false} />}
       {mode === "meiosis" && <DivisionLab stages={MEIOSIS} meiosis={true} />}
     </div>

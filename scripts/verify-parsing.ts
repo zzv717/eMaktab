@@ -47,6 +47,7 @@ import {
 } from "../src/lib/emaktab";
 import {
   simulate,
+  simulateSteps,
   applyWires,
   solveCircuit,
   springPhysics,
@@ -54,6 +55,7 @@ import {
   MITOSIS,
   MEIOSIS,
   ORGANELLES,
+  SPECIMENS,
 } from "../src/app/app/lab/engine";
 import { decryptSecret, encryptSecret } from "../src/lib/crypto";
 import { formatDay, formatGrades, formatNews, formatWeek } from "../src/lib/format";
@@ -902,6 +904,78 @@ check("looksLikeName: ko'rish rad", !looksLikeName("Ko'rish"), true);
     "lab-biologiya: krossingover bor",
     MEIOSIS.some((m) => (m.name + " " + m.tavsif).toLowerCase().includes("krossingover")),
   );
+
+  // --- 🆕 Qo'l bilan boshqarish yangilanishi ---
+
+  // Kimyo: ketma-ketlik TARTIBI muhim (AlCl₃ + NaOH — amfoter)
+  const seqA = simulateSteps([
+    { reagentId: "alcl3", ml: 25 },
+    { reagentId: "naoh", ml: 20 },
+    { reagentId: "naoh", ml: 25 },
+  ]).steps.flatMap((x) => x.yangiHodisalar.map((h) => h.text));
+  const seqB = simulateSteps([
+    { reagentId: "naoh", ml: 45 },
+    { reagentId: "alcl3", ml: 25 },
+  ]).steps.flatMap((x) => x.yangiHodisalar.map((h) => h.text));
+  check("lab-kimyo: A tartibda cho'kma keyin eridi", seqA.some((t) => t.includes("cho'kma tushdi")) && seqA.some((t) => t.includes("ERIYDI")));
+  check("lab-kimyo: B tartibda darhol tiniq (farq bor!)", !seqB.some((t) => t.includes("cho'kma tushdi")));
+
+  // Kimyo: oltin yomg'ir (PbI₂) — issiqda eriydi
+  const gold = simulate([
+    { reagentId: "pbno32", ml: 25 },
+    { reagentId: "ki", ml: 25 },
+  ]);
+  check("lab-kimyo: PbI₂ oltin cho'kma", (gold.precipitate?.name ?? "").includes("PbI₂"));
+  const hotGold = simulate([{ reagentId: "pbno32", ml: 25 }, { reagentId: "ki", ml: 25 }], 60);
+  check("lab-kimyo: issiqda PbI₂ eriydi", hotGold.precipitate === null && hotGold.hodisalar.some((h) => h.text.includes("ISSIQDA ERIYDI")));
+
+  // Kimyo: mis kislota bilan reaksiyaga kirmaydi
+  const cuHcl = simulate([
+    { reagentId: "cu", ml: 5 },
+    { reagentId: "hcl", ml: 20 },
+  ]);
+  check("lab-kimyo: Cu + HCl — reaksiya yo'q", cuHcl.hodisalar.some((h) => h.text.includes("KIRMAYDI")) && cuHcl.gas === null);
+
+  // Fizika: nosozlik — ochiq zanjir ishlamaydi
+  const broken = solveCircuit([
+    { id: "bat", type: "battery", a: 1, b: 2, value: 9 },
+    { id: "bulb", type: "bulb", a: 2, b: 1, value: 6, fault: "open" },
+  ]);
+  check("lab-fizika: nosozlik (ochiq) — ishlamaydi", broken.ok === false);
+
+  // Fizika: o'lik batareya — tok yo'q
+  const dead = solveCircuit([
+    { id: "bat", type: "battery", a: 1, b: 2, value: 9, fault: "dead" },
+    { id: "bulb", type: "bulb", a: 2, b: 1, value: 6 },
+  ]);
+  check("lab-fizika: o'lik batareya — tok yo'q", dead.ok === true && dead.totalCurrent < 0.001);
+
+  // Fizika: LED teskari ulansa — yonmaydi
+  const rev = solveCircuit([
+    { id: "bat", type: "battery", a: 1, b: 2, value: 9 },
+    { id: "led", type: "led", a: 2, b: 1, value: 6 },
+  ]);
+  check("lab-fizika: LED teskari — yonmaydi", rev.ok === true && rev.ledReversed.led === true && (rev.brightness.led ?? 0) === 0);
+
+  // Fizika: qisqa tutashuv aniqlanadi
+  const shorted = solveCircuit([
+    { id: "bat", type: "battery", a: 1, b: 2, value: 12 },
+    { id: "r", type: "resistor", a: 2, b: 1, value: 0.1 },
+  ]);
+  check("lab-fizika: qisqa tutashuv ogohlantirishi", shorted.ok === false && (shorted.error ?? "").includes("Qisqa"));
+
+  // Biologiya: namunalar + mikroskop kontraktlari
+  check("lab-biologiya: namunalar ≥ 6", SPECIMENS.length >= 6);
+
+  // UI kontraktlari (yangilangan)
+  check("lab: StageBox — kengaytirish + qo'shish", src("app/app/lab/StageBox.tsx").includes("Kengaytirish") && src("app/app/lab/StageBox.tsx").includes("Qo'shish"));
+  check("lab-kimyo: ketma-ketlik jurnali", src("app/app/lab/ChemLab.tsx").includes("simulateSteps"));
+  check("lab-kimyo: isitish + aralashtirish", src("app/app/lab/ChemLab.tsx").includes("Isitish") && src("app/app/lab/ChemLab.tsx").includes("Aralashtirish"));
+  check("lab-fizika: nosozlik rejimi", src("app/app/lab/PhysLab.tsx").includes("Nosozlik rejimi"));
+  check("lab-fizika: ishga tushirish", src("app/app/lab/PhysLab.tsx").includes("Ishga tushirish"));
+  check("lab-fizika: tayyor loyihalar", src("app/app/lab/PhysLab.tsx").includes("Tayyor loyihalar"));
+  check("lab-biologiya: pichoqcha + mikroskop", src("app/app/lab/PrepLab.tsx").includes("Pichoqcha") && src("app/app/lab/PrepLab.tsx").includes("SpecimenView"));
+  check("lab-biologiya: mikroskop boshqaruvi", src("app/app/lab/PrepLab.tsx").includes("Kattalashtirish") && src("app/app/lab/PrepLab.tsx").includes("Fokus"));
 
   // UI kontraktlari
   check("lab: LabPanel mavjud", src("app/app/lab/LabPanel.tsx").includes("Kimyo") && src("app/app/lab/LabPanel.tsx").includes("Fizika") && src("app/app/lab/LabPanel.tsx").includes("Biologiya"));

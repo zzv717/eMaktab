@@ -31,7 +31,7 @@ export const REAGENTS: Reagent[] = [
   { id: "na2co3", name: "Natriy karbonat (soda)", formula: "Na₂CO₃", kind: "carbonate", strength: 0.5, color: "#f6fbff", info: "Kislotalar bilan CO₂ gazi ajratadi." },
   { id: "caco3", name: "Kalsiy karbonat (tosh ohak)", formula: "CaCO₃", kind: "carbonate", strength: 0.5, color: "#f7f7f2", info: "Tabiiy ohak toshi. Kislotalar bilan ko'piklanadi." },
   { id: "nacl", name: "Natriy xlorid eritmasi", formula: "NaCl", kind: "salt", strength: 0, color: "#f4fbff", ionColor: "#dfeaf2", info: "Osh tuzi eritmasi." },
-  { id: "agno3", name: "Kumush nitrat", formula: "AgNO₃", kind: "salt", strength: 0, color: "#f7f8fc", ionColor: "#e7e9f2", info: "Xlorid ionlari bilan oq cho'kma (AgCl) beradi." },
+  { id: "agno3", name: "Kumush nitrat", formula: "AgNO₃", kind: "salt", strength: 0.5, color: "#f7f8fc", ionColor: "#e7e9f2", info: "Xlorid ionlari bilan oq cho'kma (AgCl) beradi." },
   { id: "cuso4", name: "Mis sulfat eritmasi", formula: "CuSO₄", kind: "salt", strength: 0, color: "#4f9fe0", ionColor: "#3f8fd8", info: "Ko'k rangli tuz. Faol metallar bilan almashinish reaksiyasiga kirishadi." },
   { id: "fecl3", name: "Temir(III) xlorid", formula: "FeCl₃", kind: "salt", strength: 0, color: "#d9a23e", ionColor: "#c98f2e", info: "Sariq-qo'ng'ir rangli tuz." },
   { id: "fen", name: "Fenolftalein (indikator)", formula: "C₂₀H₁₄O₄", kind: "indicator", strength: 0, color: "#f2f6ff", info: "pH < 8.2 — rangsiz, pH > 8.2 — PUSHTI rang!" },
@@ -42,6 +42,11 @@ export const REAGENTS: Reagent[] = [
   { id: "mg", name: "Magniy metalli", formula: "Mg", kind: "metal", strength: 0, color: "#c9d2da", info: "Juda faol metall. Kislotalar bilan tez reaksiyaga kirishadi." },
   { id: "fe", name: "Temir parchasi", formula: "Fe", kind: "metal", strength: 0, color: "#8f9aa6", info: "Mis tuzlaridan misni siqib chiqaradi." },
   { id: "h2o", name: "Distillangan suv", formula: "H₂O", kind: "water", strength: 0, color: "#e9f5ff", info: "Sof suv — pH ≈ 7." },
+  { id: "alcl3", name: "Alyuminiy xlorid", formula: "AlCl₃", kind: "salt", strength: 0.5, color: "#f2f6fb", ionColor: "#e3ebf4", info: "Ikkita xossali (amfoter) — kam ishqorda oq cho'kma, ko'p ishqorda ERIYDI!" },
+  { id: "ki", name: "Kaliy yodid", formula: "KI", kind: "salt", strength: 0.5, color: "#f6f2ff", ionColor: "#ebe4fb", info: "Yodid ionlari — qo'rg'oshin bilan sariq cho'kma beradi." },
+  { id: "pbno32", name: "Qo'rg'oshin nitrat", formula: "Pb(NO₃)₂", kind: "salt", strength: 0.5, color: "#f7f8fc", ionColor: "#e9ebf3", info: "KI bilan PbI₂ — 'oltin yomg'ir' tajribasi (issiqda eriydi!)" },
+  { id: "cu", name: "Mis parchasi", formula: "Cu", kind: "metal", strength: 0, color: "#c97b4a", info: "Vodoroddan past — kislotalar bilan REAKSIYAGA KIRMAYDI (faollik qatori)." },
+  { id: "al", name: "Alyuminiy folga", formula: "Al", kind: "metal", strength: 0, color: "#c3ccd6", info: "Ishqorlarda erib, H₂ gazi ajratadi! Kislota bilan ham reaksiyaga kirishadi." },
 ];
 
 export const REAGENT_MAP: Record<string, Reagent> = Object.fromEntries(REAGENTS.map((r) => [r.id, r]));
@@ -118,8 +123,9 @@ export function simulate(contents: VesselContent[], baseTemp = 20): SimResult {
   else if (carbEq > 0 && acidEq === 0) ph = 8.4;
   else ph = 7;
 
-  // --- Gaz: kislota + karbonat → CO₂; kislota + faol metall → H₂
+  // --- Gaz: kislota + karbonat → CO₂; kislota/ishqor + faol metall → H₂
   let gas: SimResult["gas"] = null;
+  const alMl = ml("al");
   if (carbEq > 0 && acidEq > neutral) {
     gas = { name: "CO₂ (karbonat angidrid)" };
     hodisalar.push({ text: "CO₂ gazi ajralib chiqdi — kuchli ko'piklanish! 🫧", kind: "gas" });
@@ -127,9 +133,16 @@ export function simulate(contents: VesselContent[], baseTemp = 20): SimResult {
     if (ml("caoh2") > 0) {
       hodisalar.push({ text: "Ohak suvi sutsimon tus oldi — CaCO₃ cho'kmasi! 🥛", kind: "precipitate" });
     }
-  } else if (acidEq > 0 && (ml("zn") > 0 || ml("mg") > 0)) {
+  } else if ((acidEq > 0 && (ml("zn") > 0 || ml("mg") > 0 || alMl > 0)) || (baseEq > 0 && alMl > 0)) {
     gas = { name: "H₂ (vodorod)" };
     hodisalar.push({ text: "Vodorod gazi ajralib chiqdi — mayda pufakchalar! 🫧", kind: "gas" });
+    if (baseEq > 0 && alMl > 0 && acidEq === 0) {
+      hodisalar.push({ text: "Alyuminiy ishqorda eridi — Na[Al(OH)₄] hosil bo'ldi! 🧪", kind: "info" });
+    }
+  }
+  // Mis kislota bilan reaksiyaga kirmaydi (faollik qatori!)
+  if (ml("cu") > 0 && acidEq > 0 && ml("zn") === 0 && ml("mg") === 0 && ml("al") === 0) {
+    hodisalar.push({ text: "⛔ Mis kislota bilan reaksiyaga KIRMAYDI — vodoroddan past turadi (faollik qatori).", kind: "info" });
   }
 
   // --- Cho'kmalar (eruvchanlik qoidalari)
@@ -147,6 +160,33 @@ export function simulate(contents: VesselContent[], baseTemp = 20): SimResult {
   } else if (ml("cuso4") > 0 && (ml("fe") > 0 || ml("zn") > 0)) {
     precipitate = { color: "#b06a3b", name: "Cu (mis cho'kmasi)" };
     hodisalar.push({ text: "Metall yuzasida qo'ng'ir qatlam — mis siqib chiqarildi! 🟤", kind: "precipitate" });
+  } else if (ml("alcl3") > 0 && baseEq > 0) {
+    // AMFOTER: kam ishqor → Al(OH)₃ cho'kmasi; ortiqcha ishqor → ERIYDI (tartib muhim!)
+    const alNeed = k("alcl3") * 3;
+    if (baseEq < alNeed * 0.92) {
+      precipitate = { color: "#f0f2f0", name: "Al(OH)₃ (oq cho'kma)" };
+      hodisalar.push({ text: "Oq cho'kma tushdi — Al(OH)₃ (alyuminiy gidroksidi) ⚪", kind: "precipitate" });
+    } else {
+      hodisalar.push({ text: "🌀 Cho'kma ERTALAB/KEYIN ERIYDI — ortiqcha ishqor Al(OH)₃ ni eritdi (amfoter xossa!) — tiniq eritma.", kind: "precipitate" });
+    }
+  } else if (ml("agno3") > 0 && ml("nh3") > 0 && !hasCl) {
+    // AgNO3 + NH3: kam miqdor → Ag2O qo'ng'ir cho'kma; ortiqcha NH3 → kompleks hosil bo'lib ERIYDI
+    const nh3Eq = k("nh3");
+    const agEq = k("agno3");
+    if (nh3Eq < agEq * 1.4) {
+      precipitate = { color: "#8a5a2b", name: "Ag₂O (qo'ng'ir cho'kma)" };
+      hodisalar.push({ text: "Qo'ng'ir cho'kma tushdi — Ag₂O (kumush oksidi) 🟤", kind: "precipitate" });
+    } else {
+      hodisalar.push({ text: "🌀 Cho'kma ERIYDI — ortiqcha ammiak kumush bilan tiniq kompleks hosil qildi [Ag(NH₃)₂]⁺!", kind: "precipitate" });
+    }
+  } else if (ml("pbno32") > 0 && ml("ki") > 0) {
+    // OLTIN YOMG'IR: PbI₂ — issiqda eriydi, soviganda qayta kristallashadi
+    if (temp >= 45) {
+      hodisalar.push({ text: "🔥 Sariq cho'kma ISSIQDA ERIYDI — PbI₂ issiq suvda eruvchan (soviganda qayta chiqadi!)", kind: "precipitate" });
+    } else {
+      precipitate = { color: "#e8c22e", name: "PbI₂ (oltin-sariq cho'kma)" };
+      hodisalar.push({ text: "✨ OLTIN YOMG'IR! Sariq PbI₂ kristallari tushdi — isitib ko'ring: eriydi! 🟡", kind: "precipitate" });
+    }
   }
 
   // --- Yakuniy rang
@@ -185,16 +225,63 @@ export function simulate(contents: VesselContent[], baseTemp = 20): SimResult {
   return { ph, color, precipitate, gas, temperature: Math.round(temp * 10) / 10, umumiyMl: total, hodisalar };
 }
 
+export interface StepEvent {
+  /** necha ml quyilgandan keyin */
+  afterMl: number;
+  reagentId: string;
+  yangiHodisalar: PourEvent[];
+}
+
+/**
+ * Ketma-ket quyish jurnalini yuritadi — TARTIB muhim bo'lgan tajribalar uchun.
+ * Har bir qadamdan keyin qaysi YANGI hodisalar bo'lganini qaytaradi.
+ */
+export function simulateSteps(contents: VesselContent[]): { steps: StepEvent[]; final: SimResult } {
+  const steps: StepEvent[] = [];
+  const seen = new Set<string>();
+  let total = 0;
+  for (let i = 1; i <= contents.length; i++) {
+    const prefix = contents.slice(0, i);
+    total += contents[i - 1].ml;
+    const r = simulate(prefix);
+    const yangi = r.hodisalar.filter((h) => {
+      const key = h.kind + "|" + h.text;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    steps.push({ afterMl: total, reagentId: contents[i - 1].reagentId, yangiHodisalar: yangi });
+  }
+  return { steps, final: simulate(contents) };
+}
+
 // ============================== ⚡ FIZIKA ==============================
+
+export type CircuitCompType =
+  | "battery"
+  | "resistor"
+  | "bulb"
+  | "switch"
+  | "ammeter"
+  | "led"
+  | "motor"
+  | "buzzer"
+  | "galv"
+  | "rheostat"
+  | "heater";
+
+export type CompFault = "open" | "short" | "dead" | null;
 
 export interface CircuitComp {
   id: string;
-  type: "battery" | "resistor" | "bulb" | "switch" | "ammeter";
+  type: CircuitCompType;
   a: number;
   b: number;
-  /** batareya: volt; rezistor: Om; lampochka: nominal V */
+  /** batareya: volt; rezistor/reostat/isitgich: Om; lampochka/LED: nominal V */
   value: number;
   closed?: boolean;
+  /** nosozlik: ochiq (sindirilgan), qisqa, o'lik (batareya) */
+  fault?: CompFault;
 }
 
 export interface CircuitSolution {
@@ -202,8 +289,18 @@ export interface CircuitSolution {
   nodeVoltages: number[];
   /** komponent id → tok (A) */
   currents: Record<string, number>;
-  /** lampochka id → yorug'lik 0..1 */
+  /** lampochka/LED id → yorug'lik 0..1 */
   brightness: Record<string, number>;
+  /** motor id → tezlik 0..1 */
+  motorSpeed: Record<string, number>;
+  /** gurj id → ishlamoqda */
+  buzzerOn: Record<string, boolean>;
+  /** galvanometr id → strelka -1..1 */
+  galvNeedle: Record<string, number>;
+  /** isitgich id → qizib ketish 0..1 */
+  heatGlow: Record<string, number>;
+  /** LED teskari ulangan */
+  ledReversed: Record<string, boolean>;
   totalCurrent: number;
   error?: string;
 }
@@ -241,8 +338,20 @@ export function applyWires(comps: CircuitComp[], wires: CircuitWire[]): CircuitC
 }
 
 export function solveCircuit(comps: CircuitComp[]): CircuitSolution {
-  const empty: CircuitSolution = { ok: false, nodeVoltages: [], currents: {}, brightness: {}, totalCurrent: 0 };
-  const active = comps.filter((c) => !(c.type === "switch" && !c.closed));
+  const empty: CircuitSolution = {
+    ok: false,
+    nodeVoltages: [],
+    currents: {},
+    brightness: {},
+    motorSpeed: {},
+    buzzerOn: {},
+    galvNeedle: {},
+    heatGlow: {},
+    ledReversed: {},
+    totalCurrent: 0,
+  };
+  // nosozliklar: 'open' — zanjirdan chiqarilgan; 'dead' — manba o'lik
+  const active = comps.filter((c) => !(c.type === "switch" && !c.closed) && c.fault !== "open");
   const nodes = new Set<number>();
   for (const c of active) {
     nodes.add(c.a);
@@ -316,17 +425,24 @@ export function solveCircuit(comps: CircuitComp[]): CircuitSolution {
   };
 
   for (const c of active) {
+    const isShort = c.fault === "short";
     if (c.type === "battery") {
       const r = 0.4; // ichki qarshilik
       stampBetween(c.a, c.b, 1 / r);
-      const i = c.value / r;
+      const e = c.fault === "dead" ? 0 : c.value;
+      const i = e / r;
       injectBetween(c.b, c.a, i); // tok manbai b dan a ga
-    } else if (c.type === "resistor") {
-      stampBetween(c.a, c.b, 1 / Math.max(0.1, c.value));
-    } else if (c.type === "bulb") {
-      // lampochka: R = V_nom² / P, P = 2 Vt (kichik laboratoriya lampochkasi)
-      stampBetween(c.a, c.b, 1 / Math.max(1, (c.value * c.value) / 2));
-    } else if (c.type === "ammeter") {
+    } else if (c.type === "resistor" || c.type === "rheostat" || c.type === "heater") {
+      stampBetween(c.a, c.b, 1 / (isShort ? 0.01 : Math.max(0.1, c.value)));
+    } else if (c.type === "bulb" || c.type === "led") {
+      // lampochka: R = V_nom² / P, P = 2 Vt; LED: R ≈ V²/1.2
+      const p = c.type === "bulb" ? 2 : 1.2;
+      stampBetween(c.a, c.b, 1 / (isShort ? 0.01 : Math.max(1, (c.value * c.value) / p)));
+    } else if (c.type === "motor") {
+      stampBetween(c.a, c.b, 1 / (isShort ? 0.01 : 8));
+    } else if (c.type === "buzzer") {
+      stampBetween(c.a, c.b, 1 / (isShort ? 0.01 : 24));
+    } else if (c.type === "ammeter" || c.type === "galv") {
       stampBetween(c.a, c.b, 1 / 0.01);
     } else if (c.type === "switch") {
       stampBetween(c.a, c.b, 1 / 0.001);
@@ -358,30 +474,62 @@ export function solveCircuit(comps: CircuitComp[]): CircuitSolution {
 
   const currents: Record<string, number> = {};
   const brightness: Record<string, number> = {};
+  const motorSpeed: Record<string, number> = {};
+  const buzzerOn: Record<string, boolean> = {};
+  const galvNeedle: Record<string, number> = {};
+  const heatGlow: Record<string, number> = {};
+  const ledReversed: Record<string, boolean> = {};
   let totalCurrent = 0;
   for (const c of active) {
     const va = nodeVoltages[idx.get(c.a)!];
     const vb = nodeVoltages[idx.get(c.b)!];
     const v = va - vb;
     if (c.type === "battery") {
-      // tashqi zanjirga berilgan tok = manba tokidan ichki qarshilik tokini ayirib
-      const delivered = (c.value - v) / 0.4;
+      const e = c.fault === "dead" ? 0 : c.value;
+      const delivered = (e - v) / 0.4;
       currents[c.id] = Math.abs(delivered);
       totalCurrent += Math.abs(delivered);
-    } else if (c.type === "bulb") {
-      const r = Math.max(1, (c.value * c.value) / 2);
+    } else if (c.type === "bulb" || c.type === "led") {
+      const p = c.type === "bulb" ? 2 : 1.2;
+      const r = Math.max(1, (c.value * c.value) / p);
       const i = v / r;
       currents[c.id] = i;
-      brightness[c.id] = Math.max(0, Math.min(1, Math.abs(i * v) / 2));
+      if (c.type === "bulb") {
+        brightness[c.id] = Math.max(0, Math.min(1, Math.abs(i * v) / 2));
+      } else {
+        // LED: faqat to'g'ri yo'nalishda yonadi (anod a → katod b)
+        const fwd = i > 0.001;
+        ledReversed[c.id] = !fwd && Math.abs(i) > 0.0005;
+        brightness[c.id] = fwd ? Math.max(0, Math.min(1, Math.abs(i * v) / 1.2)) : 0;
+      }
+    } else if (c.type === "motor") {
+      const r = c.fault === "short" ? 0.01 : 8;
+      const i = v / r;
+      currents[c.id] = i;
+      motorSpeed[c.id] = Math.max(0, Math.min(1, Math.abs(i) / 0.5));
+    } else if (c.type === "buzzer") {
+      const r = c.fault === "short" ? 0.01 : 24;
+      const i = v / r;
+      currents[c.id] = i;
+      buzzerOn[c.id] = Math.abs(i) > 0.02;
+    } else if (c.type === "galv") {
+      const i = v / 0.01;
+      currents[c.id] = i;
+      galvNeedle[c.id] = Math.max(-1, Math.min(1, i / 0.05));
+    } else if (c.type === "heater") {
+      const r = c.fault === "short" ? 0.01 : Math.max(0.1, c.value);
+      const i = v / r;
+      currents[c.id] = i;
+      heatGlow[c.id] = Math.max(0, Math.min(1, (i * i * r) / 8));
     } else {
       let r = 0.01;
-      if (c.type === "resistor") r = Math.max(0.1, c.value);
+      if (c.type === "resistor" || c.type === "rheostat") r = Math.max(0.1, c.value);
       currents[c.id] = v / r;
     }
   }
   if (totalCurrent > 8) return { ...empty, error: "⚠️ Qisqa tutashuv! Tok juda katta." };
 
-  return { ok: true, nodeVoltages, currents, brightness, totalCurrent };
+  return { ok: true, nodeVoltages, currents, brightness, motorSpeed, buzzerOn, galvNeedle, heatGlow, ledReversed, totalCurrent };
 }
 
 /** Hooke qonuni: F = k·x; statik cho'zilish x = m·g/k */
@@ -442,6 +590,26 @@ export const MITOSIS: DivisionStage[] = [
   { id: "ana", name: "4. Anafaza", tavsif: "Xromatidalar kutublarga qarab ajralib ketadi.", phase: 3 },
   { id: "telo", name: "5. Telofaza", tavsif: "Har bir kutubda yangi yadro hosil bo'ladi.", phase: 4 },
   { id: "cyto", name: "6. Sitokinez", tavsif: "Hujayra bo'linadi — ikkita bir xil hujayra hosil bo'ladi!", phase: 5 },
+];
+
+export interface Specimen {
+  id: string;
+  name: string;
+  tavsif: string;
+  /** mikroskop ostidagi ko'rinish turi */
+  texture: "onion" | "cheek" | "leaf" | "blood" | "muscle" | "root";
+  rang: string;
+  /** bo'yovchi (stain) kerakmi */
+  stain: string;
+}
+
+export const SPECIMENS: Specimen[] = [
+  { id: "onion", name: "🧅 Piyoz epidermasi", tavsif: "O'simlik hujayralari — to'g'ri burchakli 'g'isht' shaklida, xloroplastsiz.", texture: "onion", rang: "#d98cc8", stain: "Yod eritmasi (sariq)" },
+  { id: "leaf", name: "🌿 Barg qatlami", tavsif: "Fotosintez zavodi — xloroplastlar va nafas olish teshikchalari (stoma).", texture: "leaf", rang: "#5fa05f", stain: "Suv (jonli)" },
+  { id: "cheek", name: "👄 Og'iz shilliq qavati", tavsif: "Hayvon hujayralari — yumaloq, yadro markazda, devorsiz.", texture: "cheek", rang: "#e8b6c8", stain: "Metilen ko'ki" },
+  { id: "blood", name: "🩸 Qon surtmasi", tavsif: "Eritrotsitlar (yadrosiz donachalar) va leykotsitlar (himoyachi hujayralar).", texture: "blood", rang: "#c94b4b", stain: "Romanovsky-Gyenza" },
+  { id: "muscle", name: "💪 Mushak to'qimasi", tavsif: "Siyqish iplari — o'ziga xos yo'lbars chiziqlari bilan.", texture: "muscle", rang: "#c97b6a", stain: "Gematoxilin" },
+  { id: "root", name: "🌱 Ildiz uchi", tavsif: "O'sish zonasi — hujayralar FAOL bo'linmoqda (mitoz bosqichlarini ko'rasiz!).", texture: "root", rang: "#d9c27b", stain: "Yod eritmasi" },
 ];
 
 export const MEIOSIS: DivisionStage[] = [
