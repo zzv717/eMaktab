@@ -169,28 +169,84 @@ export default function SpecimenView({
   light: number;
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+  const panRef = useRef({ x: 420, y: 420 }); // katta kartadagi ko'rinadigan oyna
+  const dragRef = useRef<{ x: number; y: number } | null>(null);
+
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
-    drawSpecimen(ctx, canvas.width, canvas.height, texture, zoom);
+    // Katta namuna kartasi (2x) — sudrab boshqa joylarini ko'rish mumkin
+    const big = document.createElement("canvas");
+    big.width = 1480;
+    big.height = 1480;
+    const bctx = big.getContext("2d");
+    if (!bctx) return;
+    drawSpecimen(bctx, big.width, big.height, texture, zoom);
+    const render = () => {
+      panRef.current.x = Math.max(0, Math.min(big.width - canvas.width, panRef.current.x));
+      panRef.current.y = Math.max(0, Math.min(big.height - canvas.height, panRef.current.y));
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(big, panRef.current.x, panRef.current.y, canvas.width, canvas.height, 0, 0, canvas.width, canvas.height);
+    };
+    render();
+
+    // 🖐 SENSOR bilan sudrab ko'rish (joystik shart emas)
+    const el = wrapRef.current;
+    if (!el) return;
+    const onDown = (ev: PointerEvent) => {
+      dragRef.current = { x: ev.clientX, y: ev.clientY };
+      el.setPointerCapture(ev.pointerId);
+      el.style.cursor = "grabbing";
+    };
+    const onMove = (ev: PointerEvent) => {
+      const d = dragRef.current;
+      if (!d) return;
+      const k = big.width / canvas.width;
+      panRef.current.x -= (ev.clientX - d.x) * k;
+      panRef.current.y -= (ev.clientY - d.y) * k;
+      d.x = ev.clientX;
+      d.y = ev.clientY;
+      render();
+    };
+    const onUp = () => {
+      dragRef.current = null;
+      el.style.cursor = "grab";
+    };
+    el.addEventListener("pointerdown", onDown);
+    el.addEventListener("pointermove", onMove);
+    el.addEventListener("pointerup", onUp);
+    el.addEventListener("pointercancel", onUp);
+    return () => {
+      el.removeEventListener("pointerdown", onDown);
+      el.removeEventListener("pointermove", onMove);
+      el.removeEventListener("pointerup", onUp);
+      el.removeEventListener("pointercancel", onUp);
+    };
   }, [texture, zoom]);
 
   return (
-    <div className="relative mx-auto aspect-square w-full max-w-[320px] overflow-hidden rounded-full border-[10px] border-slate-800 bg-black shadow-inner">
-      <canvas
-        ref={canvasRef}
-        width={640}
-        height={640}
-        className="h-full w-full"
-        style={{
-          filter: `blur(${(1 - focus) * 4}px) brightness(${0.55 + light * 0.85}) contrast(${1 + light * 0.15})`,
-          transform: `scale(${1 + (zoom - 1) * 0.12})`,
-          transition: "filter 0.25s, transform 0.25s",
-        }}
-      />
-      <div className="pointer-events-none absolute inset-0 rounded-full shadow-[inset_0_0_60px_rgba(0,0,0,0.55)]" />
+    <div>
+      <div
+        ref={wrapRef}
+        className="relative mx-auto aspect-square w-full max-w-[320px] cursor-grab overflow-hidden rounded-full border-[10px] border-slate-800 bg-black shadow-inner"
+        style={{ touchAction: "none" }}
+      >
+        <canvas
+          ref={canvasRef}
+          width={640}
+          height={640}
+          className="h-full w-full"
+          style={{
+            filter: `blur(${(1 - focus) * 4}px) brightness(${0.55 + light * 0.85}) contrast(${1 + light * 0.15})`,
+            transition: "filter 0.25s",
+          }}
+        />
+        <div className="pointer-events-none absolute inset-0 rounded-full shadow-[inset_0_0_60px_rgba(0,0,0,0.55)]" />
+      </div>
+      <p className="mt-2 text-center text-xs text-slate-400">🖐 Barmoq bilan <b>sudrab</b> namunaning boshqa joylarini ko'ring</p>
     </div>
   );
 }

@@ -103,11 +103,34 @@ function CircuitLab() {
     const detachPointer = attachPointer(handle, canvas, {
       getRoots: () => compGroup.children,
       moveRef,
-      onPick: (root, hit) => {
+      onPick: (root, hit, ev) => {
         const ud = root.userData as { kind: string; id: string };
-        if (hit.userData?.kind === "terminal") {
-          const term = hit.userData.term as "a" | "b";
-          const compId = ud.id;
+        // 🟢 TERMINAL SNAP — bosish yaqinidagi terminalni tortib olish (masofa keng)
+        const rect = canvas.getBoundingClientRect();
+        const mx = ev.clientX - rect.left;
+        const my = ev.clientY - rect.top;
+        let near: { comp: string; term: "a" | "b" } | null = null;
+        let nearD = 52; // piksel — ulash masofasi
+        for (const c of compRef.current) {
+          const node = compGroup.children.find((ch) => ch.userData?.id === c.id);
+          if (!node) continue;
+          for (const tn of ["a", "b"] as const) {
+            const tObj = node.getObjectByName(`term-${tn}`);
+            if (!tObj) continue;
+            const wp = tObj.getWorldPosition(new THREE.Vector3()).project(handle.camera);
+            const sx = (wp.x * 0.5 + 0.5) * rect.width;
+            const sy = (-wp.y * 0.5 + 0.5) * rect.height;
+            const d = Math.hypot(sx - mx, sy - my);
+            if (d < nearD) {
+              nearD = d;
+              near = { comp: c.id, term: tn };
+            }
+          }
+        }
+        const termHit = hit.userData?.kind === "terminal" ? { comp: ud.id, term: hit.userData.term as "a" | "b" } : near;
+        if (termHit) {
+          const term = termHit.term;
+          const compId = termHit.comp;
           setSelTerm((prev) => {
             if (!prev) {
               setMsg(`🟢 Terminal tanlandi — endi ikkinchi terminalni bosing (sim tortiladi)`);
@@ -576,11 +599,20 @@ function buildCompMesh(type: CircuitCompType): THREE.Group {
     g.add(bell);
   }
   for (const term of ["a", "b"] as const) {
-    const t = new THREE.Mesh(new THREE.SphereGeometry(0.17, 14, 10), new THREE.MeshStandardMaterial({ color: term === "a" ? "#2e8b57" : "#8b2e2e", emissive: term === "a" ? "#1d5c38" : "#5c1d1d", emissiveIntensity: 0.25 }));
-    t.position.set(term === "a" ? -0.85 : 0.85, 0.55, 0);
+    const t = new THREE.Mesh(new THREE.SphereGeometry(0.26, 14, 10), new THREE.MeshStandardMaterial({ color: term === "a" ? "#2e8b57" : "#8b2e2e", emissive: term === "a" ? "#1d5c38" : "#5c1d1d", emissiveIntensity: 0.25 }));
+    t.position.set(term === "a" ? -0.95 : 0.95, 0.55, 0);
     t.name = `term-${term}`;
     t.userData = { kind: "terminal", term };
     g.add(t);
+    // katta "urish" zonasi — ulash masofasini uzaytiradi (ko'rinmas)
+    const hitZone = new THREE.Mesh(
+      new THREE.SphereGeometry(0.85, 10, 8),
+      new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false }),
+    );
+    hitZone.position.copy(t.position);
+    hitZone.name = `termhit-${term}`;
+    hitZone.userData = { kind: "terminal", term };
+    g.add(hitZone);
   }
   return g;
 }

@@ -124,8 +124,8 @@ export interface PointerOpts {
   getRoots: () => THREE.Object3D[];
   /** siljitilayotgan obyekt (null = siljitish rejimi emas) */
   moveRef: { current: THREE.Object3D | null };
-  /** bosilganda (siljitmasdan) — nomini ko'rsatish uchun (root, urilgan qism) */
-  onPick: (root: THREE.Object3D, hit: THREE.Object3D) => void;
+  /** bosilganda (siljitmasdan) — nomini ko'rsatish uchun (root, urilgan qism, hodisa) */
+  onPick: (root: THREE.Object3D, hit: THREE.Object3D, ev: PointerEvent) => void;
   /** siljitish boshlanganda/tugaganda */
   onMoveEnd?: (root: THREE.Object3D) => void;
 }
@@ -167,6 +167,8 @@ export function attachPointer(handle: SceneHandle, canvas: HTMLCanvasElement, op
     const root = pickRoot(ev);
     if (root && opts.moveRef.current && root === opts.moveRef.current) {
       dragging = true;
+      // 🔒 obyekt siltayotganda KAMERA harakatlanmasligi uchun
+      handle.controls.enabled = false;
       const hit = new THREE.Vector3();
       ray.ray.intersectPlane(plane, hit);
       offset.copy(root.position).sub(hit);
@@ -186,6 +188,7 @@ export function attachPointer(handle: SceneHandle, canvas: HTMLCanvasElement, op
   const onUp = (ev: PointerEvent) => {
     if (dragging) {
       dragging = false;
+      handle.controls.enabled = true; // 🔓 kamera qayta yoqiladi
       if (opts.moveRef.current) opts.onMoveEnd?.(opts.moveRef.current);
       return;
     }
@@ -195,7 +198,7 @@ export function attachPointer(handle: SceneHandle, canvas: HTMLCanvasElement, op
       if (hits.length === 0) return;
       let o: THREE.Object3D | null = hits[0].object;
       while (o && !o.userData?.kind) o = o.parent;
-      if (o) opts.onPick(o, hits[0].object);
+      if (o) opts.onPick(o, hits[0].object, ev);
     }
   };
 
@@ -204,6 +207,7 @@ export function attachPointer(handle: SceneHandle, canvas: HTMLCanvasElement, op
   canvas.addEventListener("pointerup", onUp);
   canvas.addEventListener("pointercancel", onUp);
   return () => {
+    handle.controls.enabled = true;
     canvas.removeEventListener("pointerdown", onDown);
     canvas.removeEventListener("pointermove", onMove);
     canvas.removeEventListener("pointerup", onUp);

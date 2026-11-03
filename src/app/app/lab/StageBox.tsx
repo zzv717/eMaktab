@@ -88,6 +88,7 @@ export function StageBox({
           </button>
         </div>
         {groups.length === 0 && <p className="mt-4 text-center text-sm text-slate-400">Hech narsa topilmadi.</p>}
+        <div className="grid gap-x-5 sm:grid-cols-2">
         {groups.map(([group, items]) => (
           <div key={group} className="mt-4">
             <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">{group}</p>
@@ -105,6 +106,7 @@ export function StageBox({
             </div>
           </div>
         ))}
+        </div>
       </div>
     </div>
   );

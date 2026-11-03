@@ -55,6 +55,9 @@ export default function ChemLab() {
   const [journal, setJournal] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [pick, setPick] = useState<{ info: PickInfo; kind: string; id: string } | null>(null);
+  // Faqat oz miqdorda reaktivlar: bir tomonda birikmalar, bir tomonda moddalar
+  const BENCH_BIRIKMALAR = ["hcl", "naoh", "cuso4", "na2co3", "agno3"];
+  const BENCH_MODDALAR = ["mg", "zn", "cu"];
   const [moving, setMoving] = useState(false);
   const counterRef = useRef(1);
 
@@ -132,14 +135,31 @@ export default function ChemLab() {
       });
       return g;
     };
-    REAGENTS.forEach((r, i) => {
-      const g = makeBottle(r);
-      const row = Math.floor(i / 13);
-      const x = -8.6 + (i % 13) * 1.45;
-      g.position.set(x, 2.32 + row * 1.65, -4.35 - row * 1.35);
-      handle.scene.add(g);
-      maps.bottles.set(r.id, g);
-    });
+    // 🧪 Stol: chapda BIRIKMALAR, o'ngda MODDALAR — faqat oz miqdorda!
+    const putSide = (ids: string[], x0: number, title: string) => {
+      ids.forEach((id, i) => {
+        const r = REAGENTS.find((x) => x.id === id);
+        if (!r) return;
+        const g = makeBottle(r);
+        g.position.set(x0 + i * 1.62, 2.32, -4.35);
+        handle.scene.add(g);
+        maps.bottles.set(r.id, g);
+      });
+      // tomalar ustidagi yozuv
+      const cv = document.createElement("canvas");
+      cv.width = 256;
+      cv.height = 64;
+      const ctx = cv.getContext("2d")!;
+      ctx.fillStyle = "#1e293b";
+      ctx.font = "bold 30px sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText(title, 128, 42);
+      const sign = new THREE.Mesh(new THREE.PlaneGeometry(3.4, 0.85), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(cv), transparent: true }));
+      sign.position.set(x0 + ((ids.length - 1) * 1.62) / 2, 4.35, -4.35);
+      handle.scene.add(sign);
+    };
+    putSide(BENCH_BIRIKMALAR, -8.3, "⚗️ BIRIKMALAR");
+    putSide(BENCH_MODDALAR, 3.1, "🧫 MODDALAR");
 
     // --- Idish yaratish
     const buildVessel = (v: VesselObj) => {
@@ -532,7 +552,14 @@ export default function ChemLab() {
     { id: "v:probirka", icon: "🧪", name: "Probirka", group: "Idishlar", desc: "Mayda tajribalar uchun" },
     { id: "v:kolba", icon: "⚗️", name: "Kolba", group: "Idishlar", desc: "Eritmalar aralashtirish" },
     { id: "v:stakan", icon: "🥤", name: "Ximik stakan", group: "Idishlar", desc: "Katta hajm" },
-    ...REAGENTS.map((r) => ({ id: `r:${r.id}`, icon: "🧫", name: `${r.formula} — ${r.name}`, group: "Reaktivlar", desc: r.info })),
+    ...BENCH_BIRIKMALAR.map((id) => {
+      const r = REAGENTS.find((x) => x.id === id)!;
+      return { id: `r:${r.id}`, icon: "⚗️", name: `${r.formula} — ${r.name}`, group: "Birikmalar", desc: r.info };
+    }),
+    ...BENCH_MODDALAR.map((id) => {
+      const r = REAGENTS.find((x) => x.id === id)!;
+      return { id: `r:${r.id}`, icon: "🧫", name: `${r.formula} — ${r.name}`, group: "Moddalar", desc: r.info };
+    }),
     { id: "t:stir", icon: "🥄", name: "Aralashtirish", group: "Asboblar" },
     { id: "p:gold", icon: "✨", name: "Loyiha: Oltin yomg'ir", group: "Tayyor loyihalar", desc: "Pb(NO₃)₂ + KI → sariq kristallar; isitib eritib ko'ring!" },
     { id: "p:clock", icon: "⏱", name: "Loyiha: Soat reaksiyasi", group: "Tayyor loyihalar", desc: "Tiosulfat + kislota — bir necha soniya KUTING, loyqalanadi!" },
