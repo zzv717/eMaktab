@@ -45,6 +45,16 @@ import {
   shiftDayKey,
   tashkentDayKey,
 } from "../src/lib/emaktab";
+import {
+  simulate,
+  applyWires,
+  solveCircuit,
+  springPhysics,
+  lensPhysics,
+  MITOSIS,
+  MEIOSIS,
+  ORGANELLES,
+} from "../src/app/app/lab/engine";
 import { decryptSecret, encryptSecret } from "../src/lib/crypto";
 import { formatDay, formatGrades, formatNews, formatWeek } from "../src/lib/format";
 import { hhmmToMinutes, minutesToHHMM, parseDays, parseTestDraft, testSourceLabel } from "../src/lib/nazoratchi";
@@ -807,6 +817,99 @@ check("looksLikeName: ko'rish rad", !looksLikeName("Ko'rish"), true);
   check("held: panel BatchOverlay", src("app/app/panels.tsx").includes("BatchOverlay"));
   check("held: route held tekshiruvi", src("app/api/pwa/data/conduct/route.ts").includes("fetchLessonHeldPage"));
   check("held: route setLessonHeld", src("app/api/pwa/data/conduct/route.ts").includes("setLessonHeld"));
+}
+
+{
+  // 🧪 Laboratoriya — haqiqiy hisob-kitoblar (kimyo/fizika/biologiya)
+  const src = (rel: string) => readFileSync(new URL(`../src/${rel}`, import.meta.url), "utf-8");
+
+  // Kimyo: kislota + ishqor — neytrallanish + issiqlik
+  const mix1 = simulate([
+    { reagentId: "hcl", ml: 20 },
+    { reagentId: "naoh", ml: 20 },
+    { reagentId: "fen", ml: 5 },
+  ]);
+  check("lab-kimyo: neytrallanish issiqlik", mix1.hodisalar.some((h) => h.kind === "heat"));
+  check("lab-kimyo: pH ≈ 7 neytral", mix1.ph !== null && Math.abs(mix1.ph - 7) < 1.2);
+
+  // Kimyo: AgNO3 + NaCl → AgCl cho'kmasi
+  const mix2 = simulate([
+    { reagentId: "agno3", ml: 15 },
+    { reagentId: "nacl", ml: 15 },
+  ]);
+  check("lab-kimyo: AgCl cho'kmasi", mix2.precipitate?.name.includes("AgCl") === true);
+
+  // Kimyo: Na2CO3 + HCl → CO2
+  const mix3 = simulate([
+    { reagentId: "na2co3", ml: 15 },
+    { reagentId: "hcl", ml: 20 },
+  ]);
+  check("lab-kimyo: CO2 gazi", mix3.gas?.name.includes("CO₂") === true);
+
+  // Kimyo: ishqor + fenolftalein → pushti
+  const mix4 = simulate([
+    { reagentId: "naoh", ml: 20 },
+    { reagentId: "fen", ml: 5 },
+  ]);
+  check("lab-kimyo: fenolftalein pushti", mix4.hodisalar.some((h) => h.text.includes("PUSHTI")));
+  check("lab-kimyo: ishqoriy pH", mix4.ph !== null && mix4.ph > 8.2);
+
+  // Fizika: yopiq zanjir — lampochka yonadi
+  const circ = solveCircuit([
+    { id: "bat", type: "battery", a: 1, b: 2, value: 9 },
+    { id: "bulb", type: "bulb", a: 2, b: 1, value: 6 },
+  ]);
+  check("lab-fizika: zanjir yechildi", circ.ok === true);
+  check("lab-fizika: lampochka yonadi", (circ.brightness.bulb ?? 0) > 0.5);
+  check("lab-fizika: tok hisoblandi", circ.totalCurrent > 0.1 && circ.totalCurrent < 2);
+
+  // Fizika: ochiq zanjir — xato (batareya + ulanmagan lampochka)
+  const open = solveCircuit([
+    { id: "bat", type: "battery", a: 1, b: 2, value: 9 },
+    { id: "bulb", type: "bulb", a: 3, b: 4, value: 6 },
+  ]);
+  check("lab-fizika: ochiq zanjir xatosi", open.ok === false && Boolean(open.error));
+
+  // Fizika: applyWires — simlar tugunlarni birlashtiradi
+  const wired = applyWires(
+    [
+      { id: "bat", type: "battery", a: 1, b: 2, value: 9 },
+      { id: "bulb", type: "bulb", a: 3, b: 4, value: 6 },
+    ],
+    [
+      { fromComp: "bat", fromTerm: "b", toComp: "bulb", toTerm: "a" },
+      { fromComp: "bulb", fromTerm: "b", toComp: "bat", toTerm: "a" },
+    ],
+  );
+  const wiredOk = solveCircuit(wired);
+  check("lab-fizika: sim bilan yopiq zanjir", wiredOk.ok === true && (wiredOk.brightness.bulb ?? 0) > 0.5);
+
+  // Fizika: Hooke — F = m·g
+  const sp = springPhysics(2, 20);
+  check("lab-fizika: Hooke F=m·g", Math.abs(sp.force - 2 * 9.81) < 0.01);
+  check("lab-fizika: Hooke x=F/k", Math.abs(sp.extension - (2 * 9.81) / 20) < 0.01);
+
+  // Fizika: linza — 1/f = 1/do + 1/di
+  const ln = lensPhysics(10, 20);
+  check("lab-fizika: linza tasviri", Math.abs(ln.image - 20) < 0.01);
+  check("lab-fizika: linza kattalashtirish", Math.abs(ln.magnification + 1) < 0.01);
+
+  // Biologiya: kontent to'liq
+  check("lab-biologiya: organoidlar ≥ 12", ORGANELLES.length >= 12);
+  check("lab-biologiya: mitoz 6 bosqich", MITOSIS.length === 6);
+  check("lab-biologiya: meyoz 6 bosqich", MEIOSIS.length === 6);
+  check(
+    "lab-biologiya: krossingover bor",
+    MEIOSIS.some((m) => (m.name + " " + m.tavsif).toLowerCase().includes("krossingover")),
+  );
+
+  // UI kontraktlari
+  check("lab: LabPanel mavjud", src("app/app/lab/LabPanel.tsx").includes("Kimyo") && src("app/app/lab/LabPanel.tsx").includes("Fizika") && src("app/app/lab/LabPanel.tsx").includes("Biologiya"));
+  check("lab: menyu — barcha rollar", (src("app/app/app-client.tsx").match(/id: "lab"/g) ?? []).length === 2);
+  check("lab: render", src("app/app/app-client.tsx").includes('view === "lab" && <LabPanel />'));
+  check("lab: ChemLab 3D", src("app/app/lab/ChemLab.tsx").includes("createScene"));
+  check("lab: PhysLab 3D", src("app/app/lab/PhysLab.tsx").includes("solveCircuit"));
+  check("lab: BioLab 3D", src("app/app/lab/BioLab.tsx").includes("MITOSIS") || src("app/app/lab/BioLab.tsx").includes("DivisionLab"));
 }
 
 {

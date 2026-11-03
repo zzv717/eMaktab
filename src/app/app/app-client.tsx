@@ -21,6 +21,7 @@ import {
   SinfimPanel,
   TestsPanel,
 } from "./panels";
+import LabPanel from "./lab/LabPanel";
 
 type Profile = { login: string; name: string; role: string; school: string; group: string };
 type Screen = "boot" | "login" | "setup" | "home";
@@ -34,6 +35,7 @@ type View =
   | "maqom"
   | "sinfim"
   | "conduct"
+  | "lab"
   | "settings"
   | "guide";
 
@@ -236,6 +238,7 @@ export default function AppClient() {
     maqom: "✅ Maqom",
     sinfim: "🏫 Sinfim",
     conduct: "✅ Darsni o'tildi qilish",
+    lab: "🧪 Laboratoriya va fanlar",
     settings: "⚙️ Sozlamalar",
     guide: "📖 Yoriqnoma",
   };
@@ -250,6 +253,7 @@ export default function AppClient() {
         { id: "sinfim", label: "🏫 Sinfim" },
         { id: "nazoratchi", label: "👁 Nazoratchi" },
         { id: "tests", label: "📝 Testlar" },
+        { id: "lab", label: "🧪 Laboratoriya" },
         { id: "news", label: "📰 Yangiliklar" },
         { id: "settings", label: "⚙️ Sozlamalar" },
         { id: "guide", label: "📖 Yoriqnoma" },
@@ -259,6 +263,7 @@ export default function AppClient() {
         { id: "schedule", label: "📚 Dars jadvali" },
         { id: "nazoratchi", label: "👁 Nazoratchi" },
         { id: "tests", label: "📝 Testlar" },
+        { id: "lab", label: "🧪 Laboratoriya" },
         { id: "news", label: "📰 Yangiliklar" },
         { id: "settings", label: "⚙️ Sozlamalar" },
         { id: "guide", label: "📖 Yoriqnoma" },
@@ -431,6 +436,7 @@ export default function AppClient() {
               {view === "maqom" && <MaqomPanel />}
               {view === "sinfim" && <SinfimPanel />}
               {view === "conduct" && <ConductPanel />}
+              {view === "lab" && <LabPanel />}
               {view === "settings" && <SettingsPanel profile={profile} hasPasskey={hasPasskey} />}
               {view === "guide" && <GuidePanel />}
             </div>
