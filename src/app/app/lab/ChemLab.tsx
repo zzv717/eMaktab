@@ -555,7 +555,12 @@ export default function ChemLab() {
   const stirIt = () => {
     if (!sel) return;
     animRef.current.stir = { until: performance.now() + 1500, vesselId: sel.id };
-    pushLog("🥄 Aralashtirildi — moddalar to'liq aralashdi");
+    // 🥄 Aralashtirish — reaksiya natijasini (tenglama) ham ko'rsatadi
+    const res = simulate(sel.contents, sel.temp);
+    const withEq = [...res.hodisalar].reverse().find((h) => h.equation);
+    if (withEq?.equation) setEq(withEq.equation);
+    const last = res.hodisalar.slice(-1).map((h) => h.text);
+    pushLog(`🥄 Aralashtirildi — moddalar to'liq aralashdi${last.length ? " — " + last.join(" · ") : ""}`);
   };
 
   useEffect(() => {

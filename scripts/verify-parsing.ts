@@ -872,6 +872,8 @@ check("looksLikeName: ko'rish rad", !looksLikeName("Ko'rish"), true);
   check("lab-element: Mg + O → MgO", binaryFormula(ELEMENT_MAP.mg, ELEMENT_MAP.o) === "MgO");
   check("lab-element: Na + O → Na₂O", binaryFormula(ELEMENT_MAP.na, ELEMENT_MAP.o) === "Na₂O");
   check("lab-element: Al + O → Al₂O₃", binaryFormula(ELEMENT_MAP.al, ELEMENT_MAP.o) === "Al₂O₃");
+  check("lab-element: H + Cl → HCl", binaryFormula(ELEMENT_MAP.h, ELEMENT_MAP.cl) === "HCl");
+  check("lab-element: H + O → H₂O", binaryFormula(ELEMENT_MAP.h, ELEMENT_MAP.o) === "H₂O");
 
   // 🧬 Sintez reaksiyasi — Na + Cl → NaCl (tenglama pastda chiqadi)
   const synth = simulate([
@@ -881,6 +883,13 @@ check("looksLikeName: ko'rish rad", !looksLikeName("Ko'rish"), true);
   const synthEq = synth.hodisalar.find((h) => h.equation === "Na + Cl → NaCl");
   check("lab-element: Na + Cl → NaCl tenglamasi", Boolean(synthEq), synth.hodisalar.map((h) => h.equation));
   check("lab-element: sintez hodisasi matni", synth.hodisalar.some((h) => h.text.includes("SINTEZ")));
+
+  // H + Cl → HCl (foydalanuvchi sinagan tajriba)
+  const hclSynth = simulate([
+    { reagentId: "h", ml: 10 },
+    { reagentId: "cl", ml: 10 },
+  ]);
+  check("lab-element: H + Cl → HCl tenglamasi chiqadi", hclSynth.hodisalar.some((h) => h.equation === "H + Cl → HCl"), hclSynth.hodisalar.map((h) => h.equation));
 
   // Faol metall + kislota → H₂ (Na + HCl)
   const naAcid = simulate([
