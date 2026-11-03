@@ -98,6 +98,28 @@ export function createScene(canvas: HTMLCanvasElement, opts?: { camZ?: number; b
 }
 
 /** Joystik/tugmalar uchun kamerani siljitish. */
+/**
+ * Kamerani (va nishonni) o'qlar bo'ylab KO'CHIRADI — joystick tugmalari uchun.
+ * dy>0 — y o'qini TEPAGA ko'tarish; dx — chap/o'ng; dz — yaqin/uzoq (dolly).
+ */
+export function translateBy(handle: SceneHandle | null, dx: number, dy: number, dz: number) {
+  if (!handle) return;
+  const cam = handle.camera;
+  const target = handle.controls.target;
+  const forward = new THREE.Vector3().subVectors(target, cam.position);
+  forward.y = 0;
+  if (forward.lengthSq() < 1e-6) forward.set(0, 0, -1);
+  forward.normalize();
+  const right = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0, 1, 0)).normalize();
+  const delta = new THREE.Vector3()
+    .addScaledVector(right, dx)
+    .add(new THREE.Vector3(0, dy, 0))
+    .addScaledVector(forward, dz);
+  cam.position.add(delta);
+  target.add(delta);
+  handle.controls.update();
+}
+
 export function orbitBy(
   handle: SceneHandle | null,
   opts: { dAz?: number; dPolar?: number; zoom?: number; reset?: boolean },
@@ -151,27 +173,45 @@ export function attachPointer(handle: SceneHandle, canvas: HTMLCanvasElement, op
     ptr.y = -((ev.clientY - rect.top) / rect.height) * 2 + 1;
     ray.setFromCamera(ptr, handle.camera);
   };
-  const pickRoot = (ev: PointerEvent): THREE.Object3D | null => {
+  const pickBoth = (ev: PointerEvent): { root: THREE.Object3D | null; hit: THREE.Object3D | null } => {
     toNdc(ev);
     const hits = ray.intersectObjects(opts.getRoots(), true);
-    if (hits.length === 0) return null;
+    if (hits.length === 0) return { root: null, hit: null };
     let o: THREE.Object3D | null = hits[0].object;
-    while (o && !o.userData?.kind) o = o.parent;
-    return o;
+    while (o) {
+      if (o.userData?.pickRoot) return { root: o.userData.pickRoot as THREE.Object3D, hit: hits[0].object };
+      if (o.userData?.kind) return { root: o, hit: hits[0].object };
+      o = o.parent;
+    }
+    return { root: null, hit: hits[0].object };
   };
+  const pickRoot = (ev: PointerEvent): THREE.Object3D | null => pickBoth(ev).root;
 
   const onDown = (ev: PointerEvent) => {
     downX = ev.clientX;
     downY = ev.clientY;
     moved = 0;
-    const root = pickRoot(ev);
-    if (root && opts.moveRef.current && root === opts.moveRef.current) {
+    const { root, hit } = pickBoth(ev);
+    // drag: obyektning istalgan qismidan (terminal, qopqoq) bossa ham siljiydi
+    let onMoveTarget = root === opts.moveRef.current;
+    if (!onMoveTarget && opts.moveRef.current && hit) {
+      let o: THREE.Object3D | null = hit;
+      while (o) {
+        if (o === opts.moveRef.current) {
+          onMoveTarget = true;
+          break;
+        }
+        o = o.parent;
+      }
+    }
+    const dragObj = opts.moveRef.current;
+    if (dragObj && onMoveTarget) {
       dragging = true;
       // 🔒 obyekt siltayotganda KAMERA harakatlanmasligi uchun
       handle.controls.enabled = false;
-      const hit = new THREE.Vector3();
-      ray.ray.intersectPlane(plane, hit);
-      offset.copy(root.position).sub(hit);
+      const hitPt = new THREE.Vector3();
+      ray.ray.intersectPlane(plane, hitPt);
+      offset.copy(dragObj.position).sub(hitPt);
       canvas.setPointerCapture(ev.pointerId);
     }
   };
@@ -193,12 +233,8 @@ export function attachPointer(handle: SceneHandle, canvas: HTMLCanvasElement, op
       return;
     }
     if (moved < 8) {
-      toNdc(ev);
-      const hits = ray.intersectObjects(opts.getRoots(), true);
-      if (hits.length === 0) return;
-      let o: THREE.Object3D | null = hits[0].object;
-      while (o && !o.userData?.kind) o = o.parent;
-      if (o) opts.onPick(o, hits[0].object, ev);
+      const { root, hit } = pickBoth(ev);
+      if (root && hit) opts.onPick(root, hit, ev);
     }
   };
 
@@ -233,14 +269,15 @@ export function glassMaterial(color = "#cfe8f2", opacity = 0.28): THREE.MeshPhys
 
 /** Suyuqlik materiali (ranglanuvchan). */
 export function liquidMaterial(color: string): THREE.MeshStandardMaterial {
+  // Muhim: transparent BO'LMSIN — transmission'li shisha shaffof narsalarni ko'rsatmaydi
+  // (pastdan qaraganda idish bo'sh ko'rinardi). Endi suyuqlik har tomondan ko'rinadi.
   return new THREE.MeshStandardMaterial({
     color: new THREE.Color(color),
-    transparent: true,
-    opacity: 0.9,
     roughness: 0.18,
     metalness: 0.02,
     emissive: new THREE.Color(color),
-    emissiveIntensity: 0.1,
+    emissiveIntensity: 0.12,
+    side: THREE.DoubleSide,
   });
 }
 

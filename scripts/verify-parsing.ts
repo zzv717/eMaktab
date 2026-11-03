@@ -56,6 +56,10 @@ import {
   MEIOSIS,
   ORGANELLES,
   SPECIMENS,
+  ELEMENTS,
+  binaryFormula,
+  getReagent,
+  ELEMENT_MAP,
 } from "../src/app/app/lab/engine";
 import { decryptSecret, encryptSecret } from "../src/lib/crypto";
 import { formatDay, formatGrades, formatNews, formatWeek } from "../src/lib/format";
@@ -855,6 +859,41 @@ check("looksLikeName: ko'rish rad", !looksLikeName("Ko'rish"), true);
   ]);
   check("lab-kimyo: fenolftalein pushti", mix4.hodisalar.some((h) => h.text.includes("PUSHTI")));
   check("lab-kimyo: ishqoriy pH", mix4.ph !== null && mix4.ph > 8.2);
+
+  // 🧬 118 ELEMENT (Mendeleyev jadvali)
+  check("lab-element: 118 ta element", ELEMENTS.length === 118, ELEMENTS.length);
+  check("lab-element: tartib raqamlari 1..118", ELEMENTS.every((e, i) => e.num === i + 1));
+  check("lab-element: id noyob", new Set(ELEMENTS.map((e) => e.id)).size === 118);
+  check("lab-element: Na/C/Au mavjud", Boolean(ELEMENT_MAP.na && ELEMENT_MAP.c && ELEMENT_MAP.au));
+  check("lab-element: getReagent element topadi", getReagent("na")?.formula === "Na" && getReagent("hcl")?.formula === "HCl");
+
+  // 🧬 Sintez formulasi (valentlik bo'yicha)
+  check("lab-element: Na + Cl → NaCl", binaryFormula(ELEMENT_MAP.na, ELEMENT_MAP.cl) === "NaCl");
+  check("lab-element: Mg + O → MgO", binaryFormula(ELEMENT_MAP.mg, ELEMENT_MAP.o) === "MgO");
+  check("lab-element: Na + O → Na₂O", binaryFormula(ELEMENT_MAP.na, ELEMENT_MAP.o) === "Na₂O");
+  check("lab-element: Al + O → Al₂O₃", binaryFormula(ELEMENT_MAP.al, ELEMENT_MAP.o) === "Al₂O₃");
+
+  // 🧬 Sintez reaksiyasi — Na + Cl → NaCl (tenglama pastda chiqadi)
+  const synth = simulate([
+    { reagentId: "na", ml: 10 },
+    { reagentId: "cl", ml: 10 },
+  ]);
+  const synthEq = synth.hodisalar.find((h) => h.equation === "Na + Cl → NaCl");
+  check("lab-element: Na + Cl → NaCl tenglamasi", Boolean(synthEq), synth.hodisalar.map((h) => h.equation));
+  check("lab-element: sintez hodisasi matni", synth.hodisalar.some((h) => h.text.includes("SINTEZ")));
+
+  // Faol metall + kislota → H₂ (Na + HCl)
+  const naAcid = simulate([
+    { reagentId: "na", ml: 10 },
+    { reagentId: "hcl", ml: 25 },
+  ]);
+  check("lab-element: Na + HCl → H₂ gaz", naAcid.gas?.name.includes("H₂") === true);
+  check("lab-element: Na tenglamasi chiqadi", naAcid.hodisalar.some((h) => (h.equation ?? "").includes("Na")));
+
+  // Tenglamalar klassik reaksiyalarda ham bor
+  check("lab-kimyo: neytrallanish tenglamasi", mix1.hodisalar.some((h) => (h.equation ?? "").includes("→")));
+  check("lab-kimyo: AgCl tenglamasi", mix2.hodisalar.some((h) => (h.equation ?? "").includes("AgCl")));
+  check("lab-kimyo: CO2 tenglamasi", mix3.hodisalar.some((h) => (h.equation ?? "").includes("CO₂")));
 
   // Fizika: yopiq zanjir — lampochka yonadi
   const circ = solveCircuit([

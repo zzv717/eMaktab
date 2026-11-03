@@ -2,7 +2,7 @@
 "use client";
 
 import { useMemo, useState, type ReactNode, type RefObject } from "react";
-import { orbitBy, type SceneHandle } from "./three-utils";
+import { orbitBy, translateBy, type SceneHandle } from "./three-utils";
 
 export interface CatalogItem {
   id: string;
@@ -96,7 +96,11 @@ export function StageBox({
               {items.map((it) => (
                 <button
                   key={it.id}
-                  onClick={() => onAdd(it.id)}
+                  onClick={() => {
+                    onAdd(it.id);
+                    // loyiha bosilsa — katalog yopiladi, keyin bosqichma-bosqich ko'rsatiladi
+                    if (it.id.startsWith("p:")) setCat(false);
+                  }}
                   className="rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-left text-sm transition hover:border-teal-600 hover:bg-teal-50 active:scale-[0.97]"
                 >
                   <span className="text-base">{it.icon}</span> <span className="font-medium text-slate-800">{it.name}</span>
@@ -168,24 +172,26 @@ export function PickCard({
 
 /** 🎮 Joystik — kamerani atrofni aylantirib ko'rish uchun. */
 export function CameraPad({ handleRef }: { handleRef: RefObject<SceneHandle | null> }) {
-  const go = (o: Parameters<typeof orbitBy>[1]) => () => orbitBy(handleRef.current, o);
+  // ▲▼ — y o'qini ko'tarish/pasaytirish; ◀▶ — chap/o'ng ko'chish; ➕➖ — yaqin/uzoq
+  const mv = (dx: number, dy: number, dz: number) => () => translateBy(handleRef.current, dx, dy, dz);
+  const reset = () => orbitBy(handleRef.current, { reset: true });
   const b = "h-9 w-9 rounded-full bg-slate-800/85 text-sm font-bold text-white active:scale-90 disabled:opacity-40";
   return (
     <div className="pointer-events-auto absolute bottom-2 right-2 z-10 flex items-end gap-2">
       <div className="grid grid-cols-3 gap-1">
         <span />
-        <button className={b} onClick={go({ dPolar: -0.18 })}>▲</button>
+        <button className={b} onClick={mv(0, 0.75, 0)} title="Y o'qini tepaga">▲</button>
         <span />
-        <button className={b} onClick={go({ dAz: -0.28 })}>◀</button>
-        <button className={b} onClick={go({ reset: true })}>⌂</button>
-        <button className={b} onClick={go({ dAz: 0.28 })}>▶</button>
+        <button className={b} onClick={mv(-0.85, 0, 0)} title="Chapga">◀</button>
+        <button className={b} onClick={reset} title="Boshlang'ich holat">⌂</button>
+        <button className={b} onClick={mv(0.85, 0, 0)} title="O'ngga">▶</button>
         <span />
-        <button className={b} onClick={go({ dPolar: 0.18 })}>▼</button>
+        <button className={b} onClick={mv(0, -0.75, 0)} title="Y o'qini pastga">▼</button>
         <span />
       </div>
       <div className="flex flex-col gap-1">
-        <button className={b} onClick={go({ zoom: 0.82 })}>➕</button>
-        <button className={b} onClick={go({ zoom: 1.22 })}>➖</button>
+        <button className={b} onClick={mv(0, 0, 1.15)} title="Yaqinlashish">➕</button>
+        <button className={b} onClick={mv(0, 0, -1.15)} title="Uzoqlashish">➖</button>
       </div>
     </div>
   );

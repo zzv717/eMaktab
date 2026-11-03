@@ -5,7 +5,7 @@
 
 // ============================== 🧪 KIMYO ==============================
 
-export type ReagentKind = "acid" | "base" | "carbonate" | "salt" | "indicator" | "metal" | "water";
+export type ReagentKind = "acid" | "base" | "carbonate" | "salt" | "indicator" | "metal" | "water" | "element";
 
 export interface Reagent {
   id: string;
@@ -55,9 +55,175 @@ export const REAGENTS: Reagent[] = [
 
 export const REAGENT_MAP: Record<string, Reagent> = Object.fromEntries(REAGENTS.map((r) => [r.id, r]));
 
+// ============================== 🧬 118 KIMYOVIY ELEMENT (Mendeleyev jadvali) ==============================
+
+export type ElementCat = "metall" | "metallmas" | "yarim" | "nobil";
+
+export interface Element118 {
+  id: string;
+  symbol: string;
+  /** o'zbekcha nomi */
+  name: string;
+  /** tartib raqami */
+  num: number;
+  cat: ElementCat;
+  /** metall uchun musbat valentlik, metallmas uchun manfiy valentlik moduli */
+  valence: number;
+  color: string;
+  info: string;
+}
+
+const CAT_INFO: Record<ElementCat, string> = {
+  metall: "Oddiy modda — metall. Yaltirab turuvchi, elektr va issiqlik o'tkazuvchi.",
+  metallmas: "Oddiy modda — metallmas. Kimyoviy faol modda.",
+  yarim: "Yarim o'tkazgich element — elektronika asosi.",
+  nobil: "Nobil gaz — juda kam reaksiyaga kirishadi.",
+};
+
+const EL_COLOR: Record<string, string> = {
+  h: "#eaf3fb", c: "#3c3c3c", n: "#dcebf7", o: "#dff3ff", f: "#e9f7c8", cl: "#cfe27a",
+  br: "#a5452e", i: "#7b2d8e", s: "#f2d54e", p: "#d9534f", cu: "#c97b4a", au: "#f6c945",
+  cs: "#e5c46b", hg: "#cfd4dd", se: "#c46a2e", at: "#5b4a6b", he: "#e6eef7", ne: "#e6eef7",
+  ar: "#e6eef7", kr: "#e6eef7", xe: "#e6eef7", rn: "#e6eef7", og: "#e6eef7",
+};
+
+const EL_INFO: Record<string, string> = {
+  h: "Eng yengil element — suyultirilganda raketa yonilg'isi!",
+  he: "Og'irshovchi gaz — sharlar va zeppelinlar uchun.",
+  li: "Eng yengil metall — telefon batareyalarida ishlatiladi.",
+  c: "Hayot asosi — olmos va grafit shu elementdan!",
+  n: "Havo tarkibining 78% — o'simliklar uchun o'g'it asosi.",
+  o: "Nafas olish uchun zarur — havo tarkibining 21%.",
+  na: "Faol metall — suv bilan portlaydi! Osh tuzi (NaCl) tarkibida.",
+  mg: "Yengil metall — fonar va pirotexnikada yonadi.",
+  al: "Yengil metall — samolyot va folga materiali.",
+  si: "Qum va kompyuter chip'lari shu elementdan!",
+  p: "Suyaklar tarkibida va olovli yong'indagilar uchun.",
+  s: "Sariq sarg'ish modda — oltingugurt kislota asosi.",
+  cl: "Yashil-sariq gaz — suvni zararsizlantirishda ishlatiladi.",
+  k: "Juda faol metall — o'simliklar o'g'itida (K).",
+  ca: "Suyak va tish tarkibidagi metall.",
+  fe: "Temir — po'lat va qurilma materiali.",
+  cu: "Mis — elektr simlari va tangalar materiali.",
+  zn: "Rux — galvanizatsiya va batareyalarda.",
+  ag: "Kumush — zargarlik va elektr kontaktlari.",
+  au: "Oltin — zargarlik va elektronikada, oksidlanmaydi!",
+  hg: "Yagona suyuq metall — termometrlarda.",
+  pb: "Qo'rg'oshin — og'ir metall, o'q o'qlari va akkumulyatorlar.",
+  u: "Uran — atom elektr stansiyasi yonilg'isi.",
+};
+
+function elColor(id: string, cat: ElementCat): string {
+  return EL_COLOR[id] ?? (cat === "metall" ? "#c3ccd6" : cat === "metallmas" ? "#e8e2d8" : cat === "yarim" ? "#8fa3b8" : "#e6eef7");
+}
+
+/** 118 element — Mendeleyev jadvali (id = kichik belgi) */
+function mkElements(): Element118[] {
+  const rows: Array<[string, string, number, ElementCat, number]> = [
+    ["h", "Vodorod", 1, "metallmas", 1], ["he", "Geliy", 2, "nobil", 0],
+    ["li", "Litiy", 3, "metall", 1], ["be", "Berilliy", 4, "metall", 2], ["b", "Bor", 5, "yarim", 3],
+    ["c", "Uglerod", 6, "metallmas", 4], ["n", "Azot", 7, "metallmas", 3], ["o", "Kislorod", 8, "metallmas", 2],
+    ["f", "Ftor", 9, "metallmas", 1], ["ne", "Neon", 10, "nobil", 0],
+    ["na", "Natriy", 11, "metall", 1], ["mg", "Magniy", 12, "metall", 2], ["al", "Alyuminiy", 13, "metall", 3],
+    ["si", "Kremniy", 14, "yarim", 4], ["p", "Fosfor", 15, "metallmas", 3], ["s", "Oltingugurt", 16, "metallmas", 2],
+    ["cl", "Xlor", 17, "metallmas", 1], ["ar", "Argon", 18, "nobil", 0],
+    ["k", "Kaliy", 19, "metall", 1], ["ca", "Kalsiy", 20, "metall", 2], ["sc", "Skandiy", 21, "metall", 3],
+    ["ti", "Titan", 22, "metall", 4], ["v", "Vanadiy", 23, "metall", 5], ["cr", "Xrom", 24, "metall", 3],
+    ["mn", "Marganets", 25, "metall", 2], ["fe", "Temir", 26, "metall", 3], ["co", "Kobalt", 27, "metall", 2],
+    ["ni", "Nikel", 28, "metall", 2], ["cu", "Mis", 29, "metall", 2], ["zn", "Rux", 30, "metall", 2],
+    ["ga", "Galliy", 31, "metall", 3], ["ge", "Germaniy", 32, "yarim", 4], ["as", "Arsen", 33, "yarim", 3],
+    ["se", "Selen", 34, "metallmas", 2], ["br", "Brom", 35, "metallmas", 1], ["kr", "Kripton", 36, "nobil", 0],
+    ["rb", "Rubidiy", 37, "metall", 1], ["sr", "Stronsiy", 38, "metall", 2], ["y", "Ittriy", 39, "metall", 3],
+    ["zr", "Zirkoniy", 40, "metall", 4], ["nb", "Niobiy", 41, "metall", 5], ["mo", "Molibden", 42, "metall", 6],
+    ["tc", "Texnesiy", 43, "metall", 7], ["ru", "Ruteniy", 44, "metall", 4], ["rh", "Rodiy", 45, "metall", 3],
+    ["pd", "Palladiy", 46, "metall", 2], ["ag", "Kumush", 47, "metall", 1], ["cd", "Kadmiy", 48, "metall", 2],
+    ["in", "Indiy", 49, "metall", 3], ["sn", "Qalay", 50, "metall", 4], ["sb", "Surma", 51, "yarim", 3],
+    ["te", "Tellur", 52, "metallmas", 2], ["i", "Yod", 53, "metallmas", 1], ["xe", "Ksenon", 54, "nobil", 0],
+    ["cs", "Seziy", 55, "metall", 1], ["ba", "Bariy", 56, "metall", 2], ["la", "Lantan", 57, "metall", 3],
+    ["ce", "Seriy", 58, "metall", 3], ["pr", "Prazeodim", 59, "metall", 3], ["nd", "Neodim", 60, "metall", 3],
+    ["pm", "Prometiy", 61, "metall", 3], ["sm", "Samarium", 62, "metall", 3], ["eu", "Evropiy", 63, "metall", 3],
+    ["gd", "Gadoliniy", 64, "metall", 3], ["tb", "Terbiy", 65, "metall", 3], ["dy", "Disprozium", 66, "metall", 3],
+    ["ho", "Golmiy", 67, "metall", 3], ["er", "Erbium", 68, "metall", 3], ["tm", "Tulium", 69, "metall", 3],
+    ["yb", "Itterbiy", 70, "metall", 3], ["lu", "Lutesiy", 71, "metall", 3], ["hf", "Gafniy", 72, "metall", 4],
+    ["ta", "Tantal", 73, "metall", 5], ["w", "Volfram", 74, "metall", 6], ["re", "Reniy", 75, "metall", 7],
+    ["os", "Osmiy", 76, "metall", 4], ["ir", "Iridiy", 77, "metall", 3], ["pt", "Platina", 78, "metall", 2],
+    ["au", "Oltin", 79, "metall", 3], ["hg", "Simob", 80, "metall", 2], ["tl", "Taliy", 81, "metall", 3],
+    ["pb", "Qo'rg'oshin", 82, "metall", 2], ["bi", "Vismut", 83, "metall", 3], ["po", "Polonium", 84, "yarim", 2],
+    ["at", "Astatin", 85, "metallmas", 1], ["rn", "Radon", 86, "nobil", 0], ["fr", "Fransiy", 87, "metall", 1],
+    ["ra", "Radiy", 88, "metall", 2], ["ac", "Aktiniy", 89, "metall", 3], ["th", "Toriy", 90, "metall", 4],
+    ["pa", "Protaktiniy", 91, "metall", 5], ["u", "Uran", 92, "metall", 6], ["np", "Neptuniy", 93, "metall", 5],
+    ["pu", "Plutoniy", 94, "metall", 4], ["am", "Amerisiy", 95, "metall", 3], ["cm", "Kuriy", 96, "metall", 3],
+    ["bk", "Berkelium", 97, "metall", 3], ["cf", "Kalifornium", 98, "metall", 3], ["es", "Eynshteyniy", 99, "metall", 3],
+    ["fm", "Fermiy", 100, "metall", 3], ["md", "Mendeleviy", 101, "metall", 3], ["no", "Nobeliy", 102, "metall", 3],
+    ["lr", "Lavrensiy", 103, "metall", 3], ["rf", "Rutherfordiy", 104, "metall", 4], ["db", "Dubniy", 105, "metall", 5],
+    ["sg", "Seaborgiy", 106, "metall", 6], ["bh", "Boriy", 107, "metall", 7], ["hs", "Hassiy", 108, "metall", 6],
+    ["mt", "Meytneriy", 109, "metall", 4], ["ds", "Darmstadiy", 110, "metall", 4], ["rg", "Rentgeniy", 111, "metall", 4],
+    ["cn", "Kopernisium", 112, "metall", 2], ["nh", "Nihoniy", 113, "metall", 3], ["fl", "Fleroviy", 114, "metall", 2],
+    ["mc", "Moskoviy", 115, "metall", 4], ["lv", "Livermorium", 116, "metall", 4], ["ts", "Tennessin", 117, "metallmas", 1],
+    ["og", "Oganeson", 118, "nobil", 0],
+  ];
+  return rows.map(([id, name, num, cat, valence]) => ({
+    id,
+    symbol: id[0].toUpperCase() + id.slice(1),
+    name,
+    num,
+    cat,
+    valence,
+    color: elColor(id, cat),
+    info: EL_INFO[id] ?? CAT_INFO[cat],
+  }));
+}
+
+export const ELEMENTS: Element118[] = mkElements();
+export const ELEMENT_MAP: Record<string, Element118> = Object.fromEntries(ELEMENTS.map((e) => [e.id, e]));
+
+/** Reaktivni REAGENTS yoki 118 ELEMENT ichidan topadi */
+export function getReagent(id: string): Reagent | undefined {
+  const r = REAGENT_MAP[id];
+  if (r) return r;
+  const e = ELEMENT_MAP[id];
+  if (!e) return undefined;
+  return {
+    id: e.id,
+    name: e.name,
+    formula: e.symbol,
+    kind: "element",
+    strength: 0,
+    color: e.color,
+    info: e.info,
+  };
+}
+
+const SUB = ["₀", "₁", "₂", "₃", "₄", "₅", "₆", "₇", "₈", "₉"];
+const sub = (n: number) => (n <= 1 ? "" : String(n).split("").map((d) => SUB[Number(d)]).join(""));
+
+/**
+ * Ikki elementdan ikki tomonlama birikma formulasini tuzadi (valentliklar bo'yicha).
+ * Na(+1) + Cl(−1) → NaCl ; Mg(+2) + O(−2) → MgO ; Na(+1) + O(−2) → Na₂O
+ */
+export function binaryFormula(a: Element118, b: Element118): string {
+  const metal = a.cat === "metall" ? a : b;
+  const nonmetal = a.cat === "metall" ? b : a;
+  const va = Math.max(1, metal.valence);
+  const vb = Math.max(1, nonmetal.valence);
+  const g = (x: number, y: number): number => (y === 0 ? x : g(y, x % y));
+  const d = g(va, vb);
+  return `${metal.symbol}${sub(vb / d)}${nonmetal.symbol}${sub(va / d)}`;
+}
+
+/** Faol metall + kislota tenglamasi (H₂) */
+function metalAcidEq(e: Element118): string {
+  const s = e.symbol;
+  if (e.valence === 1) return `2${s} + 2HCl → 2${s}Cl + H₂↑`;
+  if (e.valence === 2) return `${s} + 2HCl → ${s}Cl₂ + H₂↑`;
+  return `2${s} + 6HCl → 2${s}Cl₃ + 3H₂↑`;
+}
+
 export type PourEvent = {
   text: string;
   kind: "gas" | "precipitate" | "color" | "heat" | "info";
+  /** kimyoviy tenglama — pastda ko'rsatiladi (Na + Cl → NaCl) */
+  equation?: string;
 };
 
 export interface VesselContent {
@@ -115,7 +281,7 @@ export function simulate(contents: VesselContent[], baseTemp = 20): SimResult {
   const acidCarb = Math.min(acidEq - neutral, carbEq);
   const heatUnits = neutral * 900 + acidMetall * 1400 + Math.max(0, acidCarb) * 500;
   temp += Math.min(38, heatUnits * (60 / Math.max(120, total))); // suyultirishga qarab
-  if (neutral > 0) hodisalar.push({ text: `Neytrallanish reaksiyasi — issiqlik ajraldi (+${Math.round(temp - baseTemp)}°C)`, kind: "heat" });
+  if (neutral > 0) hodisalar.push({ text: `Neytrallanish reaksiyasi — issiqlik ajraldi (+${Math.round(temp - baseTemp)}°C)`, kind: "heat", equation: "NaOH + HCl → NaCl + H₂O" });
 
   // --- pH
   const excessAcid = acidEq - neutral - carbEq * 1.0;
@@ -132,21 +298,21 @@ export function simulate(contents: VesselContent[], baseTemp = 20): SimResult {
   const alMl = ml("al");
   if (carbEq > 0 && acidEq > neutral) {
     gas = { name: "CO₂ (karbonat angidrid)" };
-    hodisalar.push({ text: "CO₂ gazi ajralib chiqdi — kuchli ko'piklanish! 🫧", kind: "gas" });
+    hodisalar.push({ text: "CO₂ gazi ajralib chiqdi — kuchli ko'piklanish! 🫧", kind: "gas", equation: "Na₂CO₃ + 2HCl → 2NaCl + H₂O + CO₂↑" });
     // Ohak suvi bo'lsa — sutsimonlashish (CaCO₃ cho'kmasi)
     if (ml("caoh2") > 0) {
-      hodisalar.push({ text: "Ohak suvi sutsimon tus oldi — CaCO₃ cho'kmasi! 🥛", kind: "precipitate" });
+      hodisalar.push({ text: "Ohak suvi sutsimon tus oldi — CaCO₃ cho'kmasi! 🥛", kind: "precipitate", equation: "Ca(OH)₂ + CO₂ → CaCO₃↓ + H₂O" });
     }
   } else if ((acidEq > 0 && (ml("zn") > 0 || ml("mg") > 0 || alMl > 0)) || (baseEq > 0 && alMl > 0)) {
     gas = { name: "H₂ (vodorod)" };
-    hodisalar.push({ text: "Vodorod gazi ajralib chiqdi — mayda pufakchalar! 🫧", kind: "gas" });
+    hodisalar.push({ text: "Vodorod gazi ajralib chiqdi — mayda pufakchalar! 🫧", kind: "gas", equation: "Zn + 2HCl → ZnCl₂ + H₂↑" });
     if (baseEq > 0 && alMl > 0 && acidEq === 0) {
       hodisalar.push({ text: "Alyuminiy ishqorda eridi — Na[Al(OH)₄] hosil bo'ldi! 🧪", kind: "info" });
     }
   }
   // Mis kislota bilan reaksiyaga kirmaydi (faollik qatori!)
   if (ml("cu") > 0 && acidEq > 0 && ml("zn") === 0 && ml("mg") === 0 && ml("al") === 0) {
-    hodisalar.push({ text: "⛔ Mis kislota bilan reaksiyaga KIRMAYDI — vodoroddan past turadi (faollik qatori).", kind: "info" });
+    hodisalar.push({ text: "⛔ Mis kislota bilan reaksiyaga KIRMAYDI — vodoroddan past turadi (faollik qatori).", kind: "info", equation: "Cu + HCl → reaksiya yo'q" });
   }
 
   // --- Cho'kmalar (eruvchanlik qoidalari)
@@ -154,38 +320,38 @@ export function simulate(contents: VesselContent[], baseTemp = 20): SimResult {
 
   // --- Maxsus reaksiyalar (rang o'zgarishi, gaz, sekin reaksiyalar)
   if (ml("kmno4") > 0 && ml("h2o2") > 0) {
-    hodisalar.push({ text: "🟣➡️⬜ Binafsha RANGSIZLANDI! KMnO₄ parchalandi — MnO₂ cho'kmasi va O₂ gazi ajraldi! 🫧", kind: "gas" });
+    hodisalar.push({ text: "🟣➡️⬜ Binafsha RANGSIZLANDI! KMnO₄ parchalandi — MnO₂ cho'kmasi va O₂ gazi ajraldi! 🫧", kind: "gas", equation: "2KMnO₄ + 3H₂O₂ → 2MnO₂ + 3O₂↑ + 2KOH + 2H₂O" });
     gas = { name: "O₂ (kislorod)" };
   }
   if (ml("na2s2o3") > 0 && acidEq > 0) {
-    hodisalar.push({ text: "⏱ SOAT REAKSIYASI: suyuqlik bir necha soniyadan keyin loyqalanadi — oltingugurt cho'kadi! (SO₂ hidi seziladi)", kind: "info" });
+    hodisalar.push({ text: "⏱ SOAT REAKSIYASI: suyuqlik bir necha soniyadan keyin loyqalanadi — oltingugurt cho'kadi! (SO₂ hidi seziladi)", kind: "info", equation: "Na₂S₂O₃ + 2HCl → 2NaCl + S↓ + SO₂↑ + H₂O" });
   }
   if (ml("feso4") > 0 && baseEq > 0 && ml("alcl3") === 0) {
     precipitate = { color: "#6b8f4e", name: "Fe(OH)₂ (yashil cho'kma)" };
-    hodisalar.push({ text: "🟢 Yashil cho'kma tushdi — Fe(OH)₂ (havo ta'sirida qo'ng'irga o'zgaradi!)", kind: "precipitate" });
+    hodisalar.push({ text: "🟢 Yashil cho'kma tushdi — Fe(OH)₂ (havo ta'sirida qo'ng'irga o'zgaradi!)", kind: "precipitate", equation: "FeSO₄ + 2NaOH → Fe(OH)₂↓ + Na₂SO₄" });
   }
 
   const hasCl = ml("hcl") > 0 || ml("nacl") > 0 || ml("fecl3") > 0;
   if (ml("agno3") > 0 && hasCl) {
     precipitate = { color: "#f2f2ee", name: "AgCl (oq cho'kma)" };
-    hodisalar.push({ text: "Oq cho'kma tushdi — AgCl (kumush xlorid) ⚪", kind: "precipitate" });
+    hodisalar.push({ text: "Oq cho'kma tushdi — AgCl (kumush xlorid) ⚪", kind: "precipitate", equation: "AgNO₃ + HCl → AgCl↓ + HNO₃" });
   } else if (ml("cuso4") > 0 && (ml("naoh") > 0 || ml("caoh2") > 0)) {
     precipitate = { color: "#7fb4e8", name: "Cu(OH)₂ (ko'k cho'kma)" };
-    hodisalar.push({ text: "Ko'k cho'kma tushdi — Cu(OH)₂ 🔵", kind: "precipitate" });
+    hodisalar.push({ text: "Ko'k cho'kma tushdi — Cu(OH)₂ 🔵", kind: "precipitate", equation: "CuSO₄ + 2NaOH → Cu(OH)₂↓ + Na₂SO₄" });
   } else if (ml("caoh2") > 0 && ml("na2co3") > 0) {
     precipitate = { color: "#efeee6", name: "CaCO₃ (oq cho'kma)" };
-    hodisalar.push({ text: "Oq cho'kma tushdi — CaCO₃ ⚪", kind: "precipitate" });
+    hodisalar.push({ text: "Oq cho'kma tushdi — CaCO₃ ⚪", kind: "precipitate", equation: "Ca(OH)₂ + Na₂CO₃ → CaCO₃↓ + 2NaOH" });
   } else if (ml("cuso4") > 0 && (ml("fe") > 0 || ml("zn") > 0)) {
     precipitate = { color: "#b06a3b", name: "Cu (mis cho'kmasi)" };
-    hodisalar.push({ text: "Metall yuzasida qo'ng'ir qatlam — mis siqib chiqarildi! 🟤", kind: "precipitate" });
+    hodisalar.push({ text: "Metall yuzasida qo'ng'ir qatlam — mis siqib chiqarildi! 🟤", kind: "precipitate", equation: "Fe + CuSO₄ → FeSO₄ + Cu↓" });
   } else if (ml("alcl3") > 0 && baseEq > 0) {
     // AMFOTER: kam ishqor → Al(OH)₃ cho'kmasi; ortiqcha ishqor → ERIYDI (tartib muhim!)
     const alNeed = k("alcl3") * 3;
     if (baseEq < alNeed * 0.92) {
       precipitate = { color: "#f0f2f0", name: "Al(OH)₃ (oq cho'kma)" };
-      hodisalar.push({ text: "Oq cho'kma tushdi — Al(OH)₃ (alyuminiy gidroksidi) ⚪", kind: "precipitate" });
+      hodisalar.push({ text: "Oq cho'kma tushdi — Al(OH)₃ (alyuminiy gidroksidi) ⚪", kind: "precipitate", equation: "AlCl₃ + 3NaOH → Al(OH)₃↓ + 3NaCl" });
     } else {
-      hodisalar.push({ text: "🌀 Cho'kma ERTALAB/KEYIN ERIYDI — ortiqcha ishqor Al(OH)₃ ni eritdi (amfoter xossa!) — tiniq eritma.", kind: "precipitate" });
+      hodisalar.push({ text: "🌀 Cho'kma ERTALAB/KEYIN ERIYDI — ortiqcha ishqor Al(OH)₃ ni eritdi (amfoter xossa!) — tiniq eritma.", kind: "precipitate", equation: "Al(OH)₃ + NaOH → Na[Al(OH)₄]" });
     }
   } else if (ml("agno3") > 0 && ml("nh3") > 0 && !hasCl) {
     // AgNO3 + NH3: kam miqdor → Ag2O qo'ng'ir cho'kma; ortiqcha NH3 → kompleks hosil bo'lib ERIYDI
@@ -193,24 +359,59 @@ export function simulate(contents: VesselContent[], baseTemp = 20): SimResult {
     const agEq = k("agno3");
     if (nh3Eq < agEq * 1.4) {
       precipitate = { color: "#8a5a2b", name: "Ag₂O (qo'ng'ir cho'kma)" };
-      hodisalar.push({ text: "Qo'ng'ir cho'kma tushdi — Ag₂O (kumush oksidi) 🟤", kind: "precipitate" });
+      hodisalar.push({ text: "Qo'ng'ir cho'kma tushdi — Ag₂O (kumush oksidi) 🟤", kind: "precipitate", equation: "2AgNO₃ + 2NH₃·H₂O → Ag₂O↓ + 2NH₄NO₃ + H₂O" });
     } else {
-      hodisalar.push({ text: "🌀 Cho'kma ERIYDI — ortiqcha ammiak kumush bilan tiniq kompleks hosil qildi [Ag(NH₃)₂]⁺!", kind: "precipitate" });
+      hodisalar.push({ text: "🌀 Cho'kma ERIYDI — ortiqcha ammiak kumush bilan tiniq kompleks hosil qildi [Ag(NH₃)₂]⁺!", kind: "precipitate", equation: "Ag₂O + 4NH₃·H₂O → 2[Ag(NH₃)₂]⁺ + 2OH⁻ + 3H₂O" });
     }
   } else if (ml("pbno32") > 0 && ml("ki") > 0) {
     // OLTIN YOMG'IR: PbI₂ — issiqda eriydi, soviganda qayta kristallashadi
     if (temp >= 45) {
-      hodisalar.push({ text: "🔥 Sariq cho'kma ISSIQDA ERIYDI — PbI₂ issiq suvda eruvchan (soviganda qayta chiqadi!)", kind: "precipitate" });
+      hodisalar.push({ text: "🔥 Sariq cho'kma ISSIQDA ERIYDI — PbI₂ issiq suvda eruvchan (soviganda qayta chiqadi!)", kind: "precipitate", equation: "Pb(NO₃)₂ + 2KI → PbI₂↓ + 2KNO₃" });
     } else {
       precipitate = { color: "#e8c22e", name: "PbI₂ (oltin-sariq cho'kma)" };
-      hodisalar.push({ text: "✨ OLTIN YOMG'IR! Sariq PbI₂ kristallari tushdi — isitib ko'ring: eriydi! 🟡", kind: "precipitate" });
+      hodisalar.push({ text: "✨ OLTIN YOMG'IR! Sariq PbI₂ kristallari tushdi — isitib ko'ring: eriydi! 🟡", kind: "precipitate", equation: "Pb(NO₃)₂ + 2KI → PbI₂↓ + 2KNO₃" });
+    }
+  }
+
+  // --- 🧬 ELEMENTLAR SINTEZI (118 element) — Na + Cl → NaCl
+  const ids = [...new Set(contents.map((c) => c.reagentId))];
+  const asElem = (id: string) => {
+    const e = ELEMENT_MAP[id];
+    if (!e) return null;
+    const k = getReagent(id)?.kind;
+    return k === "element" || k === "metal" ? e : null;
+  };
+  const metalEls = ids.map(asElem).filter((e): e is Element118 => !!e && e.cat === "metall" && e.valence > 0);
+  const nonmetalEls = ids.map(asElem).filter((e): e is Element118 => !!e && (e.cat === "metallmas" || e.cat === "yarim") && e.valence > 0 && e.id !== "h");
+  const synthPairs: Array<[Element118, Element118]> = [];
+  for (const m of metalEls) for (const n of nonmetalEls) synthPairs.push([m, n]);
+  for (const [m, n] of synthPairs.slice(0, 3)) {
+    const f = binaryFormula(m, n);
+    hodisalar.push({
+      text: `⚡ SINTEZ reaksiyasi — ${f} hosil bo'ldi! (${m.symbol} + ${n.symbol})`,
+      kind: "color",
+      equation: `${m.symbol} + ${n.symbol} → ${f}`,
+    });
+  }
+  // Faol metall + kislota → H₂ (zn/mg/fe maxsus qoidada bor — qolgan elementlar uchun)
+  const ACTIVITY = new Set(["li", "k", "ba", "ca", "na", "rb", "cs", "sr", "mn", "cr", "al", "cd", "co", "ni", "sn", "pb"]);
+  for (const m of metalEls) {
+    if (acidEq > 0 && ACTIVITY.has(m.id)) {
+      hodisalar.push({ text: `🫧 ${m.name} kislota bilan reaksiyaga kirdi — vodorod gazi ajraldi!`, kind: "gas", equation: metalAcidEq(m) });
+      gas = { name: "H₂ (vodorod)" };
+      temp += 4;
+    }
+    if (["li", "na", "k", "rb", "cs"].includes(m.id) && ml("h2o") > 0) {
+      hodisalar.push({ text: `🔥 ${m.name} SUV bilan portlovchi reaksiya — H₂ gazi va ishqor!`, kind: "gas", equation: `2${m.symbol} + 2H₂O → 2${m.symbol}OH + H₂↑` });
+      gas = { name: "H₂ (vodorod)" };
+      temp += 12;
     }
   }
 
   // --- Yakuniy rang
   let color = "#eef6ff";
   for (const c of contents) {
-    const r = REAGENT_MAP[c.reagentId];
+    const r = getReagent(c.reagentId);
     if (!r) continue;
     const w = c.ml / Math.max(1, total);
     color = mixHex(color, r.ionColor ?? r.color, Math.min(1, w * 2.2));
