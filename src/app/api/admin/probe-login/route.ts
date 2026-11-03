@@ -62,6 +62,34 @@ export async function GET(req: NextRequest) {
           return NextResponse.json({ ok: false, error: "faqat emaktab.uz manzillari" }, { status: 400 });
         }
         const html = await pageGet(result.session.cookies, rawpage);
+        // &grep=kalit1|kalit2 — xom HTML serverda grep (teglar ‹ › ko'rinishida saqlanadi)
+        const grep = sp.get("grep");
+        if (grep) {
+          const hay = html.toLowerCase();
+          const out: string[] = [`len=${html.length}`, `url=${rawpage}`];
+          for (const kw of grep.split("|").slice(0, 12)) {
+            const needle = kw.toLowerCase();
+            let idx = 0;
+            let found = 0;
+            while (found < 3) {
+              const i = hay.indexOf(needle, idx);
+              if (i < 0) break;
+              const ctx = html
+                .slice(Math.max(0, i - 160), i + 260)
+                .replace(/</g, "\u2039")
+                .replace(/>/g, "\u203a")
+                .replace(/[\x00-\x1F]/g, " ")
+                .replace(/\s+/g, " ");
+              out.push(`[${kw}#${found}] ${ctx}`);
+              idx = i + needle.length;
+              found++;
+            }
+            if (found === 0) out.push(`[${kw}] topilmadi`);
+          }
+          return new NextResponse(out.join("\n\n"), {
+            headers: { "Content-Type": "text/plain; charset=utf-8" },
+          });
+        }
         return NextResponse.json({ ok: true, url: rawpage, len: html.length, html: html.slice(0, 120000) });
       }
 
