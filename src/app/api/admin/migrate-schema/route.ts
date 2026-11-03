@@ -227,6 +227,18 @@ const STATEMENTS: { name: string; run: string }[] = [
       updated_at timestamptz NOT NULL DEFAULT now()
     )`,
   },
+  {
+    name: "create telegram_outbox (uzilgan paytda yuborilmagan xabarlar)",
+    run: `CREATE TABLE IF NOT EXISTS telegram_outbox (
+      id serial PRIMARY KEY,
+      method varchar(32) NOT NULL,
+      payload text NOT NULL,
+      attempts int NOT NULL DEFAULT 0,
+      last_error varchar(255),
+      created_at timestamptz NOT NULL DEFAULT now(),
+      sent_at timestamptz
+    )`,
+  },
   { name: "drop login_tokens (eski)", run: `DROP TABLE IF EXISTS login_tokens` },
 ];
 
