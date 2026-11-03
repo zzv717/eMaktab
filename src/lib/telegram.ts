@@ -113,7 +113,7 @@ export function healthNow(): "up" | "down" {
 
 function isNetworkErr(e: unknown): boolean {
   const m = e instanceof Error ? e.message : String(e);
-  return /timeout|o'qilmadi|ECONN|ETIMEDOUT|aborted|destroyed|socket|fetch failed|JSON/i.test(m);
+  return /timeout|o'qilmadi|ECONN|ETIMEDOUT|aborted|destroyed|socket|fetch failed|JSON|Bad Gateway|Service Unavailable|Internal Server Error|Too Many Requests|Flood/i.test(m);
 }
 
 /** Pinlangan IP orqali so'rov — SNI/api.telegram.org sertifikati bilan. */
