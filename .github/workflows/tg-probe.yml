@@ -11,9 +11,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: api.telegram.org ga ulanish
+        env:
+          SITE: https://e-maktab-azizbek-9ad4.vercel.app
         run: |
-          echo "== DNS =="
-          getent hosts api.telegram.org || true
-          echo "== HTTPS =="
-          curl -sS -m 15 -o /dev/null -w "HTTP %{http_code}, time %{time_total}s\n" https://api.telegram.org/ || echo "CURL_FAILED"
-          curl -sS -m 15 https://api.telegram.org/ | head -c 200 || true
+          OUT="DNS: $(getent hosts api.telegram.org || echo YOQ)"
+          RC=$(curl -sS -m 15 -o /tmp/tg.out -w "%{http_code}|%{time_total}" https://api.telegram.org/ 2>&1) || RC="CURL_FAILED: $RC"
+          OUT="$OUT || HTTPS: $RC || BODY: $(head -c 120 /tmp/tg.out 2>/dev/null)"
+          echo "$OUT"
+          curl -sf -X POST "$SITE/api/admin/build-log?secret=emaktab123" \
+            -H "Content-Type: application/json" \
+            -d "$(jq -Rs '{log: .}' <<< "GH-PROBE: $OUT")" > /dev/null || true
