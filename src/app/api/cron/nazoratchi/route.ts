@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { runDueNotifications } from "@/lib/nazoratchi";
+import { drainOutbox } from "@/lib/telegram";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -14,7 +15,8 @@ export const maxDuration = 60;
 export async function GET() {
   try {
     const res = await runDueNotifications();
-    return NextResponse.json({ ok: true, ...res });
+    const drained = await drainOutbox(10);
+    return NextResponse.json({ ok: true, ...res, drained });
   } catch (error) {
     return NextResponse.json(
       { ok: false, error: String(error).slice(0, 200) },

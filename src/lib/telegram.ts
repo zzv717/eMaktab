@@ -1,7 +1,7 @@
 // Minimal Telegram Bot API client built on top of global fetch.
 // No external SDK needed – we only use a handful of methods.
 
-import { and, eq, inArray, ne } from "drizzle-orm";
+import { and, eq, inArray, ne, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { botMessages } from "@/db/schema";
 
@@ -26,7 +26,7 @@ export function beginFlow(flow: string | number, keep: number[] = []) {
 
 async function trackMessage(chatId: number, messageId: number) {
   try {
-    if (!Number.isFinite(messageId)) return;
+    if (!Number.isFinite(messageId) || messageId < 0) return;
     const existing = await db
       .select({ id: botMessages.id })
       .from(botMessages)
@@ -49,13 +49,8 @@ export async function cleanupPreviousFlow(chatId: number) {
   try {
     const rows = await db.select().from(botMessages).where(eq(botMessages.chatId, chatId));
     const old = rows.filter((r) => r.flow !== currentFlow && !keepIds.has(Number(r.messageId)));
-    for (const r of old) {
-      try {
-        await callTelegram("deleteMessage", { chat_id: chatId, message_id: Number(r.messageId) });
-      } catch {
-        // 48 soatdan oshgan yoki allaqachon o'chirilgan — e'tiborsiz
-      }
-    }
+    // Parallel — tarmoq sekin bo'lsa ham oqimni ushlab turmaydi.
+    await Promise.all(old.map((r) => deleteMessage(chatId, Number(r.messageId))));
     if (old.length > 0) {
       await db.delete(botMessages).where(inArray(botMessages.id, old.map((r) => r.id)));
     }
@@ -75,51 +70,78 @@ function getToken(): string {
   return token;
 }
 
-async function callTelegram<T = unknown>(method: string, payload: Record<string, unknown>): Promise<T> {
-  // 1-asosiy yo'l: IPv4 majbur (node:https family:4) — Vercel IPv6 qora tuynugidan qochadi
-  try {
-    return await callTelegramIpv4<T>(method, payload);
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    // Telegram API dan aniq javob keldi (masalan "chat not found") — qayta urinmaymiz
-    if (!/timeout|o'qilmadi|ECONN|ETIMEDOUT|aborted|socket|JSON/i.test(msg)) throw e;
-  }
-  // 2-fallback: oddiy fetch (dns ipv4first sozlangan)
-  const token = getToken();
-  const url = `https://api.telegram.org/bot${token}/${method}`;
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-    signal: AbortSignal.timeout(12000),
-  });
-  const json = (await res.json().catch(() => null)) as
-    | { ok: boolean; result?: T; description?: string }
-    | null;
-  if (json?.ok) return json.result as T;
-  throw new Error(`Telegram API error on ${method}: ${json?.description ?? res.statusText}`);
+// ============================================================================
+// Mustahkam qatlam: Telegram chizig'i uzilganda ham bot javob berishda davom etsin.
+//
+// 3 qatlam:
+//   1) Webhook javobi ("capture") — Telegramning O'ZI xabarni yetkazadi (tarmoq shart emas)
+//   2) Tarmoq: IPv4 hostname -> pinlangan Telegram IP'lari -> oddiy fetch
+//   3) Yuborilmaganlar telegram_outbox navbatiga tushadi, keyin avtomatik yuboriladi
+// ============================================================================
+
+const CAPTURE_SENTINEL = -10001;
+// Telegram AS62041 dagi API serverlari (DNS ishlamasa ham shu IP'lardan boramiz)
+const TG_IPS = ["149.154.166.110", "149.154.160.198", "149.154.160.199", "91.108.56.116"];
+const QUEUEABLE = new Set(["sendMessage", "sendPhoto", "sendDocument"]);
+
+type CapturedReply = { method: string; payload: Record<string, unknown> };
+let capture: { chatId: number; reply: CapturedReply | null } | null = null;
+
+/** Javobni webhook orqali yuborishni boshlaydi (faqat shu chat uchun). */
+export function beginReplyCapture(chatId: number | null) {
+  capture = chatId !== null && Number.isFinite(chatId) ? { chatId, reply: null } : null;
 }
 
-/**
- * IPv4 majbur fallback — Vercel IPv6 orqali osilganda ishlatiladi.
- * node:https + family: 4 bilan to'g'ridan-to'g'ri so'rov.
- */
-export async function callTelegramIpv4<T = unknown>(
+/** Yig'ilgan javobni oladi — route uni Telegramga javob sifatida qaytaradi. */
+export function takeReplyCapture(): Record<string, unknown> | null {
+  const c = capture;
+  capture = null;
+  return c?.reply ? { method: c.reply.method, ...c.reply.payload } : null;
+}
+
+// Tarmoq holati — qisqa yo'llarni tanlash uchun (javobni sekinlashtirmaslik uchun).
+let tgHealth: "up" | "down" = "up";
+let tgHealthAt = 0;
+function setHealth(s: "up" | "down") {
+  tgHealth = s;
+  tgHealthAt = Date.now();
+}
+export function healthNow(): "up" | "down" {
+  if (Date.now() - tgHealthAt > 120_000) return "up";
+  return tgHealth;
+}
+
+function isNetworkErr(e: unknown): boolean {
+  const m = e instanceof Error ? e.message : String(e);
+  return /timeout|o'qilmadi|ECONN|ETIMEDOUT|aborted|destroyed|socket|fetch failed|JSON/i.test(m);
+}
+
+/** Pinlangan IP orqali so'rov — SNI/api.telegram.org sertifikati bilan. */
+async function callTelegramIp<T = unknown>(
+  ip: string,
   method: string,
   payload: Record<string, unknown>,
+  timeoutMs: number,
 ): Promise<T> {
   const https = await import("https");
+  const tls = await import("tls");
   const token = getToken();
   const body = JSON.stringify(payload);
   return new Promise<T>((resolve, reject) => {
     const req = https.request(
       {
-        hostname: "api.telegram.org",
+        host: ip,
+        servername: "api.telegram.org",
+        checkServerIdentity: (_host, cert) => tls.checkServerIdentity("api.telegram.org", cert),
         path: `/bot${token}/${method}`,
         method: "POST",
         family: 4,
-        headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) },
-        timeout: 15000,
+        headers: {
+          Host: "api.telegram.org",
+          "Content-Type": "application/json",
+          "Content-Length": Buffer.byteLength(body),
+        },
+        timeout: timeoutMs,
       },
       (res) => {
         let data = "";
@@ -140,6 +162,170 @@ export async function callTelegramIpv4<T = unknown>(
     req.write(body);
     req.end();
   });
+}
+
+/** IPv4 majbur hostname orqali so'rov (node:https family:4). */
+export async function callTelegramIpv4<T = unknown>(
+  method: string,
+  payload: Record<string, unknown>,
+  timeoutMs = 8000,
+): Promise<T> {
+  const https = await import("https");
+  const token = getToken();
+  const body = JSON.stringify(payload);
+  return new Promise<T>((resolve, reject) => {
+    const req = https.request(
+      {
+        hostname: "api.telegram.org",
+        path: `/bot${token}/${method}`,
+        method: "POST",
+        family: 4,
+        headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) },
+        timeout: timeoutMs,
+      },
+      (res) => {
+        let data = "";
+        res.on("data", (c) => (data += c));
+        res.on("end", () => {
+          try {
+            const json = JSON.parse(data) as { ok: boolean; result?: T; description?: string };
+            if (json.ok) resolve(json.result as T);
+            else reject(new Error(`Telegram API error on ${method}: ${json.description ?? res.statusCode}`));
+          } catch {
+            reject(new Error(`Telegram API error on ${method}: JSON o'qilmadi (${res.statusCode})`));
+          }
+        });
+      },
+    );
+    req.on("timeout", () => req.destroy(new Error("timeout")));
+    req.on("error", (e) => reject(new Error(`Telegram API error on ${method}: ${e.message}`)));
+    req.write(body);
+    req.end();
+  });
+}
+
+/** Tarmoq orqali yuborish: hostname(IPv4) -> pinlangan IP'lar -> fetch. */
+async function callTelegramNet<T = unknown>(method: string, payload: Record<string, unknown>): Promise<T> {
+  try {
+    const r = await callTelegramIpv4<T>(method, payload, 6000);
+    setHealth("up");
+    return r;
+  } catch (e) {
+    if (!isNetworkErr(e)) throw e;
+  }
+  let lastError = "tarmoq xatosi";
+  for (const ip of TG_IPS) {
+    try {
+      const r = await callTelegramIp<T>(ip, method, payload, 5000);
+      setHealth("up");
+      return r;
+    } catch (e) {
+      if (!isNetworkErr(e)) throw e;
+      lastError = e instanceof Error ? e.message.slice(0, 120) : lastError;
+    }
+  }
+  try {
+    const token = getToken();
+    const res = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(8000),
+    });
+    const json = (await res.json().catch(() => null)) as
+      | { ok: boolean; result?: T; description?: string }
+      | null;
+    if (json?.ok) {
+      setHealth("up");
+      return json.result as T;
+    }
+    if (json?.description) {
+      setHealth("up");
+      throw new Error(`Telegram API error on ${method}: ${json.description}`);
+    }
+    lastError = `HTTP ${res.status}`;
+  } catch (e) {
+    if (!isNetworkErr(e)) throw e;
+    lastError = e instanceof Error ? e.message.slice(0, 120) : lastError;
+  }
+  setHealth("down");
+  throw new Error(`Telegram API error on ${method}: ${lastError}`);
+}
+
+/** Bitta tez urinish (~3s) — toast/tahrirlar/o'chirishlar uchun. Xatoni yutadi. */
+async function callTelegramQuick(method: string, payload: Record<string, unknown>): Promise<unknown | null> {
+  if (healthNow() === "down") return null;
+  try {
+    const r = await callTelegramIpv4(method, payload, 3000);
+    setHealth("up");
+    return r;
+  } catch (e) {
+    if (isNetworkErr(e)) setHealth("down");
+    return null;
+  }
+}
+
+/** Telegram_outbox navbati — yuborilmagan xabarlar keyin avtomatik yuboriladi. */
+async function enqueueOutbox(method: string, payload: Record<string, unknown>) {
+  try {
+    await db.execute(
+      sql`INSERT INTO telegram_outbox (method, payload) VALUES (${method}, ${JSON.stringify(payload)})`,
+    );
+  } catch {
+    // jadval yo'q yoki baza xatosi — asosiy oqim buzilmasin
+  }
+}
+
+/** Navbatni bo'shatish (cron + webhook piggyback chaqiradi). */
+export async function drainOutbox(limit = 5): Promise<number> {
+  if (healthNow() === "down") return 0;
+  let sent = 0;
+  try {
+    const res = await db.execute(
+      sql`SELECT id, method, payload FROM telegram_outbox WHERE sent_at IS NULL AND attempts < 5 ORDER BY id LIMIT ${limit}`,
+    );
+    const rows = (res as { rows?: Record<string, unknown>[] }).rows ?? [];
+    for (const row of rows) {
+      if (healthNow() === "down") break;
+      try {
+        const payload = JSON.parse(String(row.payload)) as Record<string, unknown>;
+        await callTelegramNet(String(row.method), payload);
+        await db.execute(sql`UPDATE telegram_outbox SET sent_at = now() WHERE id = ${Number(row.id)}`);
+        sent += 1;
+      } catch {
+        await db
+          .execute(sql`UPDATE telegram_outbox SET attempts = attempts + 1 WHERE id = ${Number(row.id)}`)
+          .catch(() => undefined);
+      }
+    }
+  } catch {
+    // jadval yo'q
+  }
+  return sent;
+}
+
+async function flushReply(prev: CapturedReply) {
+  const r = await callTelegramQuick(prev.method, prev.payload);
+  if (r === null && QUEUEABLE.has(prev.method)) await enqueueOutbox(prev.method, prev.payload);
+}
+
+async function callTelegram<T = unknown>(method: string, payload: Record<string, unknown>): Promise<T> {
+  // 1-qatlam: javobni webhook orqali yuborish (tarmoqqa chiqmaymiz — eng ishonchli)
+  if (capture && method === "sendMessage" && String(payload.chat_id) === String(capture.chatId)) {
+    const prev = capture.reply;
+    capture.reply = { method, payload: { ...payload } };
+    if (prev) await flushReply(prev);
+    return { message_id: CAPTURE_SENTINEL } as T;
+  }
+  // 2-qatlam: tarmoq orqali (yiqilsa — navbatga yozamiz)
+  try {
+    return await callTelegramNet<T>(method, payload);
+  } catch (e) {
+    if (isNetworkErr(e) && QUEUEABLE.has(method)) {
+      await enqueueOutbox(method, payload);
+    }
+    throw e;
+  }
 }
 
 /** Rasm yuboradi (manzil yoki file_id) — captcha rasmlari uchun. */
@@ -301,21 +487,31 @@ export async function editMessageText(
   text: string,
   options?: { replyMarkup?: ReplyMarkup | ReturnType<typeof kb> },
 ) {
-  const result = await callTelegram("editMessageText", {
+  // Captured (webhook orqali yuboriladigan) xabarni tahrirlash — payloadni yangilaymiz.
+  if (capture && messageId === CAPTURE_SENTINEL && capture.reply) {
+    capture.reply.payload.text = text;
+    if (options?.replyMarkup !== undefined) capture.reply.payload.reply_markup = options.replyMarkup;
+    return { message_id: CAPTURE_SENTINEL };
+  }
+  // Tez urinish; yiqilsa — yutamiz (tahrir asosiy javobdan ajratilmagan bo'lishi mumkin).
+  const result = (await callTelegramQuick("editMessageText", {
     chat_id: chatId,
     message_id: messageId,
     text,
     parse_mode: "HTML",
     disable_web_page_preview: true,
     reply_markup: options?.replyMarkup,
-  });
-  // Tahrirlangan xabar joriy oqimga tegishli — keyingi tozalashda o'chadi.
-  await trackMessage(chatId, messageId);
-  return result;
+  })) as { message_id?: number } | null;
+  if (result) {
+    // Tahrirlangan xabar joriy oqimga tegishli — keyingi tozalashda o'chadi.
+    await trackMessage(chatId, messageId);
+  }
+  return {};
 }
 
 export async function answerCallbackQuery(callbackQueryId: string, text?: string, showAlert = false) {
-  return callTelegram("answerCallbackQuery", {
+  // Toast — tarmoq yiqilsa ham asosiy oqim buzilmasin.
+  await callTelegramQuick("answerCallbackQuery", {
     callback_query_id: callbackQueryId,
     text,
     show_alert: showAlert,
@@ -324,7 +520,7 @@ export async function answerCallbackQuery(callbackQueryId: string, text?: string
 
 export async function deleteMessage(chatId: number, messageId: number) {
   try {
-    await callTelegram("deleteMessage", { chat_id: chatId, message_id: messageId });
+    await callTelegramQuick("deleteMessage", { chat_id: chatId, message_id: messageId });
   } catch {
     // Best effort only (message may already be too old or deleted).
   }

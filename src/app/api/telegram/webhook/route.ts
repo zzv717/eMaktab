@@ -1,7 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
 import { handleTelegramUpdate } from "@/lib/bot";
 import { runDueNotifications } from "@/lib/nazoratchi";
-import type { TelegramUpdate } from "@/lib/telegram";
+import {
+  beginReplyCapture,
+  drainOutbox,
+  healthNow,
+  takeReplyCapture,
+  type TelegramUpdate,
+} from "@/lib/telegram";
+
+function chatIdOf(u: TelegramUpdate): number | null {
+  const m = u as unknown as { message?: { chat?: { id?: number } } };
+  const cb = u as unknown as {
+    callback_query?: { message?: { chat?: { id?: number } }; from?: { id?: number } };
+  };
+  return m.message?.chat?.id ?? cb.callback_query?.message?.chat?.id ?? cb.callback_query?.from?.id ?? null;
+}
 
 export const dynamic = "force-dynamic";
 // Faollashtirish kabi uzoq jarayonlar uchun (Vercel Fluid: 5 daqiqagacha)
@@ -23,6 +37,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "invalid json" }, { status: 400 });
   }
 
+  // Javobni yig'amiz — Telegram ushbu JSON ni O'ZI yuboradi (tarmoq uzilsa ham ishlaydi!)
+  beginReplyCapture(chatIdOf(update));
   try {
     await handleTelegramUpdate(update);
   } catch (error) {
@@ -30,16 +46,24 @@ export async function POST(req: NextRequest) {
     // but log the error for debugging.
     console.error("Failed to handle Telegram update", error);
   }
+  const reply = takeReplyCapture();
 
-  // 👁 Nazoratchi bildirishnomalari — cron tushmasa ham, har qanday faollikda
-  // tekshiriladi (ichida 2 daqiqalik qulf bor — og'ir emas).
-  try {
-    await runDueNotifications();
-  } catch {
-    /* bildirishnoma xatosi javobga xalaqit bermaydi */
+  // 👁 Nazoratchi bildirishnomalari + outbox navbati — faqat tarmoq sog'lom bo'lsa
+  // (javobni sekinlashtirmaslik uchun; tushmasa keyingi safar/cron yetkazadi).
+  if (healthNow() !== "down") {
+    try {
+      await runDueNotifications();
+    } catch {
+      /* bildirishnoma xatosi javobga xalaqit bermaydi */
+    }
+    try {
+      await drainOutbox(3);
+    } catch {
+      /* navbat xatosi javobga xalaqit bermaydi */
+    }
   }
 
-  return NextResponse.json({ ok: true });
+  return NextResponse.json(reply ?? { ok: true });
 }
 
 export async function GET() {
