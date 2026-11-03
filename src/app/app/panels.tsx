@@ -34,6 +34,19 @@ function Loading() {
   return <p className="p-6 text-center text-slate-400">⏳ Yuklanmoqda…</p>;
 }
 
+/** Butun jarayon fon kechadi — foydalanuvchi faqat shu loading'ni ko'radi. */
+function BatchOverlay({ label }: { label: string }) {
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-slate-900/40 px-6 backdrop-blur-[2px]">
+      <div className="w-full max-w-xs rounded-3xl bg-white px-8 py-8 text-center shadow-2xl">
+        <div className="mx-auto h-11 w-11 animate-spin rounded-full border-4 border-teal-200 border-t-teal-700" />
+        <p className="mt-4 text-sm font-semibold text-slate-800">{label}</p>
+        <p className="mt-1 text-xs text-slate-400">Iltimos kuting — sahifani yopmang</p>
+      </div>
+    </div>
+  );
+}
+
 function PersonTabs({
   persons,
   active,
@@ -631,6 +644,8 @@ export function MaqomPanel() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
+  const [batch, setBatch] = useState(false);
+  const [progress, setProgress] = useState("");
 
   const load = useCallback(async (cid: string, subj: string) => {
     setError("");
@@ -668,12 +683,38 @@ export function MaqomPanel() {
     }
   };
 
+  // 🔄 Hammasiga maqom berish — fon kechadi, foydalanuvchi faqat loading ko'radi
+  const markAll = async () => {
+    const pending = rows.filter((r) => !r.maqomDone);
+    if (pending.length === 0) return;
+    setBatch(true);
+    setError("");
+    setNotice("");
+    let done = 0;
+    let fail = 0;
+    for (let i = 0; i < pending.length; i++) {
+      setProgress(`Maqom berilmoqda… (${i + 1}/${pending.length})`);
+      const r = await api<Ok & { reason?: string }>("/api/pwa/data/maqom", {
+        workId: pending[i].workId,
+        lessonId: pending[i].lessonId,
+      });
+      if (r.ok) done++;
+      else fail++;
+    }
+    setBatch(false);
+    setProgress("");
+    setNotice(fail > 0 ? `⚠️ ${done} ta berildi, ${fail} ta bajarilmadi` : `✅ Yakunlandi — ${done} ta maqom berildi`);
+    void load(classId, subject);
+  };
+
   if (error && classes === null) return <Err msg={error} />;
   if (classes === null) return <Loading />;
 
   const current = classes.find((c) => c.classId === classId);
+  const pending = rows.filter((r) => !r.maqomDone);
   return (
     <div>
+      {batch && <BatchOverlay label={progress || "Maqom berilmoqda…"} />}
       {notice && <p className="mb-3 rounded-2xl bg-emerald-50 p-3 text-sm text-emerald-700">{notice}</p>}
       {error && <Err msg={error} />}
 
@@ -719,28 +760,41 @@ export function MaqomPanel() {
 
       {classId && subject && (
         <div className={`${card} mb-3`}>
-          <p className="font-semibold text-slate-900">3️⃣ Uy vazifalari</p>
-          {rows.length === 0 && <p className="mt-2 text-sm text-slate-400">Vazifalar topilmadi.</p>}
+          <div className="flex items-center justify-between gap-3">
+            <p className="font-semibold text-slate-900">3️⃣ Uy vazifalari</p>
+            {pending.length > 1 && (
+              <button
+                onClick={() => void markAll()}
+                disabled={busy || batch}
+                className={`${btn} shrink-0 bg-teal-700 text-white`}
+              >
+                🔄 Hammasiga maqom berish ({pending.length})
+              </button>
+            )}
+          </div>
+          {pending.length === 0 && (
+            <p className="mt-2 text-sm text-slate-400">
+              {rows.length > 0 ? "Barcha vazifalarga maqom berilgan ✅" : "Vazifalar topilmadi."}
+            </p>
+          )}
           <div className="mt-2 space-y-2">
-            {rows.map((r) => (
+            {pending.map((r) => (
               <div key={r.workId} className="rounded-2xl bg-slate-50 p-3">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <p className="text-sm text-slate-700">
-                      <span className="mr-1">{r.maqomDone ? "🟢" : "🔴"}</span>
+                      <span className="mr-1">🔴</span>
                       {r.dateText} — {r.lessonNo}
                     </p>
                     <p className="mt-0.5 line-clamp-2 text-xs text-slate-500">{r.description}</p>
                   </div>
-                  {!r.maqomDone && (
-                    <button
-                      onClick={() => void markDone(r)}
-                      disabled={busy}
-                      className={`${btn} shrink-0 bg-teal-700 text-white`}
-                    >
-                      ✅ Bajarildi
-                    </button>
-                  )}
+                  <button
+                    onClick={() => void markDone(r)}
+                    disabled={busy || batch}
+                    className={`${btn} shrink-0 bg-teal-700 text-white`}
+                  >
+                    ✅ Bajarildi
+                  </button>
                 </div>
               </div>
             ))}
@@ -830,102 +884,176 @@ export function SinfimPanel() {
 }
 
 // ------------------------------------------------------ ✅ Darsni o'tildi qilish
+type ConductLesson = {
+  lessonId: string;
+  workId: string;
+  dateText: string;
+  lessonNo: string;
+  description: string;
+  subject: string;
+  className: string;
+};
+
 export function ConductPanel() {
-  const [data, setData] = useState<{
-    classes: { classId: string; className: string; subjects: string[] }[];
-    date: string;
-    lessons: { number: number; subject: string; date: string }[];
-  } | null>(null);
+  const [classes, setClasses] = useState<TeacherClass[] | null>(null);
+  const [classId, setClassId] = useState("");
+  const [subject, setSubject] = useState("");
+  const [lessons, setLessons] = useState<ConductLesson[]>([]);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
-  const [classId, setClassId] = useState("");
+  const [batch, setBatch] = useState(false);
+  const [progress, setProgress] = useState("");
+  const [loadingList, setLoadingList] = useState(false);
 
-  const load = useCallback(async (cid: string) => {
+  const load = useCallback(async (cid: string, subj: string) => {
     setError("");
+    const qs = new URLSearchParams();
+    if (cid) qs.set("classId", cid);
+    if (subj) qs.set("subject", subj);
+    if (cid && subj) setLoadingList(true);
     const r = await api<{
       ok: boolean;
       error?: string;
-      classes: { classId: string; className: string; subjects: string[] }[];
-      date: string;
-      lessons: { number: number; subject: string; date: string }[];
-    }>(`/api/pwa/data/conduct${cid ? `?classId=${encodeURIComponent(cid)}` : ""}`);
+      classes: TeacherClass[];
+      lessons: ConductLesson[];
+      reason?: string;
+    }>(`/api/pwa/data/conduct?${qs}`);
+    setLoadingList(false);
     if (!r.ok) setError(r.error ?? "Yuklab bo'lmadi");
-    else setData(r);
+    else {
+      setClasses(r.classes);
+      setLessons(r.lessons ?? []);
+    }
   }, []);
 
   useEffect(() => {
-    void load(classId);
-  }, [classId, load]);
+    void load("", "");
+  }, [load]);
 
-  const mark = async (l: { number: number; subject: string; date: string }) => {
-    const g = data?.classes.find((c) => c.classId === classId);
-    if (!g) return;
+  const mark = async (l: ConductLesson) => {
     setBusy(true);
     setError("");
     setNotice("");
-    const r = await api<Ok & { message?: string }>("/api/pwa/data/conduct", {
-      classId: g.classId,
-      className: g.className,
-      subjectName: l.subject,
-      date: l.date,
-      lessonNumber: l.number,
-    });
+    const r = await api<Ok & { message?: string }>("/api/pwa/data/conduct", { lessonId: l.lessonId });
     setBusy(false);
     if (!r.ok) setError(r.error ?? "Belgilab bo'lmadi");
     else {
-      setNotice(`✅ ${l.number}-dars (${l.subject}) o'tildi deb belgilandi`);
-      void load(classId);
+      setNotice(`✅ ${l.dateText} — ${l.lessonNo} o'tildi deb belgilandi`);
+      void load(classId, subject);
     }
   };
 
-  if (error && !data) return <Err msg={error} />;
-  if (!data) return <Loading />;
+  // 🔄 Hammasini o'tildi deb belgilash — fon kechadi, foydalanuvchi faqat loading ko'radi
+  const markAll = async () => {
+    if (lessons.length === 0) return;
+    setBatch(true);
+    setError("");
+    setNotice("");
+    let done = 0;
+    let fail = 0;
+    for (let i = 0; i < lessons.length; i++) {
+      setProgress(`Darslar o'tildi qilinmoqda… (${i + 1}/${lessons.length})`);
+      const r = await api<Ok>("/api/pwa/data/conduct", { lessonId: lessons[i].lessonId });
+      if (r.ok) done++;
+      else fail++;
+    }
+    setBatch(false);
+    setProgress("");
+    setNotice(fail > 0 ? `⚠️ ${done} ta qilindi, ${fail} ta bajarilmadi` : `✅ Yakunlandi — ${done} ta dars o'tildi deb belgilandi`);
+    void load(classId, subject);
+  };
 
+  if (error && classes === null) return <Err msg={error} />;
+  if (classes === null) return <Loading />;
+
+  const current = classes.find((c) => c.classId === classId);
   return (
     <div>
+      {batch && <BatchOverlay label={progress || "Darslar o'tildi qilinmoqda…"} />}
       {notice && <p className="mb-3 rounded-2xl bg-emerald-50 p-3 text-sm text-emerald-700">{notice}</p>}
       {error && <Err msg={error} />}
 
       <div className={`${card} mb-3`}>
-        <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Sinfni tanlang</p>
+        <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">1️⃣ Sinf</p>
         <div className="mt-2 flex flex-wrap gap-2">
-          {data.classes.map((c) => (
+          {classes.map((c) => (
             <button
               key={c.classId}
-              onClick={() => setClassId(c.classId)}
+              onClick={() => {
+                setClassId(c.classId);
+                setSubject("");
+                setLessons([]);
+                void load(c.classId, "");
+              }}
               className={`${chip} ${c.classId === classId ? "bg-teal-700 text-white" : "bg-slate-100 text-slate-600"}`}
             >
               🏫 {c.className}
             </button>
           ))}
         </div>
+
+        {current && (
+          <>
+            <p className="mt-4 text-xs font-semibold uppercase tracking-wide text-slate-400">2️⃣ Fan</p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {current.subjects.map((s) => (
+                <button
+                  key={s}
+                  onClick={() => {
+                    setSubject(s);
+                    void load(classId, s);
+                  }}
+                  className={`${chip} ${s === subject ? "bg-teal-700 text-white" : "bg-slate-100 text-slate-600"}`}
+                >
+                  📖 {s}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
       </div>
 
-      {classId && (
+      {classId && subject && (
         <div className={`${card} mb-3`}>
-          <p className="font-semibold text-slate-900">📅 Bugungi darslar ({fmtDate(data.date)})</p>
-          {data.lessons.length === 0 && (
-            <p className="mt-2 text-sm text-slate-400">Bugun uchun dars topilmadi.</p>
+          <div className="flex items-center justify-between gap-3">
+            <p className="font-semibold text-slate-900">3️⃣ O'tilmagan darslar</p>
+            {lessons.length > 1 && (
+              <button
+                onClick={() => void markAll()}
+                disabled={busy || batch}
+                className={`${btn} shrink-0 bg-teal-700 text-white`}
+              >
+                🔄 Hammasini o'tildi deb belgilash ({lessons.length})
+              </button>
+            )}
+          </div>
+          {loadingList && <Loading />}
+          {!loadingList && lessons.length === 0 && (
+            <p className="mt-2 text-sm text-slate-400">Barcha darslar o'tilgan ✅</p>
           )}
           <div className="mt-2 space-y-2">
-            {data.lessons.map((l) => (
-              <div key={l.number} className="flex items-center justify-between rounded-2xl bg-slate-50 p-3">
-                <div>
-                  <p className="text-sm font-medium text-slate-800">
-                    {l.number}. {l.subject}
-                  </p>
-                  <p className="text-xs text-slate-400">{fmtDate(l.date)}</p>
+            {!loadingList &&
+              lessons.map((l) => (
+                <div key={l.lessonId} className="rounded-2xl bg-slate-50 p-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-sm text-slate-700">
+                        <span className="mr-1">📅</span>
+                        {l.dateText} — {l.lessonNo}
+                      </p>
+                      <p className="mt-0.5 line-clamp-2 text-xs text-slate-500">{l.description}</p>
+                    </div>
+                    <button
+                      onClick={() => void mark(l)}
+                      disabled={busy || batch}
+                      className={`${btn} shrink-0 bg-teal-700 text-white`}
+                    >
+                      ✅ O'tildi
+                    </button>
+                  </div>
                 </div>
-                <button
-                  onClick={() => void mark(l)}
-                  disabled={busy}
-                  className={`${btn} shrink-0 bg-teal-700 text-white`}
-                >
-                  ✅ O'tildi
-                </button>
-              </div>
-            ))}
+              ))}
           </div>
         </div>
       )}

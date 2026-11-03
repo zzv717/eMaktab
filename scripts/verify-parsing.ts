@@ -34,6 +34,8 @@ import {
   parseHomeworkSelects,
   parseHomeworkEditForm,
   parseHomeworkDetailModel,
+  parseLessonHeldPage,
+  hwDateTextToDayKey,
   parseImportMappingRows,
   mapImportColumn,
   parseImportCheck,
@@ -781,6 +783,30 @@ check("looksLikeName: ko'rish rad", !looksLikeName("Ko'rish"), true);
   check("oqituvchi: class route", src("app/api/pwa/data/class/route.ts").includes("fetchClassMembers"));
   check("oqituvchi: conduct route", src("app/api/pwa/data/conduct/route.ts").includes("setLessonConducted"));
   check("oqituvchi: menyu 9 ta", src("app/app/app-client.tsx").includes("conduct") && src("app/app/app-client.tsx").includes("sinfim"));
+}
+
+{
+  // ✅ Dars o'tildi (held) — haqiqiy /v2 shartnoma (a=elh + held checkbox)
+  const src = (rel: string) => readFileSync(new URL(`../src/${rel}`, import.meta.url), "utf-8");
+  const page = parseLessonHeldPage(
+    'global_urlLessonHeldEdit = "https://schools.emaktab.uz/v2/ajax?xss=abc&a=elh"; <input class="blueCheckbox" type="checkbox" id="held" data-lesson="123" name="held" value="1" checked> <label for="held">Dars o\u2018tildi.</label>',
+  );
+  check("held: checkbox aniqlanadi", page.exists);
+  check("held: checked holat", page.held === true);
+  check("held: elh manzili", (page.heldEditUrl ?? "").includes("a=elh"));
+  const page2 = parseLessonHeldPage('<input class="blueCheckbox" type="checkbox" id="held" data-lesson="9" name="held" value="1">');
+  check("held: checked emas", page2.exists && page2.held === false);
+  check("held: yo'q sahifa", parseLessonHeldPage("<div></div>").exists === false);
+  check("held: Bugun", hwDateTextToDayKey("Bugun") === tashkentDayKey());
+  check("held: Kecha", hwDateTextToDayKey("Kecha") === shiftDayKey(tashkentDayKey(), -1));
+  check("held: 30 oktabr 2026", hwDateTextToDayKey("30 oktabr 2026") === "2026-10-30");
+  check("held: noma'lum sana", hwDateTextToDayKey("xxx") === null);
+  check("held: panel Hammasini tugmasi", src("app/app/panels.tsx").includes("Hammasini o'tildi deb belgilash"));
+  check("held: panel Hammasiga maqom", src("app/app/panels.tsx").includes("Hammasiga maqom berish"));
+  check("held: panel faqat o'tilmaganlar", src("app/app/panels.tsx").includes("O'tilmagan darslar"));
+  check("held: panel BatchOverlay", src("app/app/panels.tsx").includes("BatchOverlay"));
+  check("held: route held tekshiruvi", src("app/api/pwa/data/conduct/route.ts").includes("fetchLessonHeldPage"));
+  check("held: route setLessonHeld", src("app/api/pwa/data/conduct/route.ts").includes("setLessonHeld"));
 }
 
 {

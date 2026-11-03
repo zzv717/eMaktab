@@ -54,6 +54,22 @@ export async function GET(req: NextRequest) {
       out.name = result.session.fullName;
       out.role = result.session.role;
 
+      // ?heldset=1&lesson=<id>&held=1|0 — "Dars o'tildi." (a=elh) yozuvini sinash.
+      const heldset = sp.get("heldset");
+      if (heldset) {
+        const lessonId = sp.get("lesson") ?? "";
+        const held = sp.get("held") !== "0";
+        if (!/^\d+$/.test(lessonId)) {
+          return NextResponse.json({ ok: false, error: "lesson=<raqam> kerak" }, { status: 400 });
+        }
+        const { fetchLessonHeldPage, setLessonHeld } = await import("@/lib/emaktab");
+        const schoolId = result.session.active.schoolId;
+        const before = await fetchLessonHeldPage(result.session, schoolId, lessonId).catch((e) => ({ exists: false, held: false, heldEditUrl: null, err: String(e).slice(0, 100) }));
+        const res = await setLessonHeld(result.session, { schoolId, lessonId, held });
+        const after = await fetchLessonHeldPage(result.session, schoolId, lessonId).catch(() => null);
+        return NextResponse.json({ ok: res.ok, reason: res.reason, before, after });
+      }
+
       // ?rawpage=<to'liq url> — eMaktab sahifasining xom HTML (faqat emaktab.uz).
       // Tadqiqot/diagnostika uchun: yangi endpointlar va tugmalarni topishda ishlatiladi.
       const rawpage = sp.get("rawpage");

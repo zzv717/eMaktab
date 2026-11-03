@@ -1723,9 +1723,95 @@ async function odoUpload(
   return last;
 }
 
+// ==========================================================================
+// "Dars o'tildi." checkbox — HAQIQIY /v2 shartnoma (lesson sahifasi inline
+// skriptidan olingan):
+//   1) GET  /v2/lesson?school&lesson=<id>  — sahifada:
+//        global_urlLessonHeldEdit = ".../v2/ajax?xss=…&a=elh"
+//        <input id="held" data-lesson="<id>" ... checked?>  — holat
+//   2) POST <global_urlLessonHeldEdit>     — form: held=<true|false>&lid=<id>
+// Foydalanuvchi tasviri: sanaga bosiladi → dars sahifasi → "Dars o'tildi."
+// checkbox bosiladi → ✓ (ptichka) chiqadi.
+// ==========================================================================
+
+export interface LessonHeldPage {
+  exists: boolean;
+  held: boolean;
+  heldEditUrl: string | null;
+}
+
+/** Dars sahifasidan held checkbox holati va yozish manzilini oladi. */
+export function parseLessonHeldPage(html: string): LessonHeldPage {
+  const input = (html.match(/<input[^>]*id="held"[^>]*>/i) ?? [])[0] ?? "";
+  const urlRaw = (html.match(/global_urlLessonHeldEdit\s*=\s*"([^"]+)"/) ?? [])[1] ?? "";
+  return {
+    exists: Boolean(input),
+    held: /\bchecked\b/i.test(input),
+    heldEditUrl: urlRaw ? decodeEntities(urlRaw.replace(/\\\//g, "/")) : null,
+  };
+}
+
+export async function fetchLessonHeldPage(
+  s: EmaktabSession,
+  schoolId: string,
+  lessonId: string,
+): Promise<LessonHeldPage> {
+  const html = await pageGet(
+    s.cookies,
+    `https://schools.emaktab.uz/v2/lesson?school=${schoolId}&lesson=${lessonId}`,
+  );
+  return parseLessonHeldPage(html);
+}
+
+/** "Dars o'tildi." checkbox'ni yozish (held=true|false). */
+export async function setLessonHeld(
+  s: EmaktabSession,
+  p: { schoolId: string; lessonId: string; held: boolean },
+): Promise<WriteResult> {
+  try {
+    const page = await fetchLessonHeldPage(s, p.schoolId, p.lessonId);
+    if (!page.exists) return { ok: false, reason: "dars sahifasida held checkbox topilmadi" };
+    if (page.held === p.held) return { ok: true, reason: null };
+    const url = page.heldEditUrl;
+    if (!url) return { ok: false, reason: "heldEditUrl (a=elh) topilmadi" };
+    const body = new URLSearchParams({ held: String(p.held), lid: p.lessonId }).toString();
+    const r = await hwPost(
+      s.cookies,
+      url,
+      body,
+      `https://schools.emaktab.uz/v2/lesson?school=${p.schoolId}&lesson=${p.lessonId}`,
+    );
+    if (r.status < 200 || r.status >= 300) return { ok: false, reason: `elh: HTTP ${r.status}` };
+    try {
+      const j = JSON.parse(r.text) as { error?: string };
+      if (j && typeof j === "object" && j.error) {
+        return { ok: false, reason: String(j.error).slice(0, 120) };
+      }
+    } catch {
+      /* JSON emas javob — 200 yetarli */
+    }
+    return { ok: true, reason: null };
+  } catch (error) {
+    return { ok: false, reason: String(error).slice(0, 140) };
+  }
+}
+
+/** dateText ("Bugun" | "Kecha" | "30 oktabr 2026") → YYYY-MM-DD. */
+export function hwDateTextToDayKey(dateText: string): string | null {
+  const t = htmlText2(dateText).toLowerCase();
+  if (t.startsWith("bugun")) return tashkentDayKey();
+  if (t.startsWith("kecha")) return shiftDayKey(tashkentDayKey(), -1);
+  const m = t.match(/(\d{1,2})\s+([a-z]+)\s+(\d{4})/);
+  if (!m) return null;
+  const months = ["yanvar", "fevral", "mart", "aprel", "may", "iyun", "iyul", "avgust", "sentabr", "oktabr", "noyabr", "dekabr"];
+  const mi = months.indexOf(m[2]);
+  if (mi < 0) return null;
+  return `${m[3]}-${String(mi + 1).padStart(2, "0")}-${String(Number(m[1])).padStart(2, "0")}`;
+}
+
 /**
- * Darsni o'tkazildi deb belgilash ("Dars o'tkazildi" — eMaktab talabi).
- * Yo'l nomzodlari SPA naqshidan: /odo/journals/journal{lesson,mark}/...
+ * Darsni o'tildi deb belgilash — sana+dars raqamidan lessonId topib,
+ * haqiqiy "Dars o'tildi." (a=elh) orqali yozadi.
  */
 export async function setLessonConducted(
   s: EmaktabSession,
@@ -1737,34 +1823,28 @@ export async function setLessonConducted(
     lessonNumber: number;
   },
 ): Promise<WriteResult> {
-  const payload = {
-    groupId: p.classId,
-    className: p.className,
-    subjectName: p.subjectName,
-    date: p.date,
-    lessonNumber: p.lessonNumber,
-    conducted: true,
-    isConducted: true,
-  };
-  const tried: string[] = [];
-  for (const path of [
-    "/odo/journals/journallesson/editlesson/",
-    "/odo/journals/journallesson/setconducted/",
-    "/odo/journals/journalmark/editmark/",
-  ]) {
-    const r = await odoPost(s.cookies, path, payload);
-    if (!r) continue;
-    tried.push(`${path.slice(6, 26)}→${r.status}`);
-    if (r.status >= 200 && r.status < 300) return { ok: true, reason: null };
-    // 400/422 = endpoint bor, format talabi ochildi
-    if (r.status === 400 || r.status === 422) {
-      return { ok: false, reason: `server talabi: ${r.body.slice(0, 120)}` };
+  try {
+    const schoolId = s.active.schoolId;
+    const { rows, reason } = await fetchHomeworkRows(s, {
+      schoolId,
+      className: p.className,
+      subjectName: p.subjectName,
+    });
+    if (rows.length === 0) return { ok: false, reason: reason ?? "darslar topilmadi" };
+    let lessonId: string | null = null;
+    for (const r of rows) {
+      if (hwDateTextToDayKey(r.dateText) !== p.date) continue;
+      const n = Number.parseInt(r.lessonNo, 10);
+      if (Number.isFinite(n) && n === p.lessonNumber) {
+        lessonId = r.lessonId;
+        break;
+      }
     }
+    if (!lessonId) return { ok: false, reason: `dars topilmadi (${p.date}, ${p.lessonNumber}-dars)` };
+    return setLessonHeld(s, { schoolId, lessonId, held: true });
+  } catch (error) {
+    return { ok: false, reason: String(error).slice(0, 140) };
   }
-  return {
-    ok: false,
-    reason: `endpoint topilmadi (${tried.join(" ") || "sinovlar bo'sh"})`,
-  };
 }
 
 /** Ish reja (kalendarlik-reja) faylini joylashtirish. Faqat .xls/.xlsx qabul qilinadi. */
