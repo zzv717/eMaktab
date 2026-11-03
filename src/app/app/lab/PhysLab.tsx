@@ -4,8 +4,8 @@
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { applyWires, lensPhysics, solveCircuit, springPhysics, type CircuitComp, type CircuitCompType, type CircuitWire } from "./engine";
-import { attachFrameHooks, benchTop, createScene, type SceneHandle } from "./three-utils";
-import { StageBox, labChip, type CatalogItem } from "./StageBox";
+import { attachFrameHooks, attachPointer, benchTop, createScene, type SceneHandle } from "./three-utils";
+import { CameraPad, PickCard, StageBox, labChip, type CatalogItem, type PickInfo } from "./StageBox";
 
 type Mode = "circuit" | "spring" | "optics";
 
@@ -68,6 +68,11 @@ function CircuitLab() {
   const [power, setPower] = useState(true);
   const [faultMode, setFaultMode] = useState(false);
   const [msg, setMsg] = useState("");
+  const [pick, setPick] = useState<{ info: PickInfo; id: string } | null>(null);
+  const [moving, setMoving] = useState(false);
+  const moveRef = useRef<THREE.Object3D | null>(null);
+  const selTermRef = useRef<{ comp: string; term: "a" | "b" } | null>(null);
+  selTermRef.current = selTerm;
 
   const powered = solveCircuit(applyWires(comps, wires));
   const solved = power ? powered : { ...powered, brightness: {}, motorSpeed: {}, buzzerOn: {}, galvNeedle: {}, heatGlow: {}, totalCurrent: 0 };
@@ -94,57 +99,65 @@ function CircuitLab() {
     compGroupRef.current = compGroup;
     wireGroupRef.current = wireGroup;
 
-    const raycaster = new THREE.Raycaster();
-    const pointer = new THREE.Vector2();
-    const onClick = (ev: MouseEvent) => {
-      const rect = canvas.getBoundingClientRect();
-      pointer.x = ((ev.clientX - rect.left) / rect.width) * 2 - 1;
-      pointer.y = -((ev.clientY - rect.top) / rect.height) * 2 + 1;
-      raycaster.setFromCamera(pointer, handle.camera);
-      const hits = raycaster.intersectObjects(compGroup.children, true);
-      if (hits.length === 0) return;
-      let obj: THREE.Object3D | null = hits[0].object;
-      while (obj && obj.userData?.kind !== "terminal" && obj.userData?.kind !== "comp") obj = obj.parent;
-      if (!obj) return;
-      if (obj.userData?.kind === "terminal") {
-        let grp: THREE.Object3D | null = obj.parent;
-        while (grp && grp.userData?.kind !== "comp") grp = grp.parent;
-        const compId = grp?.userData?.id as string;
-        const term = obj.userData.term as "a" | "b";
-        if (!compId) return;
-        setSelTerm((prev) => {
-          if (!prev) return { comp: compId, term };
-          if (prev.comp === compId && prev.term === term) return null;
-          setWires((ws) =>
-            ws.some(
-              (w) =>
-                (w.fromComp === prev.comp && w.fromTerm === prev.term && w.toComp === compId && w.toTerm === term) ||
-                (w.toComp === prev.comp && w.toTerm === prev.term && w.fromComp === compId && w.fromTerm === term),
-            )
-              ? ws
-              : [...ws, { fromComp: prev.comp, fromTerm: prev.term, toComp: compId, toTerm: term }],
-          );
-          return null;
-        });
-      } else if (obj.userData?.kind === "comp") {
-        const id = obj.userData.id as string;
-        if (faultModeRef.current) {
-          // nosozlik sikli: yo'q → open → short → (batareya uchun dead) → yo'q
-          setComps((cs) =>
-            cs.map((c) => {
-              if (c.id !== id) return c;
-              const order: Array<CircuitComp["fault"]> = c.type === "battery" ? [null, "open", "short", "dead"] : [null, "open", "short"];
-              const next = order[(order.indexOf(c.fault ?? null) + 1) % order.length];
-              return { ...c, fault: next ?? undefined };
-            }),
-          );
+    // bosish/siljitish (qo'l bilan)
+    const detachPointer = attachPointer(handle, canvas, {
+      getRoots: () => compGroup.children,
+      moveRef,
+      onPick: (root, hit) => {
+        const ud = root.userData as { kind: string; id: string };
+        if (hit.userData?.kind === "terminal") {
+          const term = hit.userData.term as "a" | "b";
+          const compId = ud.id;
+          setSelTerm((prev) => {
+            if (!prev) {
+              setMsg(`🟢 Terminal tanlandi — endi ikkinchi terminalni bosing (sim tortiladi)`);
+              return { comp: compId, term };
+            }
+            if (prev.comp === compId && prev.term === term) return null;
+            setWires((ws) =>
+              ws.some(
+                (w) =>
+                  (w.fromComp === prev.comp && w.fromTerm === prev.term && w.toComp === compId && w.toTerm === term) ||
+                  (w.toComp === prev.comp && w.toTerm === prev.term && w.fromComp === compId && w.fromTerm === term),
+              )
+                ? ws
+                : [...ws, { fromComp: prev.comp, fromTerm: prev.term, toComp: compId, toTerm: term }],
+            );
+            const c1 = compRef.current.find((c) => c.id === prev.comp);
+            const c2 = compRef.current.find((c) => c.id === compId);
+            setMsg(`⚡ Sim ulandi: ${c1 ? ADD_LABEL[c1.type] : prev.comp}(${prev.term.toUpperCase()}) → ${c2 ? ADD_LABEL[c2.type] : compId}(${term.toUpperCase()})`);
+            return null;
+          });
           return;
         }
-        setSelComp(id);
-        setComps((cs) => cs.map((c) => (c.id === id && c.type === "switch" ? { ...c, closed: !c.closed } : c)));
-      }
-    };
-    canvas.addEventListener("click", onClick);
+        if (ud.kind === "comp") {
+          if (faultModeRef.current) {
+            setComps((cs) =>
+              cs.map((c) => {
+                if (c.id !== ud.id) return c;
+                const order: Array<CircuitComp["fault"]> = c.type === "battery" ? [null, "open", "short", "dead"] : [null, "open", "short"];
+                const next = order[(order.indexOf(c.fault ?? null) + 1) % order.length];
+                return { ...c, fault: next ?? undefined };
+              }),
+            );
+            return;
+          }
+          setSelComp(ud.id);
+          setComps((cs) => cs.map((c) => (c.id === ud.id && c.type === "switch" ? { ...c, closed: !c.closed } : c)));
+          const c = compRef.current.find((x) => x.id === ud.id);
+          if (c) {
+            setPick({
+              info: {
+                icon: "🔧",
+                label: ADD_LABEL[c.type],
+                desc: c.fault ? `Nosozlik: ${c.fault}` : c.type === "switch" ? `Kalit: ${c.closed ? "yopiq" : "ochiq"}` : "Siljitish uchun tugmani bosing",
+              },
+              id: ud.id,
+            });
+          }
+        }
+      },
+    });
 
     const stop = attachFrameHooks(handle, [
       (t, dt) => {
@@ -168,7 +181,19 @@ function CircuitLab() {
             node.userData = { kind: "comp", id: c.id };
             g.add(node);
           }
-          node.position.set(-7 + (i % 6) * 2.8, 0.2, i >= 6 ? -2.8 : 1.6);
+          if (!node.userData.placed) {
+            node.position.set(-7 + (i % 6) * 2.8, 0.2, i >= 6 ? -2.8 : 1.6);
+            node.userData.placed = true;
+          }
+          // tanlangan terminal pulsatsiyasi
+          const st = selTermRef.current;
+          node.traverse((o) => {
+            const m = o as THREE.Mesh;
+            if (m.name === "term-a" || m.name === "term-b") {
+              const isSel = st && st.comp === c.id && st.term === m.name.slice(5);
+              (m.material as THREE.MeshStandardMaterial).emissiveIntensity = isSel ? 0.6 + Math.sin(t * 8) * 0.4 : 0.25;
+            }
+          });
           const sol = solvedRef.current;
           // yorug'lik / harakatlar
           const glow = node.getObjectByName("glow") as THREE.Mesh | undefined;
@@ -233,9 +258,16 @@ function CircuitLab() {
           const mid = pa.clone().add(pb).multiplyScalar(0.5);
           mid.y += 0.55;
           const curve = new THREE.CatmullRomCurve3([pa, mid, pb]);
+          const flowing = solvedRef.current.ok && solvedRef.current.totalCurrent > 0.01 && powerRef.current;
           const tube = new THREE.Mesh(
-            new THREE.TubeGeometry(curve, 16, 0.055, 8, false),
-            new THREE.MeshStandardMaterial({ color: "#2f3b4a", roughness: 0.5, metalness: 0.35 }),
+            new THREE.TubeGeometry(curve, 18, 0.075, 8, false),
+            new THREE.MeshStandardMaterial({
+              color: flowing ? "#14b8a6" : "#2f3b4a",
+              emissive: flowing ? "#0d9488" : "#000000",
+              emissiveIntensity: flowing ? 0.55 + Math.sin(t * 6) * 0.25 : 0,
+              roughness: 0.45,
+              metalness: 0.35,
+            }),
           );
           wg.add(tube);
         }
@@ -244,7 +276,7 @@ function CircuitLab() {
 
     return () => {
       stop();
-      canvas.removeEventListener("click", onClick);
+      detachPointer();
       handle.dispose();
       handleRef.current = null;
     };
@@ -368,10 +400,31 @@ function CircuitLab() {
         </div>
       }
     >
-      <canvas ref={canvasRef} className="h-[300px] w-full rounded-2xl bg-slate-100" />
+      <div className="relative">
+        <canvas ref={canvasRef} className="lab-canvas h-[300px] w-full rounded-2xl bg-slate-100" />
+        <CameraPad handleRef={handleRef} />
+        <PickCard
+          info={pick?.info ?? null}
+          moving={moving}
+          onMove={() => {
+            if (!pick) return;
+            const node = compGroupRef.current?.children.find((ch) => ch.userData?.id === pick.id);
+            if (node) {
+              moveRef.current = moving ? null : node;
+              setMoving(!moving);
+            }
+          }}
+          onClose={() => {
+            setPick(null);
+            moveRef.current = null;
+            setMoving(false);
+          }}
+        />
+      </div>
       <p className="px-1 pb-1 pt-1.5 text-center text-xs text-slate-400">
-        🟢 Terminalni bosing → sim tortiladi · qurilmaga bosib kalitni oching/yoping{faultMode && " · NOSOZLIK REJIMI: qurilmaga bosib nosozlik qo'shing"}
+        🟢 Terminalni bosing → sim tortiladi · qurilmaga bosib <b>nomi</b> chiqadi · 🔀 Siljitish bilan joylashtiring{faultMode && " · NOSOZLIK REJIMI: qurilmaga bosib nosozlik qo'shing"}
       </p>
+      {moving && <p className="rounded-2xl bg-amber-50 p-2.5 text-center text-sm text-amber-700">🔀 Siljitish rejimi — qurilmani <b>sudrab</b> joylang</p>}
 
       {msg && <p className="rounded-2xl bg-emerald-50 p-2.5 text-center text-sm text-emerald-700">{msg}</p>}
 

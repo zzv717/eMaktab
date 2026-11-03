@@ -47,6 +47,10 @@ export const REAGENTS: Reagent[] = [
   { id: "pbno32", name: "Qo'rg'oshin nitrat", formula: "Pb(NO₃)₂", kind: "salt", strength: 0.5, color: "#f7f8fc", ionColor: "#e9ebf3", info: "KI bilan PbI₂ — 'oltin yomg'ir' tajribasi (issiqda eriydi!)" },
   { id: "cu", name: "Mis parchasi", formula: "Cu", kind: "metal", strength: 0, color: "#c97b4a", info: "Vodoroddan past — kislotalar bilan REAKSIYAGA KIRMAYDI (faollik qatori)." },
   { id: "al", name: "Alyuminiy folga", formula: "Al", kind: "metal", strength: 0, color: "#c3ccd6", info: "Ishqorlarda erib, H₂ gazi ajratadi! Kislota bilan ham reaksiyaga kirishadi." },
+  { id: "kmno4", name: "Kaliy permanganat", formula: "KMnO₄", kind: "salt", strength: 0.5, color: "#7b2d8e", ionColor: "#6b21a8", info: "Kuchli oksidlovchi — binafsha rang. H₂O₂ bilan RANGSIZLANADI va kislorod ajratadi!" },
+  { id: "h2o2", name: "Vodorod periksidi", formula: "H₂O₂", kind: "salt", strength: 0.5, color: "#eef7ff", info: "Kuchli oksidlovchi/yokuvchi. KMnO₄ bilan mo'jizaviy reaksiya beradi." },
+  { id: "feso4", name: "Temir(II) sulfat", formula: "FeSO₄", kind: "salt", strength: 0.5, color: "#8fc98f", ionColor: "#7ab87a", info: "Yashil rangli tuz. Ishqor bilan yashil cho'kma — keyin qo'ng'irga o'zgaradi!" },
+  { id: "na2s2o3", name: "Natriy tiosulfat", formula: "Na₂S₂O₃", kind: "salt", strength: 0.5, color: "#f2f6fb", info: "Kislota bilan SEKIN reaksiya — bir necha soniyada loyqalanish (soat reaksiyasi!)" },
 ];
 
 export const REAGENT_MAP: Record<string, Reagent> = Object.fromEntries(REAGENTS.map((r) => [r.id, r]));
@@ -147,6 +151,20 @@ export function simulate(contents: VesselContent[], baseTemp = 20): SimResult {
 
   // --- Cho'kmalar (eruvchanlik qoidalari)
   let precipitate: SimResult["precipitate"] = null;
+
+  // --- Maxsus reaksiyalar (rang o'zgarishi, gaz, sekin reaksiyalar)
+  if (ml("kmno4") > 0 && ml("h2o2") > 0) {
+    hodisalar.push({ text: "🟣➡️⬜ Binafsha RANGSIZLANDI! KMnO₄ parchalandi — MnO₂ cho'kmasi va O₂ gazi ajraldi! 🫧", kind: "gas" });
+    gas = { name: "O₂ (kislorod)" };
+  }
+  if (ml("na2s2o3") > 0 && acidEq > 0) {
+    hodisalar.push({ text: "⏱ SOAT REAKSIYASI: suyuqlik bir necha soniyadan keyin loyqalanadi — oltingugurt cho'kadi! (SO₂ hidi seziladi)", kind: "info" });
+  }
+  if (ml("feso4") > 0 && baseEq > 0 && ml("alcl3") === 0) {
+    precipitate = { color: "#6b8f4e", name: "Fe(OH)₂ (yashil cho'kma)" };
+    hodisalar.push({ text: "🟢 Yashil cho'kma tushdi — Fe(OH)₂ (havo ta'sirida qo'ng'irga o'zgaradi!)", kind: "precipitate" });
+  }
+
   const hasCl = ml("hcl") > 0 || ml("nacl") > 0 || ml("fecl3") > 0;
   if (ml("agno3") > 0 && hasCl) {
     precipitate = { color: "#f2f2ee", name: "AgCl (oq cho'kma)" };

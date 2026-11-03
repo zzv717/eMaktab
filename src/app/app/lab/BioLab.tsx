@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { MEIOSIS, MITOSIS, ORGANELLES, type DivisionStage, type Organelle } from "./engine";
 import { attachFrameHooks, createScene, type SceneHandle } from "./three-utils";
+import { CameraPad } from "./StageBox";
 import PrepLab from "./PrepLab";
 
 type Mode = "cell" | "prep" | "mitosis" | "meiosis";
@@ -247,9 +248,12 @@ function CellLab() {
   return (
     <div>
       <div className={`${card} mb-3 p-2`}>
-        <canvas ref={canvasRef} className="h-[300px] w-full rounded-2xl" />
+        <div className="relative">
+          <canvas ref={canvasRef} className="lab-canvas h-[300px] w-full rounded-2xl" />
+          <CameraPad handleRef={handleRef} />
+        </div>
         <p className="px-2 pb-1 pt-1.5 text-center text-xs text-slate-400">
-          🖐 Aylantiring · organoidni <b>bosing</b> — ma'lumot chiqadi
+          🖐 Aylantiring · organoidni <b>bosing</b> — ma'lumot chiqadi · 🎮 joystik bilan atrofni ko'ring
         </p>
       </div>
 
@@ -298,6 +302,7 @@ function CellLab() {
 
 function DivisionLab({ stages, meiosis }: { stages: DivisionStage[]; meiosis: boolean }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const handleRef = useRef<SceneHandle | null>(null);
   const phaseRef = useRef(0);
   const meiosisRef = useRef(meiosis);
   meiosisRef.current = meiosis;
@@ -311,6 +316,7 @@ function DivisionLab({ stages, meiosis }: { stages: DivisionStage[]; meiosis: bo
     const canvas = canvasRef.current;
     if (!canvas) return;
     const handle = createScene(canvas, { camZ: 8.5 });
+    handleRef.current = handle;
 
     const cellMat = new THREE.MeshPhysicalMaterial({ color: "#9fd8c8", transparent: true, opacity: 0.22, transmission: 0.5, roughness: 0.3, thickness: 0.5, side: THREE.DoubleSide });
     const cell1 = new THREE.Mesh(new THREE.SphereGeometry(2.9, 40, 28), cellMat);
@@ -422,6 +428,7 @@ function DivisionLab({ stages, meiosis }: { stages: DivisionStage[]; meiosis: bo
     return () => {
       stop();
       handle.dispose();
+      handleRef.current = null;
     };
   }, []);
 
@@ -435,9 +442,12 @@ function DivisionLab({ stages, meiosis }: { stages: DivisionStage[]; meiosis: bo
   return (
     <div>
       <div className={`${card} mb-3 p-2`}>
-        <canvas ref={canvasRef} className="h-[290px] w-full rounded-2xl" />
+        <div className="relative">
+          <canvas ref={canvasRef} className="lab-canvas h-[290px] w-full rounded-2xl" />
+          <CameraPad handleRef={handleRef} />
+        </div>
         <p className="px-2 pb-1 pt-1.5 text-center text-xs text-slate-400">
-          {meiosis ? "🧬 Meyoz — 4 ta haploid jinsiy hujayra" : "🧬 Mitoz — 2 ta bir xil hujayra"} · 🖐 aylantiring
+          {meiosis ? "🧬 Meyoz — 4 ta haploid jinsiy hujayra" : "🧬 Mitoz — 2 ta bir xil hujayra"} · 🖐 aylantiring · 🎮 joystik
         </p>
       </div>
 
