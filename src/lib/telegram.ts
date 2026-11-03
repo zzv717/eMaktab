@@ -73,18 +73,36 @@ function getToken(): string {
 
 async function callTelegram<T = unknown>(method: string, payload: Record<string, unknown>): Promise<T> {
   const token = getToken();
-  const res = await fetch(`${API_BASE}/bot${token}/${method}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-    cache: "no-store",
-  });
+  let lastError = "";
+  // Telegram vaqtinchalik xatolariga chidamli: 2 marta urinish + timeout
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const res = await fetch(`${API_BASE}/bot${token}/${method}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        cache: "no-store",
+        signal: AbortSignal.timeout(15000),
+      });
 
-  const json = (await res.json()) as { ok: boolean; result?: T; description?: string };
-  if (!json.ok) {
-    throw new Error(`Telegram API error on ${method}: ${json.description ?? res.statusText}`);
+      const json = (await res.json().catch(() => ({ ok: false } as { ok: boolean }))) as {
+        ok: boolean;
+        result?: T;
+        description?: string;
+      };
+      if (json.ok) return json.result as T;
+      lastError = json.description ?? res.statusText ?? "noma'lum xato";
+      // 4xx doimiy xato — qayta urinish foydasiz
+      if (res.status >= 400 && res.status < 500 && res.status !== 429) {
+        throw new Error(`Telegram API error on ${method}: ${lastError}`);
+      }
+    } catch (e) {
+      if (e instanceof Error && e.message.startsWith("Telegram API error on")) throw e;
+      lastError = e instanceof Error ? e.message.slice(0, 120) : "tarmoq xatosi";
+    }
+    if (attempt === 0) await new Promise((r) => setTimeout(r, 1200));
   }
-  return json.result as T;
+  throw new Error(`Telegram API error on ${method}: ${lastError}`);
 }
 
 /** Rasm yuboradi (manzil yoki file_id) — captcha rasmlari uchun. */
