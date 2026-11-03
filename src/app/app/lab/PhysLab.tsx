@@ -202,6 +202,10 @@ function CircuitLab() {
           if (!node) {
             node = buildCompMesh(c.type);
             node.userData = { kind: "comp", id: c.id };
+            // terminal/urish zonalari bosilganda ham qurilmaning O'ZI tanlansin
+            node.traverse((o) => {
+              if (o !== node) o.userData.pickRoot = node;
+            });
             g.add(node);
           }
           if (!node.userData.placed) {

@@ -3,7 +3,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
-import { REAGENTS, REAGENT_MAP, simulate, simulateSteps, type VesselContent } from "./engine";
+import { REAGENTS, REAGENT_MAP, simulate, simulateSteps, type VesselContent , getReagent, ELEMENTS, type PourEvent } from "./engine";
 import { attachFrameHooks, attachPointer, benchTop, createScene, glassMaterial, liquidMaterial, type SceneHandle } from "./three-utils";
 import { CameraPad, PickCard, StageBox, labChip, type CatalogItem, type PickInfo } from "./StageBox";
 
@@ -55,6 +55,8 @@ export default function ChemLab() {
   const [journal, setJournal] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [pick, setPick] = useState<{ info: PickInfo; kind: string; id: string } | null>(null);
+  const [eq, setEq] = useState<string>(""); // pastdagi tenglama paneli (Na + Cl → NaCl)
+  const projectTimers = useRef<number[]>([]);
   // Faqat oz miqdorda reaktivlar: bir tomonda birikmalar, bir tomonda moddalar
   const BENCH_BIRIKMALAR = ["hcl", "naoh", "cuso4", "na2co3", "agno3"];
   const BENCH_MODDALAR = ["mg", "zn", "cu"];
@@ -127,7 +129,11 @@ export default function ChemLab() {
       ctx.fillText(r.name.split(" ").slice(0, 2).join(" ").slice(0, 18), 64, 50);
       const label = new THREE.Mesh(new THREE.PlaneGeometry(0.66, 0.33), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(cv) }));
       label.position.set(0, 0.72, 0.335);
-      g.add(body, liq, cap, label);
+      const mouth = new THREE.Object3D();
+      mouth.position.set(0, 1.52, 0);
+      mouth.name = "mouth";
+      cap.name = "cap";
+      g.add(body, liq, cap, label, mouth);
       g.userData = { kind: "bottle", id: r.id, label: `${r.formula} — ${r.name}`, icon: "🧫", desc: r.info };
       g.traverse((o) => {
         o.userData.pickRoot = g;
@@ -383,21 +389,32 @@ export default function ChemLab() {
         if (maps.pourBottle && maps.stream && maps.splash) {
           if (pour && pour.until > performance.now()) {
             const g = maps.vessels.get(pour.vesselId);
-            const b = maps.bottles.get(pour.reagentColor) ?? maps.bottles.get("h2o");
             const life = (pour.until - performance.now()) / 900;
             if (g) {
               maps.pourBottle.visible = true;
-              const targetPos = new THREE.Vector3(g.position.x + 0.9, 3.3, g.position.z + 0.2);
+              const targetPos = new THREE.Vector3(g.position.x + 1.05, 3.25, g.position.z + 0.15);
               maps.pourBottle.position.lerp(targetPos, Math.min(1, dt * 7));
               const tilt = Math.min(1, (1 - life) * 2.2);
-              maps.pourBottle.rotation.z = -tilt * 1.25;
+              // OG'IZ tomonga qiyshaydi (idish tomonda) — orqa tomonidan emas!
+              maps.pourBottle.rotation.z = tilt * 1.25;
               const liqMat = maps.pourBottle.children[1] as THREE.Mesh;
-              if (b) {
-                const src = b.children[1] as THREE.Mesh;
-                (liqMat.material as THREE.MeshStandardMaterial).color.copy((src.material as THREE.MeshStandardMaterial).color);
+              const rg = getReagent(pour.reagentColor);
+              if (rg) {
+                (liqMat.material as THREE.MeshStandardMaterial).color.set(rg.ionColor ?? rg.color);
               }
+              // qopqoq ochiladi
+              const capM = maps.pourBottle.getObjectByName("cap") as THREE.Mesh | undefined;
+              if (capM) {
+                capM.position.y = 1.6 + tilt * 0.75;
+                capM.rotation.x = tilt * 1.35;
+              }
+              // oqim OG'IZDAN tushadi
+              const mouthObj = maps.pourBottle.getObjectByName("mouth");
+              const mouthPos = new THREE.Vector3();
+              if (mouthObj) mouthObj.getWorldPosition(mouthPos);
+              else mouthPos.copy(maps.pourBottle.position);
               maps.stream.visible = life < 0.75;
-              maps.stream.position.set(g.position.x + 0.15, 2.15, g.position.z + 0.15);
+              maps.stream.position.set(mouthPos.x - 0.1, mouthPos.y - 1.05, mouthPos.z);
               (maps.stream.material as THREE.MeshStandardMaterial).opacity = 0.7 + Math.sin(t * 20) * 0.2;
               maps.splash.visible = maps.stream.visible;
               maps.splash.position.set(g.position.x + 0.15, 1.15, g.position.z + 0.15);
@@ -407,6 +424,11 @@ export default function ChemLab() {
             maps.pourBottle.visible = false;
             maps.stream.visible = false;
             maps.splash.visible = false;
+            const capM = maps.pourBottle?.getObjectByName("cap") as THREE.Mesh | undefined;
+            if (capM) {
+              capM.position.y = 1.6;
+              capM.rotation.x = 0;
+            }
             if (pour) animRef.current.pour = undefined;
           }
         }
@@ -492,10 +514,12 @@ export default function ChemLab() {
     window.setTimeout(() => {
       setVessels((vs) => vs.map((v) => (v.id === vesselId ? { ...v, contents: [...v.contents, { reagentId, ml: 20 }] } : v)));
       const v = vesselsRef.current.find((x) => x.id === vesselId);
-      const name = REAGENT_MAP[reagentId]?.formula ?? reagentId;
+      const name = getReagent(reagentId)?.formula ?? reagentId;
       if (v) {
         const res = simulate([...v.contents, { reagentId, ml: 20 }], v.temp);
         const last = res.hodisalar.slice(-2).map((h) => h.text);
+        const withEq = [...res.hodisalar].reverse().find((h) => h.equation);
+        if (withEq?.equation) setEq(withEq.equation);
         pushLog(`⬇ Quyildi: ${name} → ${VESSEL_LABEL[v.type]}${last.length ? " — " + last.join(" · ") : ""}`);
       }
       setBusy(false);
@@ -556,10 +580,14 @@ export default function ChemLab() {
       const r = REAGENTS.find((x) => x.id === id)!;
       return { id: `r:${r.id}`, icon: "⚗️", name: `${r.formula} — ${r.name}`, group: "Birikmalar", desc: r.info };
     }),
-    ...BENCH_MODDALAR.map((id) => {
-      const r = REAGENTS.find((x) => x.id === id)!;
-      return { id: `r:${r.id}`, icon: "🧫", name: `${r.formula} — ${r.name}`, group: "Moddalar", desc: r.info };
-    }),
+    // 🧬 Moddalar — 118 elementning HAMMASI (Mendeleyev jadvali, qidiruv bilan)
+    ...ELEMENTS.map((e) => ({
+      id: `e:${e.id}`,
+      icon: e.cat === "metall" ? "🪙" : e.cat === "nobil" ? "💨" : e.cat === "yarim" ? "💠" : "🧫",
+      name: `${e.symbol} — ${e.name}`,
+      group: "Moddalar (118 element)",
+      desc: `#${e.num} · ${e.info}`,
+    })),
     { id: "t:stir", icon: "🥄", name: "Aralashtirish", group: "Asboblar" },
     { id: "p:gold", icon: "✨", name: "Loyiha: Oltin yomg'ir", group: "Tayyor loyihalar", desc: "Pb(NO₃)₂ + KI → sariq kristallar; isitib eritib ko'ring!" },
     { id: "p:clock", icon: "⏱", name: "Loyiha: Soat reaksiyasi", group: "Tayyor loyihalar", desc: "Tiosulfat + kislota — bir necha soniya KUTING, loyqalanadi!" },
@@ -580,7 +608,7 @@ export default function ChemLab() {
       setVessels((vs) => (vs.length >= 5 ? vs : [...vs, v]));
       setSelVessel(v.id);
       pushLog(`➕ Yangi idish qo'shildi: ${VESSEL_LABEL[type]}`);
-    } else if (id.startsWith("r:")) {
+    } else if (id.startsWith("r:") || id.startsWith("e:")) {
       setSelReagent(id.slice(2));
     } else if (id === "t:stir") stirIt();
     else if (id === "t:clear") {
@@ -601,9 +629,26 @@ export default function ChemLab() {
       };
       const contents = presets[id.slice(2)];
       if (contents && sel) {
-        setVessels((vs) => vs.map((v) => (v.id === sel.id ? { ...v, contents: [...v.contents, ...contents] } : v)));
-        const { steps: st } = simulateSteps([...sel.contents, ...contents]);
-        pushLog(`📋 Loyiha yuklandi — ${st.flatMap((x) => x.yangiHodisalar.map((h) => h.text)).join(" ⏩ ") || "tayyor"}`);
+        // 🐢 Birdan paydo bo'lish EMAS — bosqichma-bosqich, sekin qo'shiladi
+        projectTimers.current.forEach((t) => window.clearTimeout(t));
+        projectTimers.current = [];
+        const targetId = sel.id;
+        pushLog(`📋 Loyiha boshlandi — bosqichma-bosqich qo'shiladi (kuting)...`);
+        contents.forEach((c, idx) => {
+          const timer = window.setTimeout(() => {
+            setVessels((vs) => vs.map((v) => (v.id === targetId ? { ...v, contents: [...v.contents, c] } : v)));
+            const v = vesselsRef.current.find((x) => x.id === targetId);
+            if (v) {
+              const res = simulate([...v.contents, c], v.temp);
+              const withEq = [...res.hodisalar].reverse().find((h) => h.equation);
+              if (withEq?.equation) setEq(withEq.equation);
+              const last = res.hodisalar.slice(-1).map((h) => h.text);
+              pushLog(`📋 Bosqich ${idx + 1}/${contents.length}: ${getReagent(c.reagentId)?.formula ?? c.reagentId} qo'shildi${last.length ? " — " + last.join(" · ") : ""}`);
+            }
+            if (idx === contents.length - 1) pushLog(`✅ Loyiha yakunlandi — natija pastdagi tenglamada!`);
+          }, 950 * (idx + 1));
+          projectTimers.current.push(timer);
+        });
       }
     }
   };
@@ -654,6 +699,12 @@ export default function ChemLab() {
       </div>
 
       {moving && <p className="rounded-2xl bg-amber-50 p-2.5 text-center text-sm text-amber-700">🔀 Siljitish rejimi — obyektni <b>sudrab</b> ish stolining istalgan joyiga qo'ying</p>}
+      {eq && (
+        <div className="mt-2 rounded-2xl bg-slate-900 px-4 py-2.5 text-center shadow-inner">
+          <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-400">⚗️ Natija</p>
+          <p className="mt-0.5 text-sm font-semibold text-teal-300">{eq}</p>
+        </div>
+      )}
       {pourFrom && <p className="rounded-2xl bg-amber-50 p-2.5 text-center text-sm text-amber-700">🫗 Qaysi idishga quyilsin? — idishni <b>bosing</b></p>}
 
       <div className="rounded-2xl bg-teal-50 p-3 text-sm text-teal-800">

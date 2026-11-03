@@ -24,7 +24,7 @@ export default function PrepLab() {
   const handleRef = useRef<SceneHandle | null>(null);
   const [moving, setMoving] = useState(false);
   const moveRef = useRef<THREE.Object3D | null>(null);
-  const cutAnimRef = useRef<{ t0: number } | null>(null);
+  const cutAnimRef = useRef<{ t0: number; mode: "cut" | "smear" | "scrape" } | null>(null);
   const knifeRef = useRef<THREE.Group | null>(null);
   const sliceRef = useRef<THREE.Mesh | null>(null);
   const stateRef = useRef({ stage: 0, hasSpecimen: false, specimenX: -1.2 });
@@ -41,32 +41,79 @@ export default function PrepLab() {
     handleRef.current = handle;
     handle.scene.add(benchTop(14, 9));
 
-    // mikroskop
+    // 🔬 YAXSHILANGAN MIKROSKOP MODELI (asos, yoy, stol, revolver, linzalar, ko'zgu)
     const micro = new THREE.Group();
     const metal = new THREE.MeshStandardMaterial({ color: "#3b4a63", metalness: 0.55, roughness: 0.35 });
-    const base = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.5, 1.8), metal);
-    base.position.y = 0.25;
-    const arm = new THREE.Mesh(new THREE.BoxGeometry(0.55, 2.9, 0.75), metal);
-    arm.position.set(-0.85, 1.75, -0.15);
-    const tube = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.34, 1.7, 18), metal);
-    tube.position.set(-0.15, 3.15, 0);
-    tube.rotation.z = 0.42;
-    const eyepiece = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.26, 0.65, 16), new THREE.MeshStandardMaterial({ color: "#1f2937", roughness: 0.4 }));
-    eyepiece.position.set(0.32, 3.95, 0);
-    eyepiece.rotation.z = 0.42;
-    const stage3d = new THREE.Mesh(new THREE.BoxGeometry(1.75, 0.16, 1.35), new THREE.MeshStandardMaterial({ color: "#64748b", metalness: 0.4, roughness: 0.5 }));
-    stage3d.position.set(-0.05, 1.65, 0.15);
-    const turret = new THREE.Mesh(new THREE.CylinderGeometry(0.52, 0.52, 0.3, 18), metal);
-    turret.position.set(-0.05, 2.35, 0.1);
+    const dark = new THREE.MeshStandardMaterial({ color: "#22303f", metalness: 0.35, roughness: 0.5 });
+    // asos (2 qatlamli)
+    const base1 = new THREE.Mesh(new THREE.BoxGeometry(2.7, 0.32, 2.0), metal);
+    base1.position.y = 0.16;
+    const base2 = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.3, 1.6), dark);
+    base2.position.y = 0.46;
+    // yoy (egri tayanch)
+    const armLower = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.4, 1.6, 18), metal);
+    armLower.position.set(-0.95, 1.35, -0.25);
+    const armUpper = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.32, 1.6, 18), metal);
+    armUpper.position.set(-0.62, 2.75, -0.45);
+    armUpper.rotation.z = -0.35;
+    // korpus nayi
+    const tube = new THREE.Mesh(new THREE.CylinderGeometry(0.36, 0.36, 1.55, 20), metal);
+    tube.position.set(-0.12, 3.35, -0.12);
+    tube.rotation.z = 0.38;
+    // ko'z linzasi (egri)
+    const eyepiece = new THREE.Mesh(new THREE.CylinderGeometry(0.21, 0.27, 0.72, 18), dark);
+    eyepiece.position.set(0.28, 4.18, -0.02);
+    eyepiece.rotation.z = 0.38;
+    const eyeLens = new THREE.Mesh(new THREE.CylinderGeometry(0.19, 0.19, 0.06, 18), new THREE.MeshStandardMaterial({ color: "#0f2a3f", metalness: 0.7, roughness: 0.15 }));
+    eyeLens.position.set(0.42, 4.5, 0.04);
+    eyeLens.rotation.z = 0.38;
+    // ish stoli + qisqichlar + teshik
+    const stage3d = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.14, 1.45), new THREE.MeshStandardMaterial({ color: "#64748b", metalness: 0.45, roughness: 0.42 }));
+    stage3d.position.set(-0.02, 1.72, 0.28);
+    for (const sx of [-0.62, 0.62]) {
+      const clip = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.06, 0.16), new THREE.MeshStandardMaterial({ color: "#94a3b8", metalness: 0.6, roughness: 0.3 }));
+      clip.position.set(sx, 1.83, 0.1);
+      micro.add(clip);
+    }
+    const aperture = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 0.06, 16), dark);
+    aperture.position.set(-0.02, 1.8, 0.28);
+    // revolver + 3 ta linza (har xil uzunlikda)
+    const turret = new THREE.Mesh(new THREE.CylinderGeometry(0.56, 0.52, 0.26, 20), metal);
+    turret.position.set(-0.05, 2.42, 0.18);
     for (const [i, ang] of [0, 1, 2].entries()) {
-      const obj = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.16, 0.55, 12), new THREE.MeshStandardMaterial({ color: i === 0 ? "#c9a227" : i === 1 ? "#2f80ed" : "#b02a2a", metalness: 0.5, roughness: 0.35 }));
-      obj.position.set(-0.05 + Math.cos(ang * 2.1) * 0.42, 2.05, 0.1 + Math.sin(ang * 2.1) * 0.42);
+      const obj = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.1, 0.15, 0.5 + i * 0.16, 14),
+        new THREE.MeshStandardMaterial({ color: i === 0 ? "#c9a227" : i === 1 ? "#2f80ed" : "#b02a2a", metalness: 0.55, roughness: 0.3 }),
+      );
+      obj.position.set(-0.05 + Math.cos(ang * 2.1) * 0.4, 2.05 - i * 0.08, 0.18 + Math.sin(ang * 2.1) * 0.4);
+      const lens = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.055, 0.1, 10), new THREE.MeshStandardMaterial({ color: "#bfe3ff", metalness: 0.8, roughness: 0.1 }));
+      lens.position.y = -(0.28 + i * 0.08);
+      obj.add(lens);
       micro.add(obj);
     }
-    const knob = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.28, 0.22, 16), new THREE.MeshStandardMaterial({ color: "#94a3b8", metalness: 0.5 }));
-    knob.rotation.x = Math.PI / 2;
-    knob.position.set(-1.25, 1.35, 0.75);
-    micro.add(base, arm, tube, eyepiece, stage3d, turret, knob);
+    // fokus g'ildiraklari (ikkala tomonda)
+    for (const sx of [-1.32, 1.18]) {
+      const knob = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 0.2, 18), new THREE.MeshStandardMaterial({ color: "#94a3b8", metalness: 0.55, roughness: 0.35 }));
+      knob.rotation.x = Math.PI / 2;
+      knob.position.set(sx, 1.42, 0.62);
+      const knobS = new THREE.Mesh(new THREE.CylinderGeometry(0.17, 0.17, 0.24, 14), new THREE.MeshStandardMaterial({ color: "#cbd5e1", metalness: 0.6 }));
+      knobS.rotation.x = Math.PI / 2;
+      knobS.position.set(sx, 1.42, 0.88);
+      micro.add(knob, knobS);
+    }
+    // oynacha (ko'zgu) + yorug'lik
+    const mirrorPivot = new THREE.Group();
+    const mirror = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.42, 0.08, 22), new THREE.MeshStandardMaterial({ color: "#d9e2ec", metalness: 0.85, roughness: 0.12 }));
+    mirror.rotation.x = Math.PI / 2 - 0.6;
+    const mirrorFrame = new THREE.Mesh(new THREE.TorusGeometry(0.42, 0.045, 8, 22), dark);
+    mirrorFrame.rotation.x = Math.PI / 2 - 0.6;
+    mirrorPivot.add(mirror, mirrorFrame);
+    mirrorPivot.position.set(-0.02, 0.85, 0.28);
+    const mirrorArm = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.055, 0.75, 10), dark);
+    mirrorArm.position.set(-0.02, 0.62, 0.05);
+    const lamp = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.28, 0.18, 16), new THREE.MeshStandardMaterial({ color: "#f5e9c8", emissive: "#ffe9a8", emissiveIntensity: 0.7 }));
+    lamp.position.set(-0.02, 0.2, 0.28);
+    micro.add(base1, base2, armLower, armUpper, tube, eyepiece, eyeLens, stage3d, turret, mirrorPivot, mirrorArm, lamp);
     micro.position.set(3.4, 0, -0.4);
     micro.userData = { kind: "microscope" };
     micro.traverse((o) => (o.userData.pickRoot = micro));
@@ -77,13 +124,36 @@ export default function PrepLab() {
     specGroup.userData = { kind: "specimen" };
     handle.scene.add(specGroup);
 
-    // pichoqcha
+    // pichoqcha — YAXSHILANGAN MODEL (yog'och dastasi + po'lat pichoq + bolster)
     const knife = new THREE.Group();
     knifeRef.current = knife;
-    const handleM = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.22, 0.34), new THREE.MeshStandardMaterial({ color: "#7c4a2d", roughness: 0.6 }));
-    const blade = new THREE.Mesh(new THREE.BoxGeometry(1.15, 0.055, 0.42), new THREE.MeshStandardMaterial({ color: "#cbd5e1", metalness: 0.85, roughness: 0.18 }));
-    blade.position.x = 1.15;
-    knife.add(handleM, blade);
+    const handleM = new THREE.Mesh(new THREE.CylinderGeometry(0.21, 0.24, 1.35, 16), new THREE.MeshStandardMaterial({ color: "#6e4226", roughness: 0.55 }));
+    handleM.rotation.z = Math.PI / 2;
+    handleM.position.x = -0.55;
+    const bolster = new THREE.Mesh(new THREE.CylinderGeometry(0.23, 0.23, 0.18, 16), new THREE.MeshStandardMaterial({ color: "#b08d4f", metalness: 0.75, roughness: 0.3 }));
+    bolster.rotation.z = Math.PI / 2;
+    bolster.position.x = 0.16;
+    for (const rx of [-0.95, -0.2]) {
+      const rivet = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.055, 0.44, 10), new THREE.MeshStandardMaterial({ color: "#c9a86a", metalness: 0.8, roughness: 0.25 }));
+      rivet.rotation.x = Math.PI / 2;
+      rivet.position.set(rx, 0, 0);
+      knife.add(rivet);
+    }
+    // po'lat pichoq — tig' bilan (Shape + Extrude)
+    const bladeShape = new THREE.Shape();
+    bladeShape.moveTo(0, -0.2);
+    bladeShape.lineTo(1.35, -0.16);
+    bladeShape.lineTo(1.95, 0.02);
+    bladeShape.lineTo(1.35, 0.12);
+    bladeShape.lineTo(0, 0.16);
+    bladeShape.lineTo(0, -0.2);
+    const blade = new THREE.Mesh(
+      new THREE.ExtrudeGeometry(bladeShape, { depth: 0.055, bevelEnabled: true, bevelThickness: 0.015, bevelSize: 0.015, bevelSegments: 2 }),
+      new THREE.MeshStandardMaterial({ color: "#cdd7e3", metalness: 0.92, roughness: 0.14 }),
+    );
+    blade.rotation.x = -Math.PI / 2;
+    blade.position.set(0.22, 0.03, 0.02);
+    knife.add(handleM, bolster, blade);
     knife.position.set(-3.6, 0.45, 1.4);
     knife.rotation.y = -0.5;
     knife.userData = { kind: "knife" };
@@ -191,31 +261,64 @@ export default function PrepLab() {
           knife.position.y += (0.45 - knife.position.y) * 0.04;
         }
         micro.rotation.y = Math.sin(t * 0.22) * 0.16;
-        // 🔪 KESISH ANIMATSIYASI — pichoq ko'tariladi, tushadi, tilim qulaydi
+        // 🔪 TAYYORLASH ANIMATSIYASI — kesish / surtma / surish (namuna turiga qarab)
         const cut = cutAnimRef.current;
         if (cut) {
           const e = t - cut.t0;
           const sp = stateRef.current.specimenX ?? -1.2;
-          if (e < 0.5) {
-            const k = e / 0.5;
+          const approach = (k: number) => {
             knife.position.x = -3.6 + (sp + 0.45 + 3.6) * k;
             knife.position.y = 0.45 + 1.75 * k;
             knife.rotation.y = -0.5;
-          } else if (e < 0.85) {
-            const k = (e - 0.5) / 0.35;
-            knife.position.y = 2.2 - 1.85 * k;
-            knife.rotation.y = -0.5;
-          } else if (e < 1.7) {
-            const k = (e - 0.85) / 0.85;
-            const sl = sliceRef.current;
-            if (sl && sl.visible) {
-              sl.position.x = -0.15 - k * 1.15;
-              sl.position.y = Math.max(0.28, 1.15 - k * 1.35);
-              sl.rotation.z = k * 1.35;
+          };
+          if (cut.mode === "cut") {
+            if (e < 0.5) {
+              approach(e / 0.5);
+            } else if (e < 0.85) {
+              const k = (e - 0.5) / 0.35;
+              knife.position.y = 2.2 - 1.85 * k;
+              knife.rotation.y = -0.5;
+            } else if (e < 1.7) {
+              const k = (e - 0.85) / 0.85;
+              const sl = sliceRef.current;
+              if (sl && sl.visible) {
+                sl.position.x = -0.15 - k * 1.15;
+                sl.position.y = Math.max(0.28, 1.15 - k * 1.35);
+                sl.rotation.z = k * 1.35;
+              }
+              knife.position.y = 0.35 + k * 0.6;
+            } else {
+              cutAnimRef.current = null;
             }
-            knife.position.y = 0.35 + k * 0.6;
+          } else if (cut.mode === "smear") {
+            // 🩸 QON SURTMASI — kesilmaydi! Pichoq tomchini sekin surib yupqa qatlam qiladi
+            if (e < 0.5) {
+              approach(e / 0.5);
+            } else if (e < 1.8) {
+              const k = (e - 0.5) / 1.3;
+              knife.position.x = sp - 1.0 + k * 2.1;
+              knife.position.y = 0.42;
+              knife.rotation.y = -0.35 + k * 0.7;
+            } else if (e < 2.2) {
+              const k = (e - 1.8) / 0.4;
+              knife.position.y = 0.42 + k * 1.3;
+            } else {
+              cutAnimRef.current = null;
+            }
           } else {
-            cutAnimRef.current = null;
+            // 👄 OG'IZ SHILLIQ QAVATI — surib olinadi (kesilmaydi)
+            if (e < 0.5) {
+              approach(e / 0.5);
+            } else if (e < 1.7) {
+              const k = (e - 0.5) / 1.2;
+              knife.position.x = sp + Math.sin(k * Math.PI * 4) * 0.5;
+              knife.position.y = 0.5 + Math.abs(Math.sin(k * Math.PI * 4)) * 0.12;
+            } else if (e < 2.1) {
+              const k = (e - 1.7) / 0.4;
+              knife.position.y = 0.5 + k * 1.4;
+            } else {
+              cutAnimRef.current = null;
+            }
           }
         }
       },
@@ -232,7 +335,7 @@ export default function PrepLab() {
 
   // namuna tanlanganda 3D ni yangilash
   useEffect(() => {
-    rebuildRef.current?.(specimen, stage >= 1);
+    rebuildRef.current?.(specimen, stage >= 1 && prepKind(specimen) === "cut");
   }, [specimen, stage]);
 
   // 3D bosishlar
@@ -256,11 +359,26 @@ export default function PrepLab() {
     setStage(0);
     push(`🔬 Namuna tanlandi: ${s.name} — ${s.stain} bilan bo'yaladi`);
   };
+  /** Namuna tayyorlash turi: qon → surtma, og'iz → surish, qolganlari → kesish */
+  const prepKind = (s: Specimen | null): "cut" | "smear" | "scrape" =>
+    !s ? "cut" : s.texture === "blood" ? "smear" : s.texture === "cheek" ? "scrape" : "cut";
+  const PREP_LABEL: Record<string, string> = {
+    cut: "🔪 Kesish",
+    smear: "🩸 Surtma tayyorlash",
+    scrape: "👄 Surib olish",
+  };
   const doCut = () => {
     if (!specimen || stage !== 0) return;
-    cutAnimRef.current = { t0: performance.now() / 1000 };
+    const mode = prepKind(specimen);
+    cutAnimRef.current = { t0: performance.now() / 1000, mode };
     setStage(1);
-    push(`🔪 ${specimen.name} dan pichoqcha bilan yupqa qatlam kesildi (animatsiya!)`);
+    push(
+      mode === "cut"
+        ? `🔪 ${specimen.name} dan pichoqcha bilan yupqa qatlam kesildi (animatsiya!)`
+        : mode === "smear"
+          ? `🩸 Qon KESILMAYDI — tomchi pichoq bilan surilib, yupqa surtma tayyorlandi!`
+          : `👄 Og'iz hujayralari KESILMAYDI — sirtidan ehtiyotkorlik bilan surib olindi!`,
+    );
   };
   const doStain = () => {
     if (!specimen || stage !== 1) return;
@@ -275,7 +393,7 @@ export default function PrepLab() {
 
   const catalog: CatalogItem[] = [
     ...SPECIMENS.map((s) => ({ id: `s:${s.id}`, icon: s.name.slice(0, 2), name: s.name, group: "Namunalar", desc: s.tavsif })),
-    { id: "t:knife", icon: "🔪", name: "Pichoqcha — kesish", group: "Asboblar" },
+    { id: "t:knife", icon: "🔪", name: "Pichoqcha — tayyorlash (kesish/surtish)", group: "Asboblar", desc: "Qon va og'iz namunalari KESILMAYDI — surtma/surish usuli" },
     { id: "t:stain", icon: "💧", name: "Bo'yovchi qo'shish", group: "Asboblar" },
     { id: "t:load", icon: "🧫", name: "Mikroskopga qo'yish", group: "Asboblar" },
     { id: "t:view", icon: "🔬", name: "Ko'rish (ko'zdan)", group: "Asboblar" },
@@ -340,7 +458,7 @@ export default function PrepLab() {
         <div className="mt-3 flex flex-wrap gap-1.5">
           {!specimen && <p className="text-xs text-slate-400">Avval <b>＋ Qo'shish</b> → <b>Namunalar</b> bo'limidan namuna tanlang.</p>}
           {specimen && stage === 0 && (
-            <button onClick={doCut} className="rounded-2xl bg-teal-700 px-4 py-2.5 text-sm font-semibold text-white active:scale-[0.97]">🔪 Kesish</button>
+            <button onClick={doCut} className="rounded-2xl bg-teal-700 px-4 py-2.5 text-sm font-semibold text-white active:scale-[0.97]">{PREP_LABEL[prepKind(specimen)]}</button>
           )}
           {stage === 1 && (
             <button onClick={doStain} className="rounded-2xl bg-teal-700 px-4 py-2.5 text-sm font-semibold text-white active:scale-[0.97]">💧 Bo'yash</button>
