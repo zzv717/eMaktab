@@ -206,8 +206,11 @@ export async function callTelegramIpv4<T = unknown>(
 
 /** Tarmoq orqali yuborish: hostname(IPv4) -> pinlangan IP'lar -> fetch. */
 async function callTelegramNet<T = unknown>(method: string, payload: Record<string, unknown>): Promise<T> {
+  // Umumiy vaqt budjeti: ~12s (funksiyani 60s timeoutdan himoya qiladi)
+  const deadline = Date.now() + 12000;
+  const left = () => Math.max(1500, deadline - Date.now());
   try {
-    const r = await callTelegramIpv4<T>(method, payload, 6000);
+    const r = await callTelegramIpv4<T>(method, payload, Math.min(4000, left()));
     setHealth("up");
     return r;
   } catch (e) {
@@ -215,8 +218,9 @@ async function callTelegramNet<T = unknown>(method: string, payload: Record<stri
   }
   let lastError = "tarmoq xatosi";
   for (const ip of TG_IPS) {
+    if (Date.now() > deadline - 1500) break;
     try {
-      const r = await callTelegramIp<T>(ip, method, payload, 5000);
+      const r = await callTelegramIp<T>(ip, method, payload, Math.min(2500, left()));
       setHealth("up");
       return r;
     } catch (e) {
@@ -230,7 +234,7 @@ async function callTelegramNet<T = unknown>(method: string, payload: Record<stri
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(8000),
+      signal: AbortSignal.timeout(Math.min(5000, left())),
     });
     const json = (await res.json().catch(() => null)) as
       | { ok: boolean; result?: T; description?: string }
@@ -279,6 +283,7 @@ async function enqueueOutbox(method: string, payload: Record<string, unknown>) {
 /** Navbatni bo'shatish (cron + webhook piggyback chaqiradi). */
 export async function drainOutbox(limit = 5): Promise<number> {
   if (healthNow() === "down") return 0;
+  const until = Date.now() + 15000; // umumiy vaqt budjeti
   let sent = 0;
   try {
     const res = await db.execute(
@@ -286,7 +291,7 @@ export async function drainOutbox(limit = 5): Promise<number> {
     );
     const rows = (res as { rows?: Record<string, unknown>[] }).rows ?? [];
     for (const row of rows) {
-      if (healthNow() === "down") break;
+      if (healthNow() === "down" || Date.now() > until) break;
       try {
         const payload = JSON.parse(String(row.payload)) as Record<string, unknown>;
         await callTelegramNet(String(row.method), payload);

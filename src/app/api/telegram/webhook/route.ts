@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { after, NextRequest, NextResponse } from "next/server";
 import { handleTelegramUpdate } from "@/lib/bot";
 import { runDueNotifications } from "@/lib/nazoratchi";
 import {
@@ -48,20 +48,23 @@ export async function POST(req: NextRequest) {
   }
   const reply = takeReplyCapture();
 
-  // 👁 Nazoratchi bildirishnomalari + outbox navbati — faqat tarmoq sog'lom bo'lsa
-  // (javobni sekinlashtirmaslik uchun; tushmasa keyingi safar/cron yetkazadi).
-  if (healthNow() !== "down") {
+  // 👁 Yordamchi ishlar (nazoratchi + outbox navbati) — JAVOBDAN KEYIN ishlaydi:
+  // hech qachon javobni ushlab turmaydi yoki o'ldirmaydi (Vercel 60s timeout xatosi shundan edi).
+  after(async () => {
+    const withBudget = (p: Promise<unknown>, ms: number) =>
+      Promise.race([p, new Promise((r) => setTimeout(r, ms))]);
+    if (healthNow() === "down") return;
     try {
-      await runDueNotifications();
+      await withBudget(runDueNotifications(), 25000);
     } catch {
       /* bildirishnoma xatosi javobga xalaqit bermaydi */
     }
     try {
-      await drainOutbox(3);
+      await withBudget(drainOutbox(3), 15000);
     } catch {
       /* navbat xatosi javobga xalaqit bermaydi */
     }
-  }
+  });
 
   return NextResponse.json(reply ?? { ok: true });
 }
