@@ -831,7 +831,7 @@ export interface Specimen {
   name: string;
   tavsif: string;
   /** mikroskop ostidagi ko'rinish turi */
-  texture: "onion" | "cheek" | "leaf" | "blood" | "muscle" | "root";
+  texture: "onion" | "cheek" | "leaf" | "blood" | "muscle" | "root" | "nerve" | "bone" | "fat" | "fungi" | "bacteria";
   rang: string;
   /** bo'yovchi (stain) kerakmi */
   stain: string;
@@ -844,6 +844,11 @@ export const SPECIMENS: Specimen[] = [
   { id: "blood", name: "🩸 Qon surtmasi", tavsif: "Eritrotsitlar (yadrosiz donachalar) va leykotsitlar (himoyachi hujayralar).", texture: "blood", rang: "#c94b4b", stain: "Romanovsky-Gyenza" },
   { id: "muscle", name: "💪 Mushak to'qimasi", tavsif: "Siyqish iplari — o'ziga xos yo'lbars chiziqlari bilan.", texture: "muscle", rang: "#c97b6a", stain: "Gematoxilin" },
   { id: "root", name: "🌱 Ildiz uchi", tavsif: "O'sish zonasi — hujayralar FAOL bo'linmoqda (mitoz bosqichlarini ko'rasiz!).", texture: "root", rang: "#d9c27b", stain: "Yod eritmasi" },
+  { id: "nerve", name: "🧠 Asab hujayrasi", tavsif: "Yulduz shaklidagi tanasi va uzun o'simtalari — signallarni tez uzatadi!", texture: "nerve", rang: "#d8b46a", stain: "Kumush nitrat" },
+  { id: "bone", name: "🦴 Suyak to'qimasi", tavsif: "Osteon halqalari — mustahkam tuzilish, markazda kanal bor.", texture: "bone", rang: "#e2d8bf", stain: "Gematoxilin" },
+  { id: "fat", name: "🧈 Yog' hujayralari", tavsif: "Katta yog' tomchisi yadroni chetiga surib yuboradi — energiya ombori!", texture: "fat", rang: "#f2e2a8", stain: "Sudan III" },
+  { id: "fungi", name: "🍄 Qo'ziqorin (gifa)", tavsif: "Uzun ipqatorlar (gifa) to'ri — zamburug'lar o'simlik emas!", texture: "fungi", rang: "#b89ad8", stain: "Metilen ko'ki" },
+  { id: "bacteria", name: "🦠 Bakteriyalar", tavsif: "Mayda tayoqchalar va sharlar — ko'zga ko'rinmas olam!", texture: "bacteria", rang: "#7fc9a8", stain: "Gram bo'yash" },
 ];
 
 export const MEIOSIS: DivisionStage[] = [
