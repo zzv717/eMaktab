@@ -182,7 +182,8 @@ export default function ChemLab() {
       if (!r) return;
       const g = makeBottle(r);
       const n = bottlesRoot.children.length;
-      g.position.set(-8.2 + ((n * 1.75) % 16.4), 2.32 + Math.floor((n * 1.75) / 16.4) * 1.7, -4.2 - Math.floor((n * 1.75) / 16.4) * 1.5);
+      // ish stolining O'ZIDA (javonda emas) — darhol ushlab olinadi
+      g.position.set(-7 + (n % 6) * 2.7, 0.02, 2.7 + Math.floor(n / 6) * 1.7);
       g.scale.setScalar(0.01);
       bottlesRoot.add(g);
       popBRef.current.push({ obj: g, t0: performance.now() / 1000 });
@@ -323,7 +324,7 @@ export default function ChemLab() {
 
     // bosish/siljitish
     const detachPointer = attachPointer(handle, canvas, {
-      getRoots: () => [...maps.vessels.values(), ...maps.bottles.values()],
+      getRoots: () => [...maps.vessels.values(), ...(maps.bottlesRoot?.children ?? [])],
       moveRef,
       onPick: (root) => {
         const ud = root.userData as { kind: string; id: string; label: string; icon: string; desc?: string };
