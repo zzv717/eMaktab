@@ -1037,6 +1037,14 @@ check("looksLikeName: ko'rish rad", !looksLikeName("Ko'rish"), true);
   check("lab-biologiya: tilim oynachaga olib boriladi", src("app/app/lab/PrepLab.tsx").includes("piecePos"));
   check("lab-fizika: realistik modellar (filament/rangli tasmalar/spiral)", src("app/app/lab/PhysLab.tsx").includes("filament") && src("app/app/lab/PhysLab.tsx").includes("bandColors") && src("app/app/lab/PhysLab.tsx").includes("TubeGeometry"));
   check("lab-fizika: strelkali asbob shkalasi", src("app/app/lab/PhysLab.tsx").includes("tick") && src("app/app/lab/PhysLab.tsx").includes("needle"));
+  // 📖 Yoriqnoma (har bir fan uchun alohida + real hayot bog'lanishlari)
+  check("lab-yoriqnoma: Guides mavjud", src("app/app/lab/Guides.tsx").includes("GUIDE_PHYSICS") && src("app/app/lab/Guides.tsx").includes("GUIDE_CHEMISTRY") && src("app/app/lab/Guides.tsx").includes("GUIDE_BIOLOGY"));
+  check("lab-yoriqnoma: har bir bo'limda real hayot", (src("app/app/lab/Guides.tsx").match(/realLife:/g) ?? []).length >= 25, (src("app/app/lab/Guides.tsx").match(/realLife:/g) ?? []).length);
+  check("lab-yoriqnoma: fizikada yoriqnoma tugmasi", src("app/app/lab/PhysLab.tsx").includes("GuideButton") && src("app/app/lab/PhysLab.tsx").includes("GUIDE_PHYSICS"));
+  check("lab-yoriqnoma: kimyoda yoriqnoma", src("app/app/lab/ChemLab.tsx").includes("GUIDE_CHEMISTRY"));
+  check("lab-yoriqnoma: biologiyada yoriqnoma (hamma rejimlar)", src("app/app/lab/BioLab.tsx").includes("GUIDE_BIOLOGY") && src("app/app/lab/PrepLab.tsx").includes("GUIDE_BIOLOGY"));
+  check("lab-yoriqnoma: mitoz/meyoz real hayotda", src("app/app/lab/Guides.tsx").includes("SARATON") && src("app/app/lab/Guides.tsx").includes("Meyoz"));
+  check("lab-fizika: qurilmalarda real hayot tavsifi", src("app/app/lab/PhysLab.tsx").includes("REAL_DESC") && src("app/app/lab/PhysLab.tsx").includes("elektromobil"));
 
   // UI kontraktlari
   check("lab: LabPanel mavjud", src("app/app/lab/LabPanel.tsx").includes("Kimyo") && src("app/app/lab/LabPanel.tsx").includes("Fizika") && src("app/app/lab/LabPanel.tsx").includes("Biologiya"));

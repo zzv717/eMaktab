@@ -3,6 +3,7 @@
 
 import { useMemo, useState, type ReactNode, type RefObject } from "react";
 import { orbitBy, translateBy, type SceneHandle } from "./three-utils";
+import { GuideButton, type GuideData } from "./Guides";
 
 export interface CatalogItem {
   id: string;
@@ -24,12 +25,15 @@ export function StageBox({
   catalog,
   onAdd,
   toolbar,
+  guide,
 }: {
   title: string;
   children: ReactNode;
   catalog: CatalogItem[];
   onAdd: (id: string) => void;
   toolbar?: ReactNode;
+  /** 📖 bu fan uchun ALOHIDA ishlatish yoriqnomasi (real hayot bog'lanishlari bilan) */
+  guide?: GuideData;
 }) {
   const [fs, setFs] = useState(false);
   const [cat, setCat] = useState(false);
@@ -52,6 +56,7 @@ export function StageBox({
     <div className="flex items-center justify-between gap-2">
       <p className="min-w-0 truncate text-sm font-semibold text-slate-900">{title}</p>
       <div className="flex shrink-0 gap-1.5">
+        {guide && <GuideButton guide={guide} />}
         <button
           onClick={() => setCat((c) => !c)}
           className="rounded-full bg-teal-700 px-3 py-1.5 text-sm font-bold text-white shadow-md active:scale-95"

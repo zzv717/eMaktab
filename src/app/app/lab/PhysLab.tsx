@@ -6,6 +6,7 @@ import * as THREE from "three";
 import { applyWires, lensPhysics, solveCircuit, springPhysics, type CircuitComp, type CircuitCompType, type CircuitWire } from "./engine";
 import { attachFrameHooks, attachPointer, benchTop, createScene, type SceneHandle } from "./three-utils";
 import { CameraPad, PickCard, StageBox, labChip, type CatalogItem, type PickInfo } from "./StageBox";
+import { GuideButton, GUIDE_PHYSICS } from "./Guides";
 
 type Mode = "circuit" | "spring" | "optics";
 
@@ -13,7 +14,7 @@ export default function PhysLab() {
   const [mode, setMode] = useState<Mode>("circuit");
   return (
     <div>
-      <div className="mb-3 flex flex-wrap gap-2">
+      <div className="mb-3 flex flex-wrap items-center gap-2">
         {(
           [
             ["circuit", "🔌 Elektr zanjiri"],
@@ -29,6 +30,9 @@ export default function PhysLab() {
             {label}
           </button>
         ))}
+        <span className="ml-auto">
+          <GuideButton guide={GUIDE_PHYSICS} />
+        </span>
       </div>
       {mode === "circuit" && <CircuitLab />}
       {mode === "spring" && <SpringLab />}
@@ -36,6 +40,21 @@ export default function PhysLab() {
     </div>
   );
 }
+
+// 🌍 Real hayot — har bir qurilma qayerda ishlatiladi (bosilganda chiqadi)
+const REAL_DESC: Record<CircuitCompType, string> = {
+  battery: "🔋 Telefon, qo'l chirog'i, avtomobil akkumulyatori — hammasi shunday energiya beradi!",
+  bulb: "💡 Xona chirog'i, fonar, avtomobil farasi — spiral qizib yonadi.",
+  resistor: "📻 Radio, TV, kompyuter sxemasida tokni cheklash uchun millionlab ishlatiladi.",
+  switch: "🏠 Devordagi yorug'lik kaliti — zanjirni ochadi/yopadi.",
+  ammeter: "🔧 Elektrchi tok kuchini shunday o'lchaydi; uy hisoblagichi ham shu printsipda.",
+  led: "🔴 Telefon ekrani, svetodiod chiroq, yo'l belgisi — hammasi LED.",
+  motor: "🌪 Ventilyator, chang yutgich, elektromobil, lift — tokdan harakat!",
+  buzzer: "🏫 Maktab qo'ng'irog'i, eshik qo'ng'irog'i, signalizatsiya.",
+  galv: "📡 Laboratoriya tok o'lchagichi; elektr uzatish liniyalarini tekshirishda ishlatiladi.",
+  rheostat: "🏠 Yorug'likni pas-yuqori qiluvchi dimmer, mashina gazi pedali.",
+  heater: "☕ Choynak, dazmol, suv isitgich — spiral qizib ishlaydi.",
+};
 
 const card = "rounded-3xl bg-white p-4 shadow-[0_12px_36px_rgba(15,23,42,0.08)]";
 
@@ -153,7 +172,7 @@ function CircuitLab() {
               info: {
                 icon: "🔧",
                 label: ADD_LABEL[c.type],
-                desc: c.fault ? `Nosozlik: ${c.fault}` : c.type === "switch" ? `Kalit: ${c.closed ? "yopiq" : "ochiq"}` : "Siljitish uchun tugmani bosing",
+                desc: c.fault ? `Nosozlik: ${c.fault}` : `${REAL_DESC[c.type]}${c.type === "switch" ? ` (hozir: ${c.closed ? "yopiq" : "ochiq"})` : ""}`,
               },
               id: ud.id,
             });
@@ -365,7 +384,7 @@ function CircuitLab() {
 
   const selected = comps.find((c) => c.id === selComp);
   const catalog: CatalogItem[] = [
-    ...(Object.keys(ADD_LABEL) as CircuitCompType[]).map((t) => ({ id: `c:${t}`, icon: "🔧", name: ADD_LABEL[t], group: "Qurilmalar (ish stoliga qo'shing)" })),
+    ...(Object.keys(ADD_LABEL) as CircuitCompType[]).map((t) => ({ id: `c:${t}`, icon: "🔧", name: ADD_LABEL[t], group: "Qurilmalar (ish stoliga qo'shing)", desc: REAL_DESC[t] })),
     { id: "p:light", icon: "💡", name: "Loyiha: Yoritish", group: "Tayyor loyihalar", desc: "Batareya + kalit + lampochka" },
     { id: "p:measure", icon: "📏", name: "Loyiha: O'lchov", group: "Tayyor loyihalar", desc: "Ampermetr + rezistor (Om qonuni)" },
     { id: "p:motor", icon: "⚙️", name: "Loyiha: Motor", group: "Tayyor loyihalar", desc: "Reostat bilan tezlikni boshqaring" },
