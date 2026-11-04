@@ -42,6 +42,7 @@ export default function ChemLab() {
     flames: Map<string, THREE.Group>;
     bottles: Map<string, THREE.Group>;
     pourBottle: THREE.Group | null;
+    bottlesRoot: THREE.Group | null;
     stream: THREE.Mesh | null;
     stir: THREE.Group | null;
     heatLight: THREE.PointLight | null;
@@ -57,6 +58,10 @@ export default function ChemLab() {
   const [pick, setPick] = useState<{ info: PickInfo; kind: string; id: string } | null>(null);
   const [eq, setEq] = useState<string>(""); // pastdagi tenglama paneli (Na + Cl → NaCl)
   const projectTimers = useRef<number[]>([]);
+  const [nearPour, setNearPour] = useState<{ bottleId: string; vesselId: string; label: string } | null>(null);
+  const nearPourRef = useRef<{ bottleId: string; vesselId: string } | null>(null);
+  const spawnBottleRef = useRef<((id: string) => void) | null>(null);
+  const popBRef = useRef<{ obj: THREE.Object3D; t0: number }[]>([]);
   // Faqat oz miqdorda reaktivlar: bir tomonda birikmalar, bir tomonda moddalar
   const BENCH_BIRIKMALAR = ["hcl", "naoh", "cuso4", "na2co3", "agno3"];
   const BENCH_MODDALAR = ["mg", "zn", "cu"];
@@ -87,6 +92,7 @@ export default function ChemLab() {
       flames: new Map<string, THREE.Group>(),
       bottles: new Map<string, THREE.Group>(),
       pourBottle: null as THREE.Group | null,
+      bottlesRoot: null as THREE.Group | null,
       stream: null as THREE.Mesh | null,
       stir: null as THREE.Group | null,
       heatLight: null as THREE.PointLight | null,
@@ -166,6 +172,22 @@ export default function ChemLab() {
     };
     putSide(BENCH_BIRIKMALAR, -8.3, "⚗️ BIRIKMALAR");
     putSide(BENCH_MODDALAR, 3.1, "🧫 MODDALAR");
+
+    // ➕ Shisha qo'shish — stolga "sakrab" tushadi (to'g'ridan-to'g'ri quyilmaydi!)
+    const bottlesRoot = new THREE.Group();
+    handle.scene.add(bottlesRoot);
+    for (const g of Array.from(maps.bottles.values())) bottlesRoot.add(g);
+    spawnBottleRef.current = (reagentId: string) => {
+      const r = getReagent(reagentId);
+      if (!r) return;
+      const g = makeBottle(r);
+      const n = bottlesRoot.children.length;
+      g.position.set(-8.2 + ((n * 1.75) % 16.4), 2.32 + Math.floor((n * 1.75) / 16.4) * 1.7, -4.2 - Math.floor((n * 1.75) / 16.4) * 1.5);
+      g.scale.setScalar(0.01);
+      bottlesRoot.add(g);
+      popBRef.current.push({ obj: g, t0: performance.now() / 1000 });
+    };
+    maps.bottlesRoot = bottlesRoot;
 
     // --- Idish yaratish
     const buildVessel = (v: VesselObj) => {
@@ -432,6 +454,37 @@ export default function ChemLab() {
             if (pour) animRef.current.pour = undefined;
           }
         }
+        // shisha pop-in
+        popBRef.current = popBRef.current.filter((pp) => {
+          const k = Math.min(1, (t - pp.t0) / 0.5);
+          const e = 1 + Math.sin(k * Math.PI) * 0.12;
+          pp.obj.scale.setScalar(k * e);
+          return k < 1;
+        });
+        // 🟢 YAQINLIK — shisha idishga YAQIN keltirilsa "Quyish" tugmasi chiqadi
+        const br = maps.bottlesRoot;
+        if (br) {
+          let found: { bottleId: string; vesselId: string } | null = null;
+          for (const b of br.children) {
+            for (const [vid, vg] of maps.vessels) {
+              const dx = b.position.x - vg.position.x;
+              const dz = b.position.z - vg.position.z;
+              if (Math.sqrt(dx * dx + dz * dz) < 3.1) {
+                found = { bottleId: b.userData.id as string, vesselId: vid };
+                break;
+              }
+            }
+            if (found) break;
+          }
+          const prev = nearPourRef.current;
+          if ((found?.bottleId ?? null) !== (prev?.bottleId ?? null) || (found?.vesselId ?? null) !== (prev?.vesselId ?? null)) {
+            nearPourRef.current = found;
+            if (found) {
+              const r = getReagent(found.bottleId);
+              setNearPour({ ...found, label: `${r?.formula ?? found.bottleId}` });
+            } else setNearPour(null);
+          }
+        }
         // aralashtirish
         const stirA = animRef.current.stir;
         if (maps.stir) {
@@ -470,6 +523,7 @@ export default function ChemLab() {
       handle.dispose();
       handleRef.current = null;
       mapsRef.current = null;
+      spawnBottleRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -614,7 +668,10 @@ export default function ChemLab() {
       setSelVessel(v.id);
       pushLog(`➕ Yangi idish qo'shildi: ${VESSEL_LABEL[type]}`);
     } else if (id.startsWith("r:") || id.startsWith("e:")) {
-      setSelReagent(id.slice(2));
+      // ➕ Stolga shisha tushadi — keyin idishga YAQIN olib boriladi va "Quyish" chiqadi
+      spawnBottleRef.current?.(id.slice(2));
+      const r = getReagent(id.slice(2));
+      pushLog(`➕ Stolga qo'shildi: ${r?.formula ?? id} — shishani ushlab, idishga YAQIN olib boring!`);
     } else if (id === "t:stir") stirIt();
     else if (id === "t:clear") {
       if (sel) setVessels((vs) => vs.map((v) => (v.id === sel.id ? { ...v, contents: [], heatOn: false } : v)));
@@ -704,6 +761,18 @@ export default function ChemLab() {
       </div>
 
       {moving && <p className="rounded-2xl bg-amber-50 p-2.5 text-center text-sm text-amber-700">🔀 Siljitish rejimi — obyektni <b>sudrab</b> ish stolining istalgan joyiga qo'ying</p>}
+      {nearPour && (
+        <button
+          onClick={() => {
+            doPour(nearPour.vesselId, nearPour.bottleId);
+            setNearPour(null);
+            nearPourRef.current = null;
+          }}
+          className="mt-2 w-full rounded-2xl bg-teal-700 px-4 py-2.5 text-sm font-semibold text-white shadow-lg active:scale-[0.98]"
+        >
+          🫗 Quyish — {nearPour.label} shishasidan idishga
+        </button>
+      )}
       {eq && (
         <div className="mt-2 rounded-2xl bg-slate-900 px-4 py-2.5 text-center shadow-inner">
           <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-400">⚗️ Natija</p>

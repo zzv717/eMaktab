@@ -1022,8 +1022,16 @@ check("looksLikeName: ko'rish rad", !looksLikeName("Ko'rish"), true);
   check("lab-fizika: nosozlik rejimi", src("app/app/lab/PhysLab.tsx").includes("Nosozlik rejimi"));
   check("lab-fizika: ishga tushirish", src("app/app/lab/PhysLab.tsx").includes("Ishga tushirish"));
   check("lab-fizika: tayyor loyihalar", src("app/app/lab/PhysLab.tsx").includes("Tayyor loyihalar"));
-  check("lab-biologiya: pichoqcha + mikroskop", src("app/app/lab/PrepLab.tsx").includes("Pichoqcha") && src("app/app/lab/PrepLab.tsx").includes("SpecimenView"));
-  check("lab-biologiya: mikroskop boshqaruvi", src("app/app/lab/PrepLab.tsx").includes("Kattalashtirish") && src("app/app/lab/PrepLab.tsx").includes("Fokus"));
+  check("lab-biologiya: pichoqcha + mikroskop", src("app/app/lab/PrepLab.tsx").includes("pichoqcha") && src("app/app/lab/PrepLab.tsx").includes("SpecimenView"));
+  check("lab-biologiya: mikroskop boshqaruvi", src("app/app/lab/PrepLab.tsx").includes("×400") && src("app/app/lab/PrepLab.tsx").includes("Fokus"));
+  // yangi: simulyator oqimi + yaqinlik tugmalari + anjomlar + 11 namuna
+  check("lab-biologiya: yaqinlik tugmalari (masofadan emas)", src("app/app/lab/PrepLab.tsx").includes("near.knife") && src("app/app/lab/PrepLab.tsx").includes("slideMicro"));
+  check("lab-biologiya: Anjomlar bo'limi", src("app/app/lab/PrepLab.tsx").includes("Anjomlar") && src("app/app/lab/PrepLab.tsx").includes("Pipetka") && src("app/app/lab/PrepLab.tsx").includes("Pinset"));
+  check("lab-biologiya: ko'rish sahna ichida", src("app/app/lab/PrepLab.tsx").includes("viewPlaneRef") && src("app/app/lab/PrepLab.tsx").includes("Ko'rish"));
+  check("lab-biologiya: 11 namuna", SPECIMENS.length === 11, SPECIMENS.length);
+  check("lab-biologiya: yangi namunalar (asab/suyak/yog'/qo'ziqorin/bakteriya)", ["nerve", "bone", "fat", "fungi", "bacteria"].every((t) => SPECIMENS.some((sp) => sp.texture === t)));
+  check("lab-kimyo: qo'shish stolga shisha tushadi", src("app/app/lab/ChemLab.tsx").includes("spawnBottleRef") && src("app/app/lab/ChemLab.tsx").includes("nearPour"));
+  check("lab-kimyo: quyish tugmasi yaqinlikda", src("app/app/lab/ChemLab.tsx").includes("🫗 Quyish"));
 
   // UI kontraktlari
   check("lab: LabPanel mavjud", src("app/app/lab/LabPanel.tsx").includes("Kimyo") && src("app/app/lab/LabPanel.tsx").includes("Fizika") && src("app/app/lab/LabPanel.tsx").includes("Biologiya"));

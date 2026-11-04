@@ -5,7 +5,7 @@ import { useEffect, useRef } from "react";
 import type { Specimen } from "./engine";
 
 /** Namuna teksturasini chizadi — kattalashtirish darajasiga qarab hujayra o'lchami o'zgaradi. */
-function drawSpecimen(ctx: CanvasRenderingContext2D, w: number, h: number, kind: Specimen["texture"], zoom: number) {
+export function drawSpecimen(ctx: CanvasRenderingContext2D, w: number, h: number, kind: Specimen["texture"], zoom: number) {
   const rnd = mulberry32(42);
   ctx.fillStyle = "#f5f1e8";
   ctx.fillRect(0, 0, w, h);
@@ -114,7 +114,7 @@ function drawSpecimen(ctx: CanvasRenderingContext2D, w: number, h: number, kind:
       ctx.lineTo(w, y + cell * 0.52);
       ctx.stroke();
     }
-  } else {
+  } else if (kind === "root") {
     // root — bo'linayotgan hujayralar (mitoz)
     ctx.fillStyle = "#ead9a8";
     ctx.fillRect(0, 0, w, h);
@@ -141,6 +141,135 @@ function drawSpecimen(ctx: CanvasRenderingContext2D, w: number, h: number, kind:
           ctx.fillStyle = "#7b4f9e";
           ctx.fill();
         }
+      }
+    }
+  } else if (kind === "nerve") {
+    // 🧠 asab hujayrasi — yulduz shaklidagi tanasi + uzun o'simtalar
+    ctx.fillStyle = "#f3e6c8";
+    ctx.fillRect(0, 0, w, h);
+    for (let i = 0; i < Math.floor((w * h) / (cell * cell * 3.2)); i++) {
+      const x = rnd() * w;
+      const y = rnd() * h;
+      const r = cell * 0.34;
+      // dendritlar
+      ctx.strokeStyle = "#b8873c";
+      ctx.lineWidth = Math.max(1.2, zoom * 1.1);
+      for (let b = 0; b < 6; b++) {
+        const ang = rnd() * Math.PI * 2;
+        const len = cell * (1.2 + rnd() * 1.4);
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+        const mx = x + Math.cos(ang) * len * 0.6;
+        const my = y + Math.sin(ang) * len * 0.6;
+        const ex = x + Math.cos(ang + (rnd() - 0.5) * 0.8) * len;
+        const ey = y + Math.sin(ang + (rnd() - 0.5) * 0.8) * len;
+        ctx.quadraticCurveTo(mx, my, ex, ey);
+        ctx.stroke();
+      }
+      // tana
+      ctx.beginPath();
+      ctx.ellipse(x, y, r, r * 0.85, rnd() * Math.PI, 0, Math.PI * 2);
+      ctx.fillStyle = "rgba(216,180,106,0.85)";
+      ctx.fill();
+      ctx.strokeStyle = "#8a5f22";
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(x + r * 0.12, y, r * 0.34, 0, Math.PI * 2);
+      ctx.fillStyle = "#6b4620";
+      ctx.fill();
+    }
+  } else if (kind === "bone") {
+    // 🦴 suyak — osteon halqalari
+    ctx.fillStyle = "#efe6d2";
+    ctx.fillRect(0, 0, w, h);
+    for (let i = 0; i < Math.floor((w * h) / (cell * cell * 1.6)); i++) {
+      const x = rnd() * w;
+      const y = rnd() * h;
+      for (let ring = 3; ring >= 1; ring--) {
+        ctx.beginPath();
+        ctx.arc(x, y, cell * 0.16 * ring, 0, Math.PI * 2);
+        ctx.strokeStyle = ring % 2 ? "#b8a077" : "#d3c19b";
+        ctx.lineWidth = Math.max(1.4, zoom * 1.2);
+        ctx.stroke();
+      }
+      ctx.beginPath();
+      ctx.arc(x, y, cell * 0.075, 0, Math.PI * 2);
+      ctx.fillStyle = "#5c4626";
+      ctx.fill();
+    }
+  } else if (kind === "fat") {
+    // 🧈 yog' hujayralari — katta tomchilar, yadro chetda
+    ctx.fillStyle = "#f7ecd0";
+    ctx.fillRect(0, 0, w, h);
+    for (let i = 0; i < Math.floor((w * h) / (cell * cell * 1.15)); i++) {
+      const x = rnd() * w;
+      const y = rnd() * h;
+      const r = cell * (0.42 + rnd() * 0.16);
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, Math.PI * 2);
+      ctx.fillStyle = "rgba(246,224,150,0.9)";
+      ctx.fill();
+      ctx.strokeStyle = "#c9a94e";
+      ctx.lineWidth = Math.max(1.3, zoom);
+      ctx.stroke();
+      // yadro chetda
+      ctx.beginPath();
+      ctx.arc(x + r * 0.72, y + r * 0.2, r * 0.2, 0, Math.PI * 2);
+      ctx.fillStyle = "#8a6a2c";
+      ctx.fill();
+    }
+  } else if (kind === "fungi") {
+    // 🍄 qo'ziqorin — gifalar to'ri + sporalar
+    ctx.fillStyle = "#e8ddf2";
+    ctx.fillRect(0, 0, w, h);
+    ctx.lineCap = "round";
+    for (let i = 0; i < 26 + Math.floor(zoom * 6); i++) {
+      let x = rnd() * w;
+      let y = rnd() * h;
+      ctx.strokeStyle = "rgba(122,72,178,0.75)";
+      ctx.lineWidth = Math.max(1.6, zoom * 1.5);
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      for (let seg = 0; seg < 6; seg++) {
+        x += (rnd() - 0.5) * cell * 1.6;
+        y += (rnd() - 0.5) * cell * 1.6;
+        ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+    }
+    for (let i = 0; i < Math.floor((w * h) / (cell * cell * 2.2)); i++) {
+      const x = rnd() * w;
+      const y = rnd() * h;
+      ctx.beginPath();
+      ctx.arc(x, y, cell * 0.13 * (0.7 + rnd() * 0.5), 0, Math.PI * 2);
+      ctx.fillStyle = "rgba(90,46,140,0.8)";
+      ctx.fill();
+    }
+  } else {
+    // 🦠 bakteriyalar — tayoqchalar va sharlar
+    ctx.fillStyle = "#dff2e8";
+    ctx.fillRect(0, 0, w, h);
+    for (let i = 0; i < Math.floor((w * h) / (cell * cell * 0.5)); i++) {
+      const x = rnd() * w;
+      const y = rnd() * h;
+      const ang = rnd() * Math.PI * 2;
+      const rod = rnd() > 0.45;
+      if (rod) {
+        const L = cell * (0.32 + rnd() * 0.22);
+        const W = cell * 0.13;
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.rotate(ang);
+        ctx.beginPath();
+        ctx.roundRect(-L / 2, -W / 2, L, W, W / 2);
+        ctx.fillStyle = "rgba(36,138,98,0.82)";
+        ctx.fill();
+        ctx.restore();
+      } else {
+        ctx.beginPath();
+        ctx.arc(x, y, cell * 0.11 * (0.8 + rnd() * 0.5), 0, Math.PI * 2);
+        ctx.fillStyle = "rgba(36,138,98,0.82)";
+        ctx.fill();
       }
     }
   }

@@ -163,6 +163,9 @@ export function attachPointer(handle: SceneHandle, canvas: HTMLCanvasElement, op
   const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
   let dragging = false;
   let dragTarget: THREE.Object3D | null = null;
+  const dragPlane = new THREE.Plane();
+  const dragStart = new THREE.Vector3();
+  const dragHit0 = new THREE.Vector3();
   let downX = 0;
   let downY = 0;
   let moved = 0;
@@ -192,62 +195,81 @@ export function attachPointer(handle: SceneHandle, canvas: HTMLCanvasElement, op
     downX = ev.clientX;
     downY = ev.clientY;
     moved = 0;
+    dragging = false;
+    dragTarget = null;
     const { root, hit } = pickBoth(ev);
-    // drag: obyektning istalgan qismidan (terminal, qopqoq) bossa ham siljiydi
-    let onMoveTarget = root === opts.moveRef.current;
-    if (!onMoveTarget && opts.moveRef.current && hit) {
-      let o: THREE.Object3D | null = hit;
-      while (o) {
-        if (o === opts.moveRef.current) {
-          onMoveTarget = true;
-          break;
+    // 🟢 TERMINAL — sim ulash uchun saqlanadi (obyekt drag EMAS!)
+    const isTerminal = hit?.userData?.kind === "terminal";
+    let candidate: THREE.Object3D | null = null;
+    if (!isTerminal) {
+      if (opts.moveRef.current) {
+        let o: THREE.Object3D | null = hit;
+        while (o) {
+          if (o === opts.moveRef.current) {
+            candidate = opts.moveRef.current;
+            break;
+          }
+          o = o.parent;
         }
-        o = o.parent;
+      }
+      if (!candidate && root && root.userData?.kind) {
+        candidate = ((root.userData.pickRoot as THREE.Object3D | undefined) ?? root);
       }
     }
-    // 🖐 TO'G'RIDAN-TO'G'RI SUDRASH — obyektning o'zini bossa-yu sursa, u siljiydi.
-    // Kamera faqat BO'SH JOYdan surilganda aylanadi. "Siljitish" tugmasi ham ishlaydi.
-    const dragObj =
-      opts.moveRef.current && onMoveTarget
-        ? opts.moveRef.current
-        : root && root.userData?.kind
-          ? (root.userData.pickRoot as THREE.Object3D | undefined) ?? root
-          : null;
-    if (dragObj) {
-      dragging = true;
-      dragTarget = dragObj;
-      // 🔒 obyekt siltayotganda KAMERA harakatlanmasligi uchun
+    if (candidate) {
+      // obyekt ustidan bosilgan — kamera qimirlamaydi; drag 8px dan keyin boshlanadi
+      dragTarget = candidate;
       handle.controls.enabled = false;
-      const hitPt = new THREE.Vector3();
-      ray.ray.intersectPlane(plane, hitPt);
-      offset.copy(dragObj.position).sub(hitPt);
       canvas.setPointerCapture(ev.pointerId);
     }
   };
   const onMove = (ev: PointerEvent) => {
     moved = Math.max(moved, Math.abs(ev.clientX - downX) + Math.abs(ev.clientY - downY));
-    if (!dragging || !dragTarget) return;
+    if (!dragTarget) return;
+    if (!dragging) {
+      // ✋ 8px dan oldin qo'l qimirlasa ham — bu "bosish" (tap) bo'lib qoladi (sim ulash ishlaydi)
+      if (moved < 8) return;
+      dragging = true;
+      dragPlane.setFromNormalAndCoplanarPoint(
+        handle.camera.getWorldDirection(new THREE.Vector3()).negate(),
+        dragTarget.position,
+      );
+      toNdc(ev);
+      dragStart.copy(dragTarget.position);
+      if (ray.ray.intersectPlane(dragPlane, dragHit0)) {
+        // dragHit0 tayyor
+      } else {
+        dragHit0.copy(dragTarget.position);
+      }
+    }
     toNdc(ev);
     const hitPt = new THREE.Vector3();
-    if (ray.ray.intersectPlane(plane, hitPt)) {
-      dragTarget.position.x = THREE.MathUtils.clamp(hitPt.x + offset.x, -9.5, 9.5);
-      dragTarget.position.z = THREE.MathUtils.clamp(hitPt.z + offset.z, -5, 5.5);
+    if (ray.ray.intersectPlane(dragPlane, hitPt)) {
+      // 🖐 BARMoQ QAERDA BOLSA — obyekt OSHA YERDA (1:1, "tez qimirlash" yo'q)
+      dragTarget.position.set(
+        THREE.MathUtils.clamp(dragStart.x + (hitPt.x - dragHit0.x), -9.5, 9.5),
+        THREE.MathUtils.clamp(dragStart.y + (hitPt.y - dragHit0.y), 0.15, 5.5),
+        THREE.MathUtils.clamp(dragStart.z + (hitPt.z - dragHit0.z), -5, 5.5),
+      );
     }
   };
   const onUp = (ev: PointerEvent) => {
-    if (dragging) {
-      dragging = false;
+    const wasDragging = dragging;
+    const target = dragTarget;
+    dragging = false;
+    dragTarget = null;
+    if (target) {
       handle.controls.enabled = true; // 🔓 kamera qayta yoqiladi
-      if (opts.moveRef.current) opts.onMoveEnd?.(opts.moveRef.current);
-      dragTarget = null;
-      return;
+      if (wasDragging) {
+        if (opts.moveRef.current) opts.onMoveEnd?.(opts.moveRef.current);
+        return;
+      }
     }
     if (moved < 8) {
       const { root, hit } = pickBoth(ev);
       if (root && hit) opts.onPick(root, hit, ev);
     }
   };
-
   canvas.addEventListener("pointerdown", onDown);
   canvas.addEventListener("pointermove", onMove);
   canvas.addEventListener("pointerup", onUp);

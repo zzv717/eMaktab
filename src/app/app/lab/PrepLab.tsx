@@ -1,37 +1,88 @@
-// 🧫 Namuna tayyorlash va mikroskop — pichoqcha bilan kesish, bo'yash, mikroskopda ko'rish
+// 🧫 Namuna tayyorlash va mikroskop — simulyator oqimi (hammasi bitta sahnada!)
+// Tanlanadi → stolga tushadi → anjom YAQIN keltiriladi → tugma chiqadi → animatsiya →
+// oynacha → mikroskop → kamera ko'zga → ko'rish SAHNA ICHIDA
 "use client";
 
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
-import { SPECIMENS, type Specimen } from "./engine";
 import { attachFrameHooks, attachPointer, benchTop, createScene, glassMaterial, type SceneHandle } from "./three-utils";
 import { CameraPad, PickCard, StageBox, labChip, type CatalogItem, type PickInfo } from "./StageBox";
-import SpecimenView from "./SpecimenView";
+import { SPECIMENS, type Specimen } from "./engine";
+import { drawSpecimen } from "./SpecimenView";
 
-type Stage = 0 | 1 | 2 | 3 | 4;
+type PrepMode = "cut" | "smear" | "scrape";
 
-const STAGE_LABEL = ["① Namunani tanlang", "② Pichoqcha bilan kesing", "③ Bo'yovchi qo'shing", "④ Preparatni mikroskopga qo'ying", "⑤ Mikroskopda ko'ring"];
+const prepMode = (s: Specimen | null): PrepMode =>
+  !s ? "cut" : s.texture === "blood" ? "smear" : s.texture === "cheek" ? "scrape" : "cut";
+
+const ACTION_LABEL: Record<PrepMode, string> = {
+  cut: "🔪 Kesish",
+  smear: "🩸 Surtma tayyorlash",
+  scrape: "👄 Surib olish",
+};
+
+const EYE_POS = new THREE.Vector3(3.68, 4.35, -0.42); // mikroskop ko'zi (world)
 
 export default function PrepLab() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const handleRef = useRef<SceneHandle | null>(null);
   const [specimen, setSpecimen] = useState<Specimen | null>(null);
-  const [stage, setStage] = useState<Stage>(0);
-  const [mag, setMag] = useState(1); // 1=×40, 2.2=×100, 4.5=×400
-  const [focus, setFocus] = useState(0.72);
-  const [light, setLight] = useState(0.7);
+  // 0 tanlash · 1 namuna stolda · 2 kesilgan · 3 bo'yalgan · 4 oynachada · 5 mikroskopda · 6 ko'rish
+  const [stage, setStage] = useState(0);
   const [log, setLog] = useState<string[]>([]);
   const [pickInfo, setPickInfo] = useState<PickInfo | null>(null);
-  const handleRef = useRef<SceneHandle | null>(null);
   const [moving, setMoving] = useState(false);
   const moveRef = useRef<THREE.Object3D | null>(null);
-  const cutAnimRef = useRef<{ t0: number; mode: "cut" | "smear" | "scrape" } | null>(null);
+  const cutAnimRef = useRef<{ t0: number; mode: PrepMode } | null>(null);
+  const stainAnimRef = useRef<{ t0: number } | null>(null);
+  const transferRef = useRef<{ t0: number; kind: "toSlide" | "toMicro" } | null>(null);
+  const flyRef = useRef<{ t0: number; from: THREE.Vector3; to: THREE.Vector3; fromT: THREE.Vector3; toT: THREE.Vector3 } | null>(null);
+  const popRef = useRef<{ obj: THREE.Object3D; t0: number }[]>([]);
   const knifeRef = useRef<THREE.Group | null>(null);
   const sliceRef = useRef<THREE.Mesh | null>(null);
-  const stateRef = useRef({ stage: 0, hasSpecimen: false, specimenX: -1.2 });
+  const specGroupRef = useRef<THREE.Group | null>(null);
+  const slideRef = useRef<THREE.Object3D | null>(null);
+  const microRef = useRef<THREE.Group | null>(null);
+  const dropRef = useRef<THREE.Mesh | null>(null);
+  const viewPlaneRef = useRef<THREE.Mesh | null>(null);
+  const stateRef = useRef({ stage: 0, mode: "cut" as PrepMode });
+  // yaqinlik holati (frame hook → React, faqat O'ZGARGANDA)
+  const [near, setNear] = useState({ knife: false, stain: false, slideSpec: false, slideMicro: false, atEye: false });
+  const nearRef = useRef({ knife: false, stain: false, slideSpec: false, slideMicro: false });
+  // ko'rish rejimi sozlamalari
+  const [zoom, setZoom] = useState(1);
+  const [focus, setFocus] = useState(1);
+  const [light, setLight] = useState(0.75);
+  const [atEye, setAtEye] = useState(false);
+  const [viewing, setViewing] = useState(false);
+  const texRef = useRef<HTMLCanvasElement | null>(null);
   const rebuildRef = useRef<((s: Specimen | null, cut: boolean) => void) | null>(null);
-  stateRef.current = { stage, hasSpecimen: Boolean(specimen), specimenX: -1.2 };
+  const flyToRef = useRef<((to: THREE.Vector3, toT: THREE.Vector3) => void) | null>(null);
+  const spawnRef = useRef<((kind: string) => void) | null>(null);
 
-  const push = (l: string) => setLog((x) => [l, ...x].slice(0, 20));
+  stateRef.current = { stage, mode: prepMode(specimen) };
+
+  const push = (line: string) => setLog((l) => [line, ...l].slice(0, 30));
+
+  // ---------- mikroskop ko'rinishi (sahna ichida) ----------
+  useEffect(() => {
+    const tex = texRef.current;
+    const plane = viewPlaneRef.current;
+    if (!tex || !plane) return;
+    const ctx = tex.getContext("2d");
+    if (!ctx) return;
+    const off = document.createElement("canvas");
+    off.width = 512;
+    off.height = 512;
+    const octx = off.getContext("2d");
+    if (!octx) return;
+    drawSpecimen(octx, 512, 512, specimen?.texture ?? "onion", zoom);
+    ctx.filter = `blur(${(1 - focus) * 3.2}px) brightness(${0.55 + light * 0.9}) contrast(${1 + light * 0.18})`;
+    ctx.drawImage(off, 0, 0);
+    ctx.filter = "none";
+    const map = (plane.material as THREE.MeshBasicMaterial).map;
+    if (map) map.needsUpdate = true;
+  }, [specimen, zoom, focus, light, viewing]);
 
   // ---------- 3D sahna ----------
   useEffect(() => {
@@ -41,33 +92,30 @@ export default function PrepLab() {
     handleRef.current = handle;
     handle.scene.add(benchTop(14, 9));
 
-    // 🔬 YAXSHILANGAN MIKROSKOP MODELI (asos, yoy, stol, revolver, linzalar, ko'zgu)
-    const micro = new THREE.Group();
     const metal = new THREE.MeshStandardMaterial({ color: "#3b4a63", metalness: 0.55, roughness: 0.35 });
     const dark = new THREE.MeshStandardMaterial({ color: "#22303f", metalness: 0.35, roughness: 0.5 });
-    // asos (2 qatlamli)
+
+    // ====== MIKROSKOP (realistik) ======
+    const micro = new THREE.Group();
+    microRef.current = micro;
     const base1 = new THREE.Mesh(new THREE.BoxGeometry(2.7, 0.32, 2.0), metal);
     base1.position.y = 0.16;
     const base2 = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.3, 1.6), dark);
     base2.position.y = 0.46;
-    // yoy (egri tayanch)
     const armLower = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.4, 1.6, 18), metal);
     armLower.position.set(-0.95, 1.35, -0.25);
     const armUpper = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.32, 1.6, 18), metal);
     armUpper.position.set(-0.62, 2.75, -0.45);
     armUpper.rotation.z = -0.35;
-    // korpus nayi
     const tube = new THREE.Mesh(new THREE.CylinderGeometry(0.36, 0.36, 1.55, 20), metal);
     tube.position.set(-0.12, 3.35, -0.12);
     tube.rotation.z = 0.38;
-    // ko'z linzasi (egri)
     const eyepiece = new THREE.Mesh(new THREE.CylinderGeometry(0.21, 0.27, 0.72, 18), dark);
     eyepiece.position.set(0.28, 4.18, -0.02);
     eyepiece.rotation.z = 0.38;
     const eyeLens = new THREE.Mesh(new THREE.CylinderGeometry(0.19, 0.19, 0.06, 18), new THREE.MeshStandardMaterial({ color: "#0f2a3f", metalness: 0.7, roughness: 0.15 }));
     eyeLens.position.set(0.42, 4.5, 0.04);
     eyeLens.rotation.z = 0.38;
-    // ish stoli + qisqichlar + teshik
     const stage3d = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.14, 1.45), new THREE.MeshStandardMaterial({ color: "#64748b", metalness: 0.45, roughness: 0.42 }));
     stage3d.position.set(-0.02, 1.72, 0.28);
     for (const sx of [-0.62, 0.62]) {
@@ -77,7 +125,6 @@ export default function PrepLab() {
     }
     const aperture = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 0.06, 16), dark);
     aperture.position.set(-0.02, 1.8, 0.28);
-    // revolver + 3 ta linza (har xil uzunlikda)
     const turret = new THREE.Mesh(new THREE.CylinderGeometry(0.56, 0.52, 0.26, 20), metal);
     turret.position.set(-0.05, 2.42, 0.18);
     for (const [i, ang] of [0, 1, 2].entries()) {
@@ -91,7 +138,6 @@ export default function PrepLab() {
       obj.add(lens);
       micro.add(obj);
     }
-    // fokus g'ildiraklari (ikkala tomonda)
     for (const sx of [-1.32, 1.18]) {
       const knob = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 0.2, 18), new THREE.MeshStandardMaterial({ color: "#94a3b8", metalness: 0.55, roughness: 0.35 }));
       knob.rotation.x = Math.PI / 2;
@@ -101,7 +147,6 @@ export default function PrepLab() {
       knobS.position.set(sx, 1.42, 0.88);
       micro.add(knob, knobS);
     }
-    // oynacha (ko'zgu) + yorug'lik
     const mirrorPivot = new THREE.Group();
     const mirror = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.42, 0.08, 22), new THREE.MeshStandardMaterial({ color: "#d9e2ec", metalness: 0.85, roughness: 0.12 }));
     mirror.rotation.x = Math.PI / 2 - 0.6;
@@ -115,71 +160,179 @@ export default function PrepLab() {
     lamp.position.set(-0.02, 0.2, 0.28);
     micro.add(base1, base2, armLower, armUpper, tube, eyepiece, eyeLens, stage3d, turret, mirrorPivot, mirrorArm, lamp);
     micro.position.set(3.4, 0, -0.4);
-    micro.userData = { kind: "microscope" };
-    micro.traverse((o) => (o.userData.pickRoot = micro));
+    micro.userData = { kind: "microscope", label: "🔬 Mikroskop", icon: "🔬", desc: "Bosing — kamera ko'z joyiga o'tadi" };
+    micro.traverse((o) => {
+      o.userData.pickRoot = micro;
+      if ((o as THREE.Mesh).isMesh) (o as THREE.Mesh).castShadow = true;
+    });
     handle.scene.add(micro);
 
-    // namuna
+    // ====== ANJOMLAR (ishlatiladigan narsalar) ======
+    const makeKnife = () => {
+      const g = new THREE.Group();
+      const handleM = new THREE.Mesh(new THREE.CylinderGeometry(0.21, 0.24, 1.35, 16), new THREE.MeshStandardMaterial({ color: "#6e4226", roughness: 0.55 }));
+      handleM.rotation.z = Math.PI / 2;
+      handleM.position.x = -0.55;
+      const bolster = new THREE.Mesh(new THREE.CylinderGeometry(0.23, 0.23, 0.18, 16), new THREE.MeshStandardMaterial({ color: "#b08d4f", metalness: 0.75, roughness: 0.3 }));
+      bolster.rotation.z = Math.PI / 2;
+      bolster.position.x = 0.16;
+      const bladeShape = new THREE.Shape();
+      bladeShape.moveTo(0, -0.2);
+      bladeShape.lineTo(1.35, -0.16);
+      bladeShape.lineTo(1.95, 0.02);
+      bladeShape.lineTo(1.35, 0.12);
+      bladeShape.lineTo(0, 0.16);
+      bladeShape.lineTo(0, -0.2);
+      const blade = new THREE.Mesh(
+        new THREE.ExtrudeGeometry(bladeShape, { depth: 0.055, bevelEnabled: true, bevelThickness: 0.015, bevelSize: 0.015, bevelSegments: 2 }),
+        new THREE.MeshStandardMaterial({ color: "#cdd7e3", metalness: 0.92, roughness: 0.14 }),
+      );
+      blade.rotation.x = -Math.PI / 2;
+      blade.position.set(0.22, 0.03, 0.02);
+      g.add(handleM, bolster, blade);
+      return g;
+    };
+    const makePipette = () => {
+      const g = new THREE.Group();
+      const tubeG = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.055, 1.7, 12), glassMaterial("#d8ecf5", 0.45));
+      tubeG.position.y = 0.95;
+      tubeG.rotation.z = 0.28;
+      const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.26, 16, 12), new THREE.MeshStandardMaterial({ color: "#b02a3a", roughness: 0.5 }));
+      bulb.position.set(-0.26, 1.86, 0);
+      const tip = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.02, 0.5, 8), glassMaterial("#d8ecf5", 0.5));
+      tip.position.set(0.22, 0.16, 0);
+      tip.rotation.z = 0.28;
+      const drop = new THREE.Mesh(new THREE.SphereGeometry(0.075, 10, 8), new THREE.MeshStandardMaterial({ color: "#7fc4e8", transparent: true, opacity: 0.85 }));
+      drop.position.set(0.31, -0.08, 0);
+      drop.name = "pipdrop";
+      g.add(tubeG, bulb, tip, drop);
+      return g;
+    };
+    const makeTweezers = () => {
+      const g = new THREE.Group();
+      for (const s of [-1, 1]) {
+        const arm = new THREE.Mesh(new THREE.BoxGeometry(1.65, 0.055, 0.11), new THREE.MeshStandardMaterial({ color: "#c9d2dc", metalness: 0.85, roughness: 0.2 }));
+        arm.position.set(0.55, 0.12, s * 0.1);
+        arm.rotation.y = s * 0.06;
+        arm.rotation.z = -0.045 * s * s - 0.02;
+        g.add(arm);
+      }
+      const grip = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.12, 0.3), new THREE.MeshStandardMaterial({ color: "#5b4a8f", roughness: 0.5 }));
+      grip.position.set(-0.28, 0.1, 0);
+      g.add(grip);
+      return g;
+    };
+    const makeSpreader = () => {
+      const g = new THREE.Group();
+      const rod = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.045, 0.16), glassMaterial("#d8ecf5", 0.5));
+      rod.position.y = 0.12;
+      rod.rotation.z = 0.03;
+      const tip = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.035, 0.3), glassMaterial("#d8ecf5", 0.5));
+      tip.position.set(0.92, 0.12, 0);
+      g.add(rod, tip);
+      return g;
+    };
+    const makeCover = () => {
+      const g = new THREE.Group();
+      const cov = new THREE.Mesh(new THREE.BoxGeometry(0.95, 0.025, 0.95), glassMaterial("#dceef7", 0.42));
+      cov.position.y = 0.12;
+      const shine = new THREE.Mesh(new THREE.PlaneGeometry(0.7, 0.7), new THREE.MeshBasicMaterial({ color: "#ffffff", transparent: true, opacity: 0.12 }));
+      shine.rotation.x = -Math.PI / 2;
+      shine.position.y = 0.145;
+      g.add(cov, shine);
+      return g;
+    };
+    const makeStain = () => {
+      const g = new THREE.Group();
+      const sb = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.35, 1.05, 16), new THREE.MeshPhysicalMaterial({ color: "#e8d8f2", transparent: true, opacity: 0.6, transmission: 0.35, roughness: 0.2 }));
+      sb.position.y = 0.72;
+      const sc = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 0.22, 12), new THREE.MeshStandardMaterial({ color: "#6b21a8" }));
+      sc.position.y = 1.36;
+      const sd = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 0.06, 16), new THREE.MeshStandardMaterial({ color: "#5b21a0" }));
+      sd.position.y = 0.14;
+      g.add(sb, sc, sd);
+      return g;
+    };
+    const makeSlide = () => {
+      const g = new THREE.Group();
+      const glass = new THREE.Mesh(new THREE.BoxGeometry(1.85, 0.07, 0.95), glassMaterial("#d8ecf5", 0.42));
+      glass.position.y = 0.16;
+      const frost = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.02, 0.95), new THREE.MeshStandardMaterial({ color: "#e8f2f8", transparent: true, opacity: 0.55 }));
+      frost.position.set(-0.62, 0.215, 0);
+      g.add(glass, frost);
+      return g;
+    };
+
+    type ToolKind = "knife" | "pipette" | "tweezers" | "spreader" | "cover" | "stain" | "slide";
+    const TOOL_META: Record<ToolKind, { label: string; icon: string; desc: string }> = {
+      knife: { label: "🔪 Skalpel (pichoqcha)", icon: "🔪", desc: "Namunani kesish/surtish uchun" },
+      pipette: { label: "💧 Pipetka", icon: "💧", desc: "Suyuqlik tomchisi olish" },
+      tweezers: { label: "🤏 Pinset", icon: "🤏", desc: "Mayda namunani ushlab olish" },
+      spreader: { label: "🩹 Surtma tayoqchasi", icon: "🩹", desc: "Qon surtmasini yoyish" },
+      cover: { label: "🪟 Yopqich shisha", icon: "🪟", desc: "Namunani yopish uchun" },
+      stain: { label: "💧 Bo'yovchi", icon: "💧", desc: "Namunani bo'yash uchun" },
+      slide: { label: "🧫 Preparat oynachasi", icon: "🧫", desc: "Namuna shu yerga qo'yiladi" },
+    };
+    const toolsGroup = new THREE.Group();
+    handle.scene.add(toolsGroup);
+    const buildTool = (kind: ToolKind) => {
+      const g =
+        kind === "knife" ? makeKnife() : kind === "pipette" ? makePipette() : kind === "tweezers" ? makeTweezers() : kind === "spreader" ? makeSpreader() : kind === "cover" ? makeCover() : kind === "stain" ? makeStain() : makeSlide();
+      g.userData = { kind, ...TOOL_META[kind] };
+      g.traverse((o) => {
+        o.userData.pickRoot = g;
+        if ((o as THREE.Mesh).isMesh) (o as THREE.Mesh).castShadow = true;
+      });
+      return g;
+    };
+    const home: Record<ToolKind, [number, number, number]> = {
+      knife: [-3.6, 0, 1.4],
+      pipette: [-2.35, 0, 2.7],
+      tweezers: [1.45, 0, 2.75],
+      spreader: [2.5, 0, 1.15],
+      cover: [0.15, 0, 3.05],
+      stain: [-1.9, 0, -1.6],
+      slide: [0.2, 0, 1.85],
+    };
+    const toolObjs: Partial<Record<ToolKind, THREE.Group[]>> = {};
+    for (const kind of Object.keys(home) as ToolKind[]) {
+      const g = buildTool(kind);
+      g.position.set(...home[kind]);
+      if (kind === "knife") {
+        g.rotation.y = -0.5;
+        knifeRef.current = g;
+      }
+      toolsGroup.add(g);
+      toolObjs[kind] = [g];
+      if (kind === "slide" && !slideRef.current) slideRef.current = g;
+    }
+    // anjom qo'shish — stolga "sakrab" tushadi
+    spawnRef.current = (kind: string) => {
+      const k = kind as ToolKind;
+      if (!home[k]) return;
+      const g = buildTool(k);
+      const n = (toolObjs[k]?.length ?? 0);
+      g.position.set(home[k][0] + (n % 3) * 1.15 - 0.6, 0, home[k][2] + 1.25 + Math.floor(n / 3) * 0.9);
+      if (k === "knife") g.rotation.y = -0.5;
+      g.scale.setScalar(0.01);
+      toolsGroup.add(g);
+      toolObjs[k] = [...(toolObjs[k] ?? []), g];
+      popRef.current.push({ obj: g, t0: performance.now() / 1000 });
+    };
+
+    // ====== NAMUNA ======
     const specGroup = new THREE.Group();
-    specGroup.userData = { kind: "specimen" };
+    specGroupRef.current = specGroup;
+    specGroup.userData = { kind: "specimen", label: "🧫 Namuna", icon: "🧫", desc: "Tayyorlanadigan namuna" };
     handle.scene.add(specGroup);
 
-    // pichoqcha — YAXSHILANGAN MODEL (yog'och dastasi + po'lat pichoq + bolster)
-    const knife = new THREE.Group();
-    knifeRef.current = knife;
-    const handleM = new THREE.Mesh(new THREE.CylinderGeometry(0.21, 0.24, 1.35, 16), new THREE.MeshStandardMaterial({ color: "#6e4226", roughness: 0.55 }));
-    handleM.rotation.z = Math.PI / 2;
-    handleM.position.x = -0.55;
-    const bolster = new THREE.Mesh(new THREE.CylinderGeometry(0.23, 0.23, 0.18, 16), new THREE.MeshStandardMaterial({ color: "#b08d4f", metalness: 0.75, roughness: 0.3 }));
-    bolster.rotation.z = Math.PI / 2;
-    bolster.position.x = 0.16;
-    for (const rx of [-0.95, -0.2]) {
-      const rivet = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.055, 0.44, 10), new THREE.MeshStandardMaterial({ color: "#c9a86a", metalness: 0.8, roughness: 0.25 }));
-      rivet.rotation.x = Math.PI / 2;
-      rivet.position.set(rx, 0, 0);
-      knife.add(rivet);
-    }
-    // po'lat pichoq — tig' bilan (Shape + Extrude)
-    const bladeShape = new THREE.Shape();
-    bladeShape.moveTo(0, -0.2);
-    bladeShape.lineTo(1.35, -0.16);
-    bladeShape.lineTo(1.95, 0.02);
-    bladeShape.lineTo(1.35, 0.12);
-    bladeShape.lineTo(0, 0.16);
-    bladeShape.lineTo(0, -0.2);
-    const blade = new THREE.Mesh(
-      new THREE.ExtrudeGeometry(bladeShape, { depth: 0.055, bevelEnabled: true, bevelThickness: 0.015, bevelSize: 0.015, bevelSegments: 2 }),
-      new THREE.MeshStandardMaterial({ color: "#cdd7e3", metalness: 0.92, roughness: 0.14 }),
-    );
-    blade.rotation.x = -Math.PI / 2;
-    blade.position.set(0.22, 0.03, 0.02);
-    knife.add(handleM, bolster, blade);
-    knife.position.set(-3.6, 0.45, 1.4);
-    knife.rotation.y = -0.5;
-    knife.userData = { kind: "knife" };
-    knife.traverse((o) => (o.userData.pickRoot = knife));
-    handle.scene.add(knife);
+    // bo'yash tomchisi
+    const drop = new THREE.Mesh(new THREE.SphereGeometry(0.11, 12, 10), new THREE.MeshStandardMaterial({ color: "#6b21a8", transparent: true, opacity: 0.9 }));
+    drop.visible = false;
+    handle.scene.add(drop);
+    dropRef.current = drop;
 
-    // preparat shishasi (slide)
-    const slide = new THREE.Mesh(new THREE.BoxGeometry(1.75, 0.06, 0.85), glassMaterial("#d8ecf5", 0.42));
-    slide.position.set(0.2, 0.35, 1.85);
-    slide.userData = { kind: "slide" };
-    slide.traverse((o) => (o.userData.pickRoot = slide));
-    handle.scene.add(slide);
-
-    // bo'yovchi shisha
-    const stain = new THREE.Group();
-    const sb = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.35, 1.05, 16), new THREE.MeshPhysicalMaterial({ color: "#e8d8f2", transparent: true, opacity: 0.6, transmission: 0.35, roughness: 0.2 }));
-    sb.position.y = 0.72;
-    const sc = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 0.22, 12), new THREE.MeshStandardMaterial({ color: "#6b21a8" }));
-    sc.position.y = 1.36;
-    stain.add(sb, sc);
-    stain.position.set(-1.9, 0, -1.6);
-    stain.userData = { kind: "stain" };
-    stain.traverse((o) => (o.userData.pickRoot = stain));
-    handle.scene.add(stain);
-
-    // kesilgan tilim (animatsiyada tushadi)
+    // kesilgan tilim
     const slice = new THREE.Mesh(new THREE.BoxGeometry(0.85, 0.16, 0.6), new THREE.MeshStandardMaterial({ color: "#d98cc8", roughness: 0.55 }));
     slice.visible = false;
     slice.position.set(-1.2, 1.2, 1.1);
@@ -198,32 +351,77 @@ export default function PrepLab() {
         for (let i = 0; i < (cut ? 3 : 6); i++) {
           const arc = new THREE.Mesh(new THREE.CylinderGeometry(1.15 - i * 0.13, 1.15 - i * 0.13, 0.1, 26, 1, false, 0, Math.PI * 1.15), new THREE.MeshStandardMaterial({ color: color.clone().offsetHSL(0, 0, i * 0.03), roughness: 0.55 }));
           arc.position.y = 0.25 + i * 0.12;
+          arc.rotation.y = i * 0.35;
           specGroup.add(arc);
         }
       } else if (spec.texture === "leaf") {
-        const leaf = new THREE.Mesh(new THREE.SphereGeometry(1.5, 26, 14), new THREE.MeshStandardMaterial({ color, roughness: 0.5 }));
-        leaf.scale.set(1, 0.16, 0.72);
+        const leaf = new THREE.Mesh(new THREE.SphereGeometry(1.25, 22, 14), new THREE.MeshStandardMaterial({ color, roughness: 0.5 }));
+        leaf.scale.set(1, 0.16, 0.62);
         leaf.position.y = 0.35;
-        specGroup.add(leaf);
-      } else if (spec.texture === "blood") {
-        const drop = new THREE.Mesh(new THREE.SphereGeometry(0.85, 22, 12), new THREE.MeshStandardMaterial({ color, roughness: 0.32 }));
-        drop.scale.set(1, 0.32, 1);
-        drop.position.y = 0.32;
-        specGroup.add(drop);
+        const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 1.2, 8), new THREE.MeshStandardMaterial({ color: "#4c7a3d" }));
+        stem.rotation.z = Math.PI / 2;
+        stem.position.set(1.45, 0.32, 0);
+        specGroup.add(leaf, stem);
       } else if (spec.texture === "muscle") {
-        for (let i = 0; i < (cut ? 3 : 5); i++) {
-          const fiber = new THREE.Mesh(new THREE.CapsuleGeometry(0.22, 1.9, 6, 12), new THREE.MeshStandardMaterial({ color: color.clone().offsetHSL(0, 0, i * 0.025), roughness: 0.5 }));
+        for (let i = 0; i < 4; i++) {
+          const fiber = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.24, 2.1, 12), new THREE.MeshStandardMaterial({ color: color.clone().offsetHSL(0, 0, i * 0.035), roughness: 0.6 }));
           fiber.rotation.z = Math.PI / 2;
-          fiber.position.set(0, 0.3 + (i % 2) * 0.24, -0.55 + i * 0.28);
+          fiber.position.set(0, 0.3 + (i % 2) * 0.5, -0.42 + Math.floor(i / 2) * 0.85);
           specGroup.add(fiber);
         }
+      } else if (spec.texture === "blood") {
+        const glassSlide = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.09, 1.15), glassMaterial("#d8ecf5", 0.45));
+        glassSlide.position.y = 0.16;
+        const smear = new THREE.Mesh(new THREE.BoxGeometry(1.75, 0.035, 0.72), new THREE.MeshStandardMaterial({ color, transparent: true, opacity: 0.85, roughness: 0.35 }));
+        smear.position.y = 0.235;
+        specGroup.add(glassSlide, smear);
+      } else if (spec.texture === "bone") {
+        const bone = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.55, 2.2, 18), new THREE.MeshStandardMaterial({ color, roughness: 0.55 }));
+        bone.rotation.z = Math.PI / 2;
+        bone.position.y = 0.55;
+        const marrow = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.28, 2.22, 14), new THREE.MeshStandardMaterial({ color: "#c98a6b", roughness: 0.6 }));
+        marrow.rotation.z = Math.PI / 2;
+        marrow.position.y = 0.55;
+        specGroup.add(bone, marrow);
+      } else if (spec.texture === "nerve") {
+        const body = new THREE.Mesh(new THREE.SphereGeometry(0.62, 18, 14), new THREE.MeshStandardMaterial({ color, roughness: 0.5 }));
+        body.position.y = 0.62;
+        specGroup.add(body);
+        for (let i = 0; i < 7; i++) {
+          const ang = (i / 7) * Math.PI * 2;
+          const dend = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.09, 1.25, 8), new THREE.MeshStandardMaterial({ color: color.clone().offsetHSL(0, 0, -0.06), roughness: 0.55 }));
+          dend.position.set(Math.cos(ang) * 0.85, 0.55, Math.sin(ang) * 0.85);
+          dend.rotation.z = Math.PI / 2 - 0.35;
+          dend.rotation.y = -ang;
+          specGroup.add(dend);
+        }
+      } else if (spec.texture === "fat") {
+        for (let i = 0; i < 5; i++) {
+          const dropM = new THREE.Mesh(new THREE.SphereGeometry(0.42 + (i % 3) * 0.12, 16, 12), new THREE.MeshStandardMaterial({ color, roughness: 0.35 }));
+          dropM.position.set(((i * 0.9) % 2.2) - 1.1, 0.45 + (i % 2) * 0.35, ((i * 1.3) % 1.8) - 0.9);
+          specGroup.add(dropM);
+        }
+      } else if (spec.texture === "fungi") {
+        for (let i = 0; i < 9; i++) {
+          const hypha = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.075, 1.9, 8), new THREE.MeshStandardMaterial({ color: color.clone().offsetHSL(0, 0, (i % 3) * 0.05), roughness: 0.55 }));
+          hypha.rotation.z = Math.PI / 2 - 0.5 + (i % 3) * 0.35;
+          hypha.rotation.y = i * 0.72;
+          hypha.position.set(((i * 0.62) % 1.6) - 0.8, 0.4 + (i % 4) * 0.16, ((i * 0.83) % 1.5) - 0.75);
+          specGroup.add(hypha);
+        }
+      } else if (spec.texture === "bacteria") {
+        for (let i = 0; i < 26; i++) {
+          const rod = new THREE.Mesh(new THREE.CapsuleGeometry(0.075, 0.2, 4, 8), new THREE.MeshStandardMaterial({ color: color.clone().offsetHSL(0, 0, (i % 4) * 0.03), roughness: 0.45 }));
+          rod.position.set(((i * 0.71) % 2.6) - 1.3, 0.18 + (i % 3) * 0.12, ((i * 0.97) % 2.2) - 1.1);
+          rod.rotation.set(Math.random() * 0.6, i * 0.8, Math.random() * 0.6);
+          specGroup.add(rod);
+        }
       } else {
-        const root = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.28, 2.3, 16), new THREE.MeshStandardMaterial({ color, roughness: 0.6 }));
-        root.position.y = 0.55;
-        root.rotation.z = 0.35;
-        specGroup.add(root);
+        const core = new THREE.Mesh(new THREE.SphereGeometry(0.85, 18, 14), new THREE.MeshStandardMaterial({ color, roughness: 0.5 }));
+        core.scale.y = 0.55;
+        core.position.y = 0.42;
+        specGroup.add(core);
       }
-      specGroup.position.set(-1.2, 0, 1.1);
       if (sliceRef.current) {
         (sliceRef.current.material as THREE.MeshStandardMaterial).color.set(color);
         sliceRef.current.visible = cut;
@@ -231,95 +429,194 @@ export default function PrepLab() {
         sliceRef.current.rotation.set(0, 0.5, 0);
       }
     };
-    rebuildSpec(null, false);
     rebuildRef.current = rebuildSpec;
 
-    // bosish/siljitish
+    // ====== MIKROSKOP KO'RINISHI — sahna ichida (kamera oldidagi dumaloq oyna) ======
+    const tex = document.createElement("canvas");
+    tex.width = 512;
+    tex.height = 512;
+    texRef.current = tex;
+    const viewPlane = new THREE.Mesh(
+      new THREE.CircleGeometry(0.78, 48),
+      new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(tex), transparent: true, opacity: 0 }),
+    );
+    viewPlane.position.set(0, 0, -1.75);
+    viewPlane.visible = false;
+    handle.camera.add(viewPlane);
+    handle.scene.add(handle.camera);
+    viewPlaneRef.current = viewPlane;
+    // atrofi (qora halqa)
+    const ring = new THREE.Mesh(new THREE.RingGeometry(0.78, 0.95, 48), new THREE.MeshBasicMaterial({ color: "#0b1220", transparent: true, opacity: 0 }));
+    ring.position.set(0, 0, -1.74);
+    ring.visible = false;
+    handle.camera.add(ring);
+
+    // ====== bosish / siljitish ======
     const detachPointer = attachPointer(handle, canvas, {
-      getRoots: () => [specGroup, knife, slide, stain, micro],
+      getRoots: () => [...toolsGroup.children, specGroup, micro],
       moveRef,
       onPick: (root) => {
         const kind = root.userData.kind as string;
-        const labels: Record<string, PickInfo> = {
-          specimen: { icon: "🧫", label: "Namuna", desc: "Pichoqcha bilan kesiladi" },
-          knife: { icon: "🔪", label: "Pichoqcha", desc: "Namunani kesish uchun" },
-          slide: { icon: "🧫", label: "Preparat shishasi", desc: "Kesilgan namuna shu yerga qo'yiladi" },
-          stain: { icon: "💧", label: "Bo'yovchi", desc: "Namunani bo'yash uchun" },
-          microscope: { icon: "🔬", label: "Mikroskop", desc: "Preparatni ko'rish uchun" },
-        };
-        setPickInfo(labels[kind] ?? null);
-        window.dispatchEvent(new CustomEvent("prep-tap", { detail: kind }));
+        setPickInfo({ icon: root.userData.icon ?? "🔧", label: root.userData.label ?? kind, desc: root.userData.desc ?? "" });
+        if (kind === "microscope" && stateRef.current.stage >= 5) {
+          // 🎥 kamera ko'z joyiga uchadi
+          flyTo(EYE_POS.clone().add(new THREE.Vector3(0.05, 0.95, 1.95)), EYE_POS);
+          setAtEye(true);
+          push("🎥 Kamera mikroskop ko'zi oldiga to'g'irlandi — '👁 Ko'rish' ni bosing");
+        }
       },
     });
 
+    const flyTo = (to: THREE.Vector3, toT: THREE.Vector3) => {
+      flyRef.current = {
+        t0: performance.now() / 1000,
+        from: handle.camera.position.clone(),
+        to,
+        fromT: handle.controls.target.clone(),
+        toT,
+      };
+    };
+    flyToRef.current = flyTo;
+
+    // ====== yaqinlik (frame hook) ======
+    const dist2 = (a: THREE.Vector3, b: THREE.Vector3) => {
+      const dx = a.x - b.x;
+      const dz = a.z - b.z;
+      return Math.sqrt(dx * dx + dz * dz);
+    };
+    const nearest = (kind: string, p: THREE.Vector3) => {
+      let best: THREE.Object3D | null = null;
+      let bd = Infinity;
+      for (const g of toolsGroup.children) {
+        if (g.userData.kind !== kind) continue;
+        const d = dist2(g.position, p);
+        if (d < bd) {
+          bd = d;
+          best = g;
+        }
+      }
+      return { obj: best, d: bd };
+    };
+
     const stop = attachFrameHooks(handle, [
       (t) => {
-        const idle = !cutAnimRef.current;
-        if (idle) {
-          knife.rotation.y = -0.5 + Math.sin(t * 0.8) * 0.12;
-          knife.position.x += (-3.6 - knife.position.x) * 0.04;
-          knife.position.y += (0.45 - knife.position.y) * 0.04;
+        // kamera uchishi
+        const fly = flyRef.current;
+        if (fly) {
+          const k = Math.min(1, (t - fly.t0) / 1.15);
+          const e = k * k * (3 - 2 * k);
+          handle.camera.position.lerpVectors(fly.from, fly.to, e);
+          handle.controls.target.lerpVectors(fly.fromT, fly.toT, e);
+          handle.controls.update();
+          if (k >= 1) flyRef.current = null;
         }
-        micro.rotation.y = Math.sin(t * 0.22) * 0.16;
-        // 🔪 TAYYORLASH ANIMATSIYASI — kesish / surtma / surish (namuna turiga qarab)
+        // pop-in animatsiyalar
+        popRef.current = popRef.current.filter((p) => {
+          const k = Math.min(1, (t - p.t0) / 0.5);
+          const e = 1 + Math.sin(k * Math.PI) * 0.12;
+          p.obj.scale.setScalar(k * e);
+          return k < 1;
+        });
+        // bo'yash tomchisi
+        const stainA = stainAnimRef.current;
+        if (stainA) {
+          const e = t - stainA.t0;
+          const sp = specGroup.position;
+          const st = nearest("stain", sp).obj;
+          const from = st ? st.position.clone().add(new THREE.Vector3(0.1, 1.5, 0)) : sp.clone().add(new THREE.Vector3(0, 2, 0));
+          if (e < 0.75 && dropRef.current) {
+            dropRef.current.visible = true;
+            const k = e / 0.75;
+            dropRef.current.position.lerpVectors(from, sp.clone().add(new THREE.Vector3(0, 0.75, 0)), k * k);
+          } else {
+            if (dropRef.current) dropRef.current.visible = false;
+            stainAnimRef.current = null;
+          }
+        }
+        // namuna → oynacha / oynacha → mikroskop ko'chishi
+        const tr = transferRef.current;
+        if (tr) {
+          const e = Math.min(1, (t - tr.t0) / 0.9);
+          const k = e * e * (3 - 2 * e);
+          if (tr.kind === "toSlide" && slideRef.current) {
+            specGroup.position.lerp(slideRef.current.position.clone().add(new THREE.Vector3(0, 0.32, 0)), 0.14);
+            specGroup.scale.setScalar(1 - k * 0.5);
+          } else if (tr.kind === "toMicro") {
+            const slideObj = slideRef.current;
+            if (slideObj) {
+              const targetPos = micro.position.clone().add(new THREE.Vector3(-0.02, 1.95, 0.28));
+              slideObj.position.lerp(targetPos, 0.12);
+              slideObj.rotation.y += (0 - slideObj.rotation.y) * 0.12;
+            }
+          }
+          if (e >= 1) transferRef.current = null;
+        }
+        // kesish/surtish/surish animatsiyalari
         const cut = cutAnimRef.current;
         if (cut) {
           const e = t - cut.t0;
-          const sp = stateRef.current.specimenX ?? -1.2;
+          const sp = specGroup.position;
           const approach = (k: number) => {
-            knife.position.x = -3.6 + (sp + 0.45 + 3.6) * k;
-            knife.position.y = 0.45 + 1.75 * k;
-            knife.rotation.y = -0.5;
+            knifeRef.current!.position.x = -3.6 + (sp.x + 0.45 + 3.6) * k;
+            knifeRef.current!.position.y = 0.45 + 1.75 * k;
+            knifeRef.current!.rotation.y = -0.5;
           };
-          if (cut.mode === "cut") {
-            if (e < 0.5) {
-              approach(e / 0.5);
-            } else if (e < 0.85) {
-              const k = (e - 0.5) / 0.35;
-              knife.position.y = 2.2 - 1.85 * k;
-              knife.rotation.y = -0.5;
-            } else if (e < 1.7) {
-              const k = (e - 0.85) / 0.85;
-              const sl = sliceRef.current;
-              if (sl && sl.visible) {
-                sl.position.x = -0.15 - k * 1.15;
-                sl.position.y = Math.max(0.28, 1.15 - k * 1.35);
-                sl.rotation.z = k * 1.35;
-              }
-              knife.position.y = 0.35 + k * 0.6;
+          const knife = knifeRef.current;
+          if (knife) {
+            if (cut.mode === "cut") {
+              if (e < 0.5) approach(e / 0.5);
+              else if (e < 0.85) knife.position.y = 2.2 - 1.85 * ((e - 0.5) / 0.35);
+              else if (e < 1.7) {
+                const k = (e - 0.85) / 0.85;
+                const sl = sliceRef.current;
+                if (sl && sl.visible) {
+                  sl.position.x = sp.x - 0.15 - k * 1.15;
+                  sl.position.y = Math.max(0.28, 1.15 - k * 1.35);
+                  sl.rotation.z = k * 1.35;
+                }
+                knife.position.y = 0.35 + k * 0.6;
+              } else cutAnimRef.current = null;
+            } else if (cut.mode === "smear") {
+              if (e < 0.5) approach(e / 0.5);
+              else if (e < 1.8) {
+                const k = (e - 0.5) / 1.3;
+                knife.position.x = sp.x - 1.0 + k * 2.1;
+                knife.position.y = 0.42;
+                knife.rotation.y = -0.35 + k * 0.7;
+              } else if (e < 2.2) knife.position.y = 0.42 + ((e - 1.8) / 0.4) * 1.3;
+              else cutAnimRef.current = null;
             } else {
-              cutAnimRef.current = null;
+              if (e < 0.5) approach(e / 0.5);
+              else if (e < 1.7) {
+                const k = (e - 0.5) / 1.2;
+                knife.position.x = sp.x + Math.sin(k * Math.PI * 4) * 0.5;
+                knife.position.y = 0.5 + Math.abs(Math.sin(k * Math.PI * 4)) * 0.12;
+              } else if (e < 2.1) knife.position.y = 0.5 + ((e - 1.7) / 0.4) * 1.4;
+              else cutAnimRef.current = null;
             }
-          } else if (cut.mode === "smear") {
-            // 🩸 QON SURTMASI — kesilmaydi! Pichoq tomchini sekin surib yupqa qatlam qiladi
-            if (e < 0.5) {
-              approach(e / 0.5);
-            } else if (e < 1.8) {
-              const k = (e - 0.5) / 1.3;
-              knife.position.x = sp - 1.0 + k * 2.1;
-              knife.position.y = 0.42;
-              knife.rotation.y = -0.35 + k * 0.7;
-            } else if (e < 2.2) {
-              const k = (e - 1.8) / 0.4;
-              knife.position.y = 0.42 + k * 1.3;
-            } else {
-              cutAnimRef.current = null;
-            }
-          } else {
-            // 👄 OG'IZ SHILLIQ QAVATI — surib olinadi (kesilmaydi)
-            if (e < 0.5) {
-              approach(e / 0.5);
-            } else if (e < 1.7) {
-              const k = (e - 0.5) / 1.2;
-              knife.position.x = sp + Math.sin(k * Math.PI * 4) * 0.5;
-              knife.position.y = 0.5 + Math.abs(Math.sin(k * Math.PI * 4)) * 0.12;
-            } else if (e < 2.1) {
-              const k = (e - 1.7) / 0.4;
-              knife.position.y = 0.5 + k * 1.4;
-            } else {
-              cutAnimRef.current = null;
-            }
-          }
+          } else cutAnimRef.current = null;
+        } else if (knifeRef.current) {
+          const knife = knifeRef.current;
+          knife.rotation.y += (-0.5 + Math.sin(t * 0.8) * 0.12 - knife.rotation.y) * 0.06;
+          knife.position.x += (-3.6 - knife.position.x) * 0.03;
+          knife.position.y += (0.45 - knife.position.y) * 0.03;
+        }
+        if (microRef.current) microRef.current.rotation.y = Math.sin(t * 0.22) * 0.14;
+
+        // 🟢 YAQINLIK — tugmalar faqat YAQIN keltirilganda chiqadi ("masofadan bolmasin")
+        const st2 = stateRef.current;
+        const sp = specGroup.position;
+        const knifeNear = st2.stage === 1 && specGroup.visible && nearest("knife", sp).d < 2.4;
+        const stainNear = st2.stage === 2 && specGroup.visible && nearest("stain", sp).d < 2.4;
+        const slideSpec = st2.stage === 3 && slideRef.current ? dist2(slideRef.current.position, sp) < 2.6 : false;
+        const slideMicro = st2.stage === 4 && slideRef.current ? dist2(slideRef.current.position, micro.position) < 3.0 : false;
+        const nr = nearRef.current;
+        if (nr.knife !== knifeNear || nr.stain !== stainNear || nr.slideSpec !== slideSpec || nr.slideMicro !== slideMicro) {
+          nr.knife = knifeNear;
+          nr.stain = stainNear;
+          nr.slideSpec = slideSpec;
+          nr.slideMicro = slideMicro;
+          setNear({ knife: knifeNear, stain: stainNear, slideSpec, slideMicro, atEye: false });
         }
       },
     ]);
@@ -329,109 +626,140 @@ export default function PrepLab() {
       detachPointer();
       handle.dispose();
       handleRef.current = null;
+      viewPlaneRef.current = null;
+      texRef.current = null;
+      spawnRef.current = null;
+      rebuildRef.current = null;
+      flyToRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // namuna tanlanganda 3D ni yangilash
+  // namuna/stage sinxroni
   useEffect(() => {
-    rebuildRef.current?.(specimen, stage >= 1 && prepKind(specimen) === "cut");
+    const st = specGroupRef.current;
+    if (!st) return;
+    st.visible = Boolean(specimen) && stage >= 1;
+    rebuildRef.current?.(specimen, stage >= 2 && prepMode(specimen) === "cut");
   }, [specimen, stage]);
 
-  // 3D bosishlar
-  useEffect(() => {
-    const onTap = (e: Event) => {
-      const kind = (e as CustomEvent).detail as string;
-      const st = stateRef.current;
-      if (kind === "specimen" && st.stage === 0 && st.hasSpecimen) doCut();
-      else if (kind === "knife" && st.hasSpecimen) doCut();
-      else if (kind === "stain" && st.stage >= 1) doStain();
-      else if (kind === "slide" && st.stage >= 2) doLoad();
-      else if (kind === "microscope" && st.stage >= 3) setStage(4);
-    };
-    window.addEventListener("prep-tap", onTap);
-    return () => window.removeEventListener("prep-tap", onTap);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [specimen]);
 
-  const pick = (s: Specimen) => {
-    setSpecimen(s);
-    setStage(0);
-    push(`🔬 Namuna tanlandi: ${s.name} — ${s.stain} bilan bo'yaladi`);
-  };
-  /** Namuna tayyorlash turi: qon → surtma, og'iz → surish, qolganlari → kesish */
-  const prepKind = (s: Specimen | null): "cut" | "smear" | "scrape" =>
-    !s ? "cut" : s.texture === "blood" ? "smear" : s.texture === "cheek" ? "scrape" : "cut";
-  const PREP_LABEL: Record<string, string> = {
-    cut: "🔪 Kesish",
-    smear: "🩸 Surtma tayyorlash",
-    scrape: "👄 Surib olish",
-  };
-  const doCut = () => {
-    if (!specimen || stage !== 0) return;
-    const mode = prepKind(specimen);
-    cutAnimRef.current = { t0: performance.now() / 1000, mode };
-    setStage(1);
-    push(
-      mode === "cut"
-        ? `🔪 ${specimen.name} dan pichoqcha bilan yupqa qatlam kesildi (animatsiya!)`
-        : mode === "smear"
-          ? `🩸 Qon KESILMAYDI — tomchi pichoq bilan surilib, yupqa surtma tayyorlandi!`
-          : `👄 Og'iz hujayralari KESILMAYDI — sirtidan ehtiyotkorlik bilan surib olindi!`,
-    );
+  // ---------- harakatlar (tugmalar faqat yaqinlikda!) ----------
+  const doAction = () => {
+    if (!specimen || stage !== 1) return;
+    cutAnimRef.current = { t0: performance.now() / 1000, mode: prepMode(specimen) };
+    setStage(2);
+    push(ACTION_LABEL[prepMode(specimen)] + " — animatsiya bajarildi ✅");
   };
   const doStain = () => {
-    if (!specimen || stage !== 1) return;
-    setStage(2);
-    push(`💧 Bo'yovchi qo'shildi (${specimen.stain}) — hujayralar yaxshi ko'rina boshladi`);
-  };
-  const doLoad = () => {
     if (!specimen || stage !== 2) return;
+    stainAnimRef.current = { t0: performance.now() / 1000 };
     setStage(3);
-    push("🧫 Preparat mikroskop stoliga qo'yildi — ko'zdan olib ko'ring!");
+    push(`💧 Bo'yovchi tomchisi tushdi (${specimen.stain}) — hujayralar yorqinroq ko'rina boshladi`);
+  };
+  const doToSlide = () => {
+    if (!specimen || stage !== 3) return;
+    transferRef.current = { t0: performance.now() / 1000, kind: "toSlide" };
+    setStage(4);
+    push("🧫 Namuna preparat oynachasiga qo'yildi");
+  };
+  const doToMicro = () => {
+    if (stage !== 4) return;
+    transferRef.current = { t0: performance.now() / 1000, kind: "toMicro" };
+    setStage(5);
+    push("🔬 Oynacha mikroskop stoliga joylashtirildi — endi MIKROSKOPKA BOSING");
+  };
+  const doView = () => {
+    if (stage < 5 || !specimen) return;
+    if (!atEye) {
+      flyToRef.current?.(EYE_POS.clone().add(new THREE.Vector3(0.05, 0.95, 1.95)), EYE_POS);
+      setAtEye(true);
+      push("🎥 Kamera mikroskop ko'zi oldiga to'g'irlandi — yana '👁 Ko'rish' ni bosing");
+      return;
+    }
+    setViewing(true);
+    setStage(6);
+    const plane = viewPlaneRef.current;
+    if (plane) {
+      plane.visible = true;
+      const mat = plane.material as THREE.MeshBasicMaterial;
+      mat.opacity = 0;
+      const fadeIn = window.setInterval(() => {
+        mat.opacity = Math.min(1, mat.opacity + 0.12);
+        if (mat.opacity >= 1) window.clearInterval(fadeIn);
+      }, 40);
+    }
+    const ring = (plane?.parent as THREE.Object3D)?.children.find((c) => (c as THREE.Mesh).geometry instanceof THREE.RingGeometry) as THREE.Mesh | undefined;
+    if (ring) {
+      ring.visible = true;
+      (ring.material as THREE.MeshBasicMaterial).opacity = 0.95;
+    }
+    push("👁 Mikroskop ko'rinishi — namuna markazda! (fokus/yorug'lik bilan sozlang)");
+  };
+  const doExitView = () => {
+    setViewing(false);
+    setStage(5);
+    setAtEye(false);
+    const plane = viewPlaneRef.current;
+    if (plane) plane.visible = false;
+    const ring = (plane?.parent as THREE.Object3D)?.children.find((c) => (c as THREE.Mesh).geometry instanceof THREE.RingGeometry) as THREE.Mesh | undefined;
+    if (ring) ring.visible = false;
+    flyToRef.current?.(new THREE.Vector3(0, 6.2, 12.4), new THREE.Vector3(0, 1.2, 0));
+    push("◀ Umumiy ko'rinishga qaytdik");
   };
 
   const catalog: CatalogItem[] = [
     ...SPECIMENS.map((s) => ({ id: `s:${s.id}`, icon: s.name.slice(0, 2), name: s.name, group: "Namunalar", desc: s.tavsif })),
-    { id: "t:knife", icon: "🔪", name: "Pichoqcha — tayyorlash (kesish/surtish)", group: "Asboblar", desc: "Qon va og'iz namunalari KESILMAYDI — surtma/surish usuli" },
-    { id: "t:stain", icon: "💧", name: "Bo'yovchi qo'shish", group: "Asboblar" },
-    { id: "t:load", icon: "🧫", name: "Mikroskopga qo'yish", group: "Asboblar" },
-    { id: "t:view", icon: "🔬", name: "Ko'rish (ko'zdan)", group: "Asboblar" },
+    { id: "a:knife", icon: "🔪", name: "Skalpel (pichoqcha)", group: "Anjomlar", desc: "Kesish/surtish uchun" },
+    { id: "a:pipette", icon: "💧", name: "Pipetka", group: "Anjomlar", desc: "Tomchi olish uchun" },
+    { id: "a:tweezers", icon: "🤏", name: "Pinset", group: "Anjomlar", desc: "Mayda namuna ushlab olish" },
+    { id: "a:spreader", icon: "🩹", name: "Surtma tayoqchasi", group: "Anjomlar", desc: "Surtma yoyish" },
+    { id: "a:cover", icon: "🪟", name: "Yopqich shisha", group: "Anjomlar", desc: "Namunani yopish" },
+    { id: "a:stain", icon: "💧", name: "Bo'yovchi", group: "Anjomlar", desc: "Bo'yash uchun" },
+    { id: "a:slide", icon: "🧫", name: "Preparat oynachasi", group: "Anjomlar", desc: "Namuna qo'yiladigan shisha" },
     { id: "t:reset", icon: "↺", name: "Boshidan boshlash", group: "Boshqaruv" },
   ];
+
   const handleAdd = (id: string) => {
     if (id.startsWith("s:")) {
       const s = SPECIMENS.find((x) => x.id === id.slice(2));
-      if (s) pick(s);
-    } else if (id === "t:knife") doCut();
-    else if (id === "t:stain") doStain();
-    else if (id === "t:load") doLoad();
-    else if (id === "t:view") stage >= 3 && setStage(4);
-    else if (id === "t:reset") {
+      if (s) {
+        setSpecimen(s);
+        setStage(1);
+        setAtEye(false);
+        setViewing(false);
+        push(`🔬 Namuna tanlandi: ${s.name} — ish stoliga tushdi. Endi kerakli ANJOMNI YAQIN keltiring!`);
+        const sg = specGroupRef.current;
+        if (sg) {
+          sg.position.set(-1.2, 0, 1.1);
+          sg.scale.setScalar(0.01);
+          popRef.current.push({ obj: sg, t0: performance.now() / 1000 });
+        }
+      }
+    } else if (id.startsWith("a:")) {
+      spawnRef.current?.(id.slice(2));
+      push(`➕ Anjom qo'shildi — stolga tushdi, sudrab ishlating!`);
+    } else if (id === "t:reset") {
       setStage(0);
       setSpecimen(null);
       setLog([]);
+      setAtEye(false);
+      setViewing(false);
     }
   };
 
   return (
-    <StageBox title="🧫 Namuna tayyorlash va mikroskop" catalog={catalog} onAdd={handleAdd}>
+    <StageBox title="🧫 Namuna tayyorlash va mikroskop (simulyator)" catalog={catalog} onAdd={handleAdd}>
       <div className="relative">
-        <canvas ref={canvasRef} className="lab-canvas h-[290px] w-full rounded-2xl bg-slate-100" />
+        <canvas ref={canvasRef} className="lab-canvas h-[340px] w-full rounded-2xl bg-slate-100" />
         <CameraPad handleRef={handleRef} />
         <PickCard
           info={pickInfo}
           moving={moving}
           onMove={() => {
-            const kind = pickInfo?.label ?? "";
-            const root =
-              kind === "Pichoqcha" ? knifeRef.current : kind === "Namuna" ? null : null;
-            // barcha asboblar siljitiladi (soddalik uchun pichoqcha/namuna)
-            const target = root ?? knifeRef.current;
-            if (target) {
-              moveRef.current = moving ? null : target;
-              setMoving(!moving);
-            }
+            // siljitish rejimi — endi to'g'ridan-to'g'ri sudrash ham ishlaydi
+            setMoving(!moving);
+            moveRef.current = moving ? null : moveRef.current;
           }}
           onClose={() => {
             setPickInfo(null);
@@ -439,87 +767,80 @@ export default function PrepLab() {
             setMoving(false);
           }}
         />
-      </div>
-      <p className="px-1 pb-1 pt-1.5 text-center text-xs text-slate-400">
-        🖐 Asbobni <b>bosing</b> — nomi chiqadi · 🔀 Siljitish bilan joylashtiring · 🎮 joystik — atrofni ko'rish
-      </p>
-
-      {/* Bosqichlar */}
-      <div className="rounded-3xl bg-white p-4 shadow-[0_12px_36px_rgba(15,23,42,0.08)]">
-        <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Tayyorlash bosqichlari</p>
-        <div className="mt-2 space-y-1.5">
-          {STAGE_LABEL.map((l, i) => (
-            <div key={l} className={`flex items-center gap-2.5 rounded-2xl px-3 py-2 text-sm ${i === stage ? "bg-teal-50 font-semibold text-teal-800" : i < stage ? "text-slate-400 line-through" : "text-slate-500"}`}>
-              <span>{i < stage ? "✅" : i === stage ? "👉" : "⬜"}</span>
-              <span>{l}</span>
-            </div>
-          ))}
-        </div>
-        <div className="mt-3 flex flex-wrap gap-1.5">
-          {!specimen && <p className="text-xs text-slate-400">Avval <b>＋ Qo'shish</b> → <b>Namunalar</b> bo'limidan namuna tanlang.</p>}
-          {specimen && stage === 0 && (
-            <button onClick={doCut} className="rounded-2xl bg-teal-700 px-4 py-2.5 text-sm font-semibold text-white active:scale-[0.97]">{PREP_LABEL[prepKind(specimen)]}</button>
-          )}
-          {stage === 1 && (
-            <button onClick={doStain} className="rounded-2xl bg-teal-700 px-4 py-2.5 text-sm font-semibold text-white active:scale-[0.97]">💧 Bo'yash</button>
-          )}
-          {stage === 2 && (
-            <button onClick={doLoad} className="rounded-2xl bg-teal-700 px-4 py-2.5 text-sm font-semibold text-white active:scale-[0.97]">🧫 Mikroskopga qo'yish</button>
-          )}
-          {stage === 3 && (
-            <button onClick={() => setStage(4)} className="rounded-2xl bg-teal-700 px-4 py-2.5 text-sm font-semibold text-white active:scale-[0.97]">🔬 Ko'zdan ko'rish</button>
-          )}
-          {stage >= 3 && (
-            <button onClick={() => setStage(3)} className="rounded-2xl bg-slate-100 px-4 py-2.5 text-sm font-semibold text-slate-600 active:scale-[0.97]">↩️ Orqaga</button>
-          )}
-        </div>
-      </div>
-
-      {/* Mikroskop ko'rinishi */}
-      {stage === 4 && specimen && (
-        <div className="rounded-3xl bg-slate-900 p-4 shadow-[0_12px_36px_rgba(15,23,42,0.18)]">
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-300">🔬 Mikroskop ko'rinishi — {specimen.name}</p>
-          <div className="mt-3">
-            <SpecimenView texture={specimen.texture} zoom={mag} focus={focus} light={light} />
+        {/* 🔔 YAQINLIK tugmalari — faqat yaqin keltirilganda chiqadi */}
+        {stage >= 1 && stage <= 5 && (
+          <div className="pointer-events-none absolute inset-x-0 bottom-3 flex flex-col items-center gap-1.5">
+            {near.knife && stage === 1 && (
+              <button onClick={doAction} className="pointer-events-auto rounded-2xl bg-teal-700 px-4 py-2 text-sm font-semibold text-white shadow-lg active:scale-95">
+                {ACTION_LABEL[prepMode(specimen)]}
+              </button>
+            )}
+            {near.stain && stage === 2 && (
+              <button onClick={doStain} className="pointer-events-auto rounded-2xl bg-purple-700 px-4 py-2 text-sm font-semibold text-white shadow-lg active:scale-95">
+                💧 Bo'yash
+              </button>
+            )}
+            {near.slideSpec && stage === 3 && (
+              <button onClick={doToSlide} className="pointer-events-auto rounded-2xl bg-sky-700 px-4 py-2 text-sm font-semibold text-white shadow-lg active:scale-95">
+                🧫 Namunani oynachaga qo'yish
+              </button>
+            )}
+            {near.slideMicro && stage === 4 && (
+              <button onClick={doToMicro} className="pointer-events-auto rounded-2xl bg-indigo-700 px-4 py-2 text-sm font-semibold text-white shadow-lg active:scale-95">
+                🔬 Mikroskopga joylashtirish
+              </button>
+            )}
+            {stage === 5 && atEye && !viewing && (
+              <button onClick={doView} className="pointer-events-auto rounded-2xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-lg active:scale-95">
+                👁 Ko'rish
+              </button>
+            )}
           </div>
-          <div className="mt-4 space-y-3">
-            <div>
-              <p className="text-xs font-medium text-slate-300">Kattalashtirish (obyektiv):</p>
-              <div className="mt-1.5 flex gap-1.5">
-                {(
-                  [
-                    [1, "×40"],
-                    [2.2, "×100"],
-                    [4.5, "×400"],
-                  ] as const
-                ).map(([z, l]) => (
-                  <button key={l} onClick={() => setMag(z)} className={`${labChip} ${mag === z ? "bg-teal-500 text-white" : "bg-slate-700 text-slate-200"}`}>
-                    {l}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div>
-              <p className="text-xs font-medium text-slate-300">Fokus (aniqlik): {Math.round(focus * 100)}%</p>
-              <input type="range" min={0.15} max={1} step={0.01} value={focus} onChange={(e) => setFocus(Number(e.target.value))} className="w-full accent-teal-400" />
-            </div>
-            <div>
-              <p className="text-xs font-medium text-slate-300">Yorug'lik: {Math.round(light * 100)}%</p>
-              <input type="range" min={0.15} max={1} step={0.01} value={light} onChange={(e) => setLight(Number(e.target.value))} className="w-full accent-teal-400" />
-            </div>
-            <p className="rounded-2xl bg-slate-800 p-3 text-xs text-slate-300">💡 {specimen.tavsif}</p>
+        )}
+      </div>
+
+      {/* bosqichlar ko'rsatkichi */}
+      <div className="mt-2 flex flex-wrap items-center justify-center gap-1 text-[11px]">
+        {["Namuna", "Tayyorlash", "Bo'yash", "Oynacha", "Mikroskop", "Ko'rish"].map((s, i) => (
+          <span key={s} className={`rounded-full px-2 py-1 ${stage >= i + 1 ? "bg-teal-600 text-white" : "bg-slate-100 text-slate-400"}`}>
+            {i + 1}. {s}
+          </span>
+        ))}
+      </div>
+
+      {viewing && (
+        <div className="mt-2 rounded-2xl bg-slate-900 p-2.5 text-white">
+          <p className="text-center text-[10px] uppercase tracking-widest text-slate-400">👁 Mikroskop ko'rinishi (sahna ichida)</p>
+          <div className="mt-1.5 flex flex-wrap items-center justify-center gap-1.5">
+            {[
+              ["×40", 1],
+              ["×100", 2.2],
+              ["×400", 4.5],
+            ].map(([lbl, z]) => (
+              <button key={lbl as string} onClick={() => setZoom(z as number)} className={`${labChip} ${zoom === z ? "bg-teal-600 text-white" : "bg-slate-700 text-slate-200"}`}>
+                🔍 {lbl as string}
+              </button>
+            ))}
+            <button onClick={() => setFocus((f) => Math.max(0, +(f - 0.15).toFixed(2)))} className={`${labChip} bg-slate-700 text-slate-200`}>🎯 Fokus −</button>
+            <button onClick={() => setFocus((f) => Math.min(1, +(f + 0.15).toFixed(2)))} className={`${labChip} bg-slate-700 text-slate-200`}>🎯 Fokus +</button>
+            <button onClick={() => setLight((l) => Math.max(0.1, +(l - 0.15).toFixed(2)))} className={`${labChip} bg-slate-700 text-slate-200`}>💡 −</button>
+            <button onClick={() => setLight((l) => Math.min(1, +(l + 0.15).toFixed(2)))} className={`${labChip} bg-slate-700 text-slate-200`}>💡 +</button>
+            <button onClick={doExitView} className={`${labChip} bg-rose-600 text-white`}>◀ Chiqish</button>
           </div>
         </div>
       )}
 
+      <p className="px-1 pb-1 pt-2 text-center text-xs text-slate-400">
+        🖐 Anjomni <b>sudrab</b> namunaga YAQIN keltiring — <b>tugma o'sha payt</b> chiqadi · 🎮 joystik — atrofni ko'rish
+      </p>
+
       {log.length > 0 && (
-        <div className="rounded-3xl bg-white p-4 shadow-[0_12px_36px_rgba(15,23,42,0.08)]">
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Jurnal</p>
-          <div className="mt-1.5 max-h-32 space-y-1 overflow-y-auto">
-            {log.map((l, i) => (
-              <p key={i} className="rounded-xl bg-slate-50 px-3 py-1.5 text-xs text-slate-600">{l}</p>
-            ))}
-          </div>
+        <div className="mt-2 max-h-28 space-y-1 overflow-y-auto rounded-2xl bg-slate-50 p-2.5">
+          {log.map((l, i) => (
+            <p key={i} className="text-[11px] text-slate-600">
+              {l}
+            </p>
+          ))}
         </div>
       )}
     </StageBox>
