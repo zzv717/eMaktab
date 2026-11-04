@@ -150,6 +150,8 @@ export interface PointerOpts {
   onPick: (root: THREE.Object3D, hit: THREE.Object3D, ev: PointerEvent) => void;
   /** siljitish boshlanganda/tugaganda */
   onMoveEnd?: (root: THREE.Object3D) => void;
+  /** 🧱 buyumlar faqat ish stol YUZASIDA harakatlansin (tepaga ko'tarilmaydi) — fizika uchun */
+  flat?: boolean;
 }
 
 /**
@@ -248,7 +250,7 @@ export function attachPointer(handle: SceneHandle, canvas: HTMLCanvasElement, op
       // 🖐 BARMoQ QAERDA BOLSA — obyekt OSHA YERDA (1:1, "tez qimirlash" yo'q)
       dragTarget.position.set(
         THREE.MathUtils.clamp(dragStart.x + (hitPt.x - dragHit0.x), -9.5, 9.5),
-        THREE.MathUtils.clamp(dragStart.y + (hitPt.y - dragHit0.y), 0.15, 5.5),
+        opts.flat ? dragStart.y : THREE.MathUtils.clamp(dragStart.y + (hitPt.y - dragHit0.y), 0.15, 5.5),
         THREE.MathUtils.clamp(dragStart.z + (hitPt.z - dragHit0.z), -5, 5.5),
       );
     }

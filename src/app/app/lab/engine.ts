@@ -201,16 +201,28 @@ const sub = (n: number) => (n <= 1 ? "" : String(n).split("").map((d) => SUB[Num
  * Ikki elementdan ikki tomonlama birikma formulasini tuzadi (valentliklar bo'yicha).
  * Na(+1) + Cl(−1) → NaCl ; Mg(+2) + O(−2) → MgO ; Na(+1) + O(−2) → Na₂O
  */
-export function binaryFormula(a: Element118, b: Element118): string {
+export function formulaParts(a: Element118, b: Element118): {
+  cation: Element118;
+  anion: Element118;
+  ca: number;
+  cb: number;
+  f: string;
+} {
   // Kation (oldin yoziladigan element): metall > yarim > metallmas; teng bo'lsa — kichik tartib raqami
   const score = (e: Element118) => (e.cat === "metall" ? 0 : e.cat === "yarim" ? 1 : 2);
-  const metal = score(a) < score(b) || (score(a) === score(b) && a.num < b.num) ? a : b;
-  const nonmetal = metal === a ? b : a;
-  const va = Math.max(1, metal.valence);
-  const vb = Math.max(1, nonmetal.valence);
+  const cation = score(a) < score(b) || (score(a) === score(b) && a.num < b.num) ? a : b;
+  const anion = cation === a ? b : a;
+  const va = Math.max(1, cation.valence);
+  const vb = Math.max(1, anion.valence);
   const g = (x: number, y: number): number => (y === 0 ? x : g(y, x % y));
   const d = g(va, vb);
-  return `${metal.symbol}${sub(vb / d)}${nonmetal.symbol}${sub(va / d)}`;
+  const ca = vb / d; // kation atomlari soni (H₂O da H — 2 ta!)
+  const cb = va / d; // anion atomlari soni
+  return { cation, anion, ca, cb, f: `${cation.symbol}${sub(ca)}${anion.symbol}${sub(cb)}` };
+}
+
+export function binaryFormula(a: Element118, b: Element118): string {
+  return formulaParts(a, b).f;
 }
 
 /** Faol metall + kislota tenglamasi (H₂) */
@@ -398,15 +410,28 @@ export function simulate(contents: VesselContent[], baseTemp = 20): SimResult {
     return rank(x) - rank(y);
   });
   const pairScore = (e: Element118) => (e.cat === "metall" ? 0 : e.cat === "yarim" ? 1 : 2);
-  for (const [x, y] of synthPairs.slice(0, 3)) {
+  // ⚖️ STOXIOMETRIYA — H₂O uchun 2 ta H + 1 ta O kerak! Nisbat to'g'ri bo'lmasa — reaksiya YO'Q.
+  const avail = new Map<string, number>();
+  for (const c of contents) avail.set(c.reagentId, (avail.get(c.reagentId) ?? 0) + (c.ml ?? 10));
+  let synthCount = 0;
+  for (const [x, y] of synthPairs) {
+    if (synthCount >= 3) break;
     // tenglama chap tomoni formuladagi tartibda (Na + Cl → NaCl)
     const [m, n] = pairScore(x) < pairScore(y) || (pairScore(x) === pairScore(y) && x.num < y.num) ? [x, y] : [y, x];
-    const f = binaryFormula(m, n);
+    const parts = formulaParts(m, n);
+    const ua = (avail.get(m.id) ?? 0) / 10;
+    const ub = (avail.get(n.id) ?? 0) / 10;
+    const k = Math.floor(Math.min(ua / parts.ca, ub / parts.cb));
+    if (k < 1) continue; // ❌ nisbat mos emas (masalan H + O — 2 tadan H kerak!)
+    avail.set(m.id, (avail.get(m.id) ?? 0) - k * parts.ca * 10);
+    avail.set(n.id, (avail.get(n.id) ?? 0) - k * parts.cb * 10);
+    const coef = (cnt: number) => (cnt > 1 ? String(cnt) : "");
     hodisalar.push({
-      text: `⚡ SINTEZ reaksiyasi — ${f} hosil bo'ldi! (${m.symbol} + ${n.symbol})`,
+      text: `⚡ SINTEZ reaksiyasi — ${parts.f} hosil bo'ldi! (${coef(parts.ca)}${m.symbol} + ${coef(parts.cb)}${n.symbol})`,
       kind: "color",
-      equation: `${m.symbol} + ${n.symbol} → ${f}`,
+      equation: `${coef(parts.ca)}${m.symbol} + ${coef(parts.cb)}${n.symbol} → ${parts.f}`,
     });
+    synthCount++;
   }
   // Faol metall + kislota → H₂ (zn/mg/fe maxsus qoidada bor — qolgan elementlar uchun)
   const ACTIVITY = new Set(["li", "k", "ba", "ca", "na", "rb", "cs", "sr", "mn", "cr", "al", "cd", "co", "ni", "sn", "pb"]);
@@ -433,11 +458,14 @@ export function simulate(contents: VesselContent[], baseTemp = 20): SimResult {
   }
   // Indikator ranglari pH bo'yicha
   if (ml("fen") > 0) {
-    if (ph > 8.2) {
+    if (ph > 10) {
+      color = mixHex(color, "#b81c6b", 0.88);
+      hodisalar.push({ text: "⚠️ ORTIQCHA QUYILDI (Over-titrated)! — eritma TO'Q PUSHTI bo'ldi.", kind: "color", equation: "HCl + NaOH → NaCl + H₂O" });
+    } else if (ph > 8.2) {
       color = mixHex(color, "#e8399a", 0.75);
-      hodisalar.push({ text: "Fenolftalein PUSHTI rangga o'zgardi — muhit ishqoriy! 💗", kind: "color" });
+      hodisalar.push({ text: "Fenolftalein OCH PUSHTI rangga o'zgardi — muhit ishqoriy! 💗", kind: "color" });
     } else {
-      hodisalar.push({ text: "Fenolftalein rangsiz qoldi — muhit kislotali yoki neytral.", kind: "color" });
+      hodisalar.push({ text: "Fenolftalein rangsiz qoldi — muhit kislotali yoki neytral (pH < 8.2).", kind: "color" });
     }
   }
   if (ml("litmus") > 0) {
@@ -683,11 +711,15 @@ export function solveCircuit(comps: CircuitComp[]): CircuitSolution {
     }
   }
 
+  // 🔧 HAR BIR TUGUNGA mikro-o'tkazuvchanlik — suzib yurgan (ulanmagan) qurilmalar
+  // butun yechimni buzmasligi uchun! Alohida yopiq zanjir mustaqil ishlaydi.
+  for (let i = 0; i < size; i++) A[i][i] += 1e-9;
+
   // Gauss eliminatsiya
   for (let col = 0; col < size; col++) {
     let piv = col;
     for (let r = col + 1; r < size; r++) if (Math.abs(A[r][col]) > Math.abs(A[piv][col])) piv = r;
-    if (Math.abs(A[piv][col]) < 1e-9) return { ...empty, error: "Zanjir to'liq yopiq emas (ochiq joy bor)." };
+    if (Math.abs(A[piv][col]) < 1e-12) continue; // suzib yurgan qism — bu ustun yechimi 0
     [A[col], A[piv]] = [A[piv], A[col]];
     [z[col], z[piv]] = [z[piv], z[col]];
     for (let r = 0; r < size; r++) {
@@ -698,7 +730,7 @@ export function solveCircuit(comps: CircuitComp[]): CircuitSolution {
       z[r] -= f * z[col];
     }
   }
-  const x = z.map((v, i) => v / A[i][i]);
+  const x = z.map((v, i) => (Math.abs(A[i][i]) < 1e-12 ? 0 : v / A[i][i]));
 
   const nodeVoltages: number[] = Array(n).fill(0);
   for (let i = 0; i < n; i++) {

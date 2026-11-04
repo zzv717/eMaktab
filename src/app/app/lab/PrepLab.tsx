@@ -11,15 +11,26 @@ import { SPECIMENS, type Specimen } from "./engine";
 import { GUIDE_BIOLOGY } from "./Guides";
 import { drawSpecimen } from "./SpecimenView";
 
-type PrepMode = "cut" | "smear" | "scrape";
+type PrepMode = "cut" | "smear" | "scrape" | "pipette";
 
+// 🌍 REAL HAYOT: qattiq namuna → skalpel; qon → surtma; tili → surish;
+// YOG', suyuqlik, shilliqlar → PIPETKA bilan namuna olinadi!
 const prepMode = (s: Specimen | null): PrepMode =>
-  !s ? "cut" : s.texture === "blood" ? "smear" : s.texture === "cheek" ? "scrape" : "cut";
+  !s
+    ? "cut"
+    : s.texture === "blood"
+      ? "smear"
+      : s.texture === "cheek"
+        ? "scrape"
+        : s.texture === "fat" || s.texture === "bacteria" || s.texture === "fungi"
+          ? "pipette"
+          : "cut";
 
 const ACTION_LABEL: Record<PrepMode, string> = {
-  cut: "🔪 Kesish",
+  cut: "🔪 Skalpel bilan kesish",
   smear: "🩸 Surtma tayyorlash",
   scrape: "👄 Surib olish",
+  pipette: "💧 Pipetka bilan namuna olish",
 };
 
 const EYE_POS = new THREE.Vector3(3.68, 4.35, -0.42); // mikroskop ko'zi (world)
@@ -41,6 +52,8 @@ export default function PrepLab() {
   const popRef = useRef<{ obj: THREE.Object3D; t0: number }[]>([]);
   const knifeRef = useRef<THREE.Group | null>(null);
   const sliceRef = useRef<THREE.Group | null>(null);
+  const sampleRef = useRef<THREE.Mesh | null>(null);
+  const coverRef = useRef<THREE.Group | null>(null);
   const specGroupRef = useRef<THREE.Group | null>(null);
   const slideRef = useRef<THREE.Object3D | null>(null);
   const microRef = useRef<THREE.Group | null>(null);
@@ -51,9 +64,12 @@ export default function PrepLab() {
   const [near, setNear] = useState({ knife: false, stain: false, slideSpec: false, slideMicro: false, atEye: false });
   const nearRef = useRef({ knife: false, stain: false, slideSpec: false, slideMicro: false });
   // ko'rish rejimi sozlamalari
+  const [objective, setObjective] = useState(4); // 4× / 10× / 40× / 100× (ob'yektivlar)
+  const [cellMode, setCellMode] = useState(false); // "Hujayra ichiga kirish"
   const [zoom, setZoom] = useState(1);
   const [focus, setFocus] = useState(1);
   const [light, setLight] = useState(0.75);
+  const [pan, setPan] = useState({ x: 0, y: 0 }); // stolcha (X/Y) siljitish
   const [atEye, setAtEye] = useState(false);
   const [viewing, setViewing] = useState(false);
   const texRef = useRef<HTMLCanvasElement | null>(null);
@@ -63,9 +79,17 @@ export default function PrepLab() {
 
   stateRef.current = { stage, mode: prepMode(specimen) };
 
+  // ob'yektiv → kattalik: 4× (kam) → 100× (ko'p)
+  const setObj = (n: number) => {
+    setObjective(n);
+    setZoom(n === 4 ? 0.55 : n === 10 ? 1 : n === 40 ? 2.2 : 4.5);
+    if (n < 100) setCellMode(false);
+  };
+
   const push = (line: string) => setLog((l) => [line, ...l].slice(0, 30));
 
-  // ---------- mikroskop ko'rinishi (sahna ichida) ----------
+  // ---------- mikroskop ko'rinishi (sahna ichida) — VFX: vignette + aberration + Braun zarrachalar ----------
+  const cellModeRef = useRef(false);
   useEffect(() => {
     const tex = texRef.current;
     const plane = viewPlaneRef.current;
@@ -81,9 +105,92 @@ export default function PrepLab() {
     ctx.filter = `blur(${(1 - focus) * 3.2}px) brightness(${0.55 + light * 0.9}) contrast(${1 + light * 0.18})`;
     ctx.drawImage(off, 0, 0);
     ctx.filter = "none";
-    const map = (plane.material as THREE.MeshBasicMaterial).map;
-    if (map) map.needsUpdate = true;
-  }, [specimen, zoom, focus, light, viewing]);
+    // 🌈 xromatik aberration — chetlarda binafsha/yashil halqalar (haqiqiy linza effekti)
+    ctx.globalAlpha = 0.14;
+    ctx.globalCompositeOperation = "screen";
+    ctx.drawImage(off, -2.4, 0);
+    ctx.drawImage(off, 2.4, 0);
+    ctx.globalCompositeOperation = "source-over";
+    ctx.globalAlpha = 1;
+    // 🕳 vignette — chetlar qorong'ilashadi (obyektiv ko'rinishi)
+    const vg = ctx.createRadialGradient(256, 256, 150, 256, 256, 340);
+    vg.addColorStop(0, "rgba(0,0,0,0)");
+    vg.addColorStop(1, "rgba(8,12,22,0.55)");
+    ctx.fillStyle = vg;
+    ctx.fillRect(0, 0, 512, 512);
+    // 🔵 Braun harakati — sitoplazmada suzib yuruvchi zarrachalar
+    const rnd = (i: number) => ((Math.sin(i * 127.1 + performance.now() * 0.0006) * 43758.5453) % 1 + 1) % 1;
+    ctx.fillStyle = "rgba(210,225,240,0.5)";
+    for (let i = 0; i < 26; i++) {
+      const x = rnd(i) * 512;
+      const y = rnd(i + 99) * 512;
+      ctx.beginPath();
+      ctx.arc(x, y, 1.2 + rnd(i + 7) * 2.6, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // 🧬 HUJAYRA ICHIGA KIRISH — organoidlar (yadro, mitoxondriya, xloroplast) + puls
+    if (cellMode) {
+      const tt = performance.now() * 0.001;
+      const cellGrad = ctx.createRadialGradient(256, 256, 40, 256, 256, 340);
+      cellGrad.addColorStop(0, "#cfe8d4");
+      cellGrad.addColorStop(1, "#7fb98c");
+      ctx.fillStyle = cellGrad;
+      ctx.fillRect(0, 0, 512, 512);
+      // yadro
+      const pulse = 1 + Math.sin(tt * 1.7) * 0.05;
+      ctx.beginPath();
+      ctx.arc(256, 246, 86 * pulse, 0, Math.PI * 2);
+      ctx.fillStyle = "rgba(90,60,140,0.85)";
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(256, 246, 30, 0, Math.PI * 2);
+      ctx.fillStyle = "#3b2568";
+      ctx.fill();
+      // mitoxondriyalar (puls bilan)
+      for (let i = 0; i < 7; i++) {
+        const ang = (i / 7) * Math.PI * 2 + tt * 0.12;
+        const r = 150 + Math.sin(tt * 1.2 + i) * 14;
+        const x = 256 + Math.cos(ang) * r;
+        const y = 256 + Math.sin(ang) * r * 0.86;
+        const p2 = 1 + Math.sin(tt * 2.2 + i * 1.3) * 0.11;
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.rotate(ang);
+        ctx.beginPath();
+        ctx.ellipse(0, 0, 34 * p2, 17 * p2, 0, 0, Math.PI * 2);
+        ctx.fillStyle = "rgba(214,120,90,0.9)";
+        ctx.fill();
+        ctx.strokeStyle = "rgba(150,70,50,0.8)";
+        ctx.stroke();
+        ctx.restore();
+      }
+      // xloroplastlar
+      for (let i = 0; i < 5; i++) {
+        const ang = (i / 5) * Math.PI * 2 - tt * 0.1;
+        const x = 256 + Math.cos(ang) * 196;
+        const y = 256 + Math.sin(ang) * 172;
+        ctx.beginPath();
+        ctx.ellipse(x, y, 30, 18, ang, 0, Math.PI * 2);
+        ctx.fillStyle = "rgba(60,150,80,0.92)";
+        ctx.fill();
+      }
+      // sitoplazma zarrachalari (Braun)
+      ctx.fillStyle = "rgba(255,255,255,0.55)";
+      for (let i = 0; i < 40; i++) {
+        const x = rnd(i + 31) * 512;
+        const y = rnd(i + 131) * 512;
+        ctx.beginPath();
+        ctx.arc(x, y, 1.4 + rnd(i + 17) * 3, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    const map = (plane.material as THREE.MeshBasicMaterial).map as THREE.CanvasTexture | null;
+    if (map) {
+      // 🎯 STOLCHA (Stage) — preparatni X/Y bo'yicha surish
+      map.offset.set(cellMode ? 0 : pan.x, cellMode ? 0 : pan.y);
+      map.needsUpdate = true;
+    }
+  }, [specimen, zoom, focus, light, viewing, cellMode, pan]);
 
   // ---------- 3D sahna ----------
   useEffect(() => {
@@ -306,6 +413,7 @@ export default function PrepLab() {
       toolsGroup.add(g);
       toolObjs[kind] = [g];
       if (kind === "slide" && !slideRef.current) slideRef.current = g;
+      if (kind === "cover" && !coverRef.current) coverRef.current = g;
     }
     // anjom qo'shish — stolga "sakrab" tushadi
     spawnRef.current = (kind: string) => {
@@ -332,6 +440,14 @@ export default function PrepLab() {
     drop.visible = false;
     handle.scene.add(drop);
     dropRef.current = drop;
+
+    // 💧 kichik NAMUNA tomchisi (pipetka/surtma/surish usullarida) — faqat U oynachaga o'tadi
+    const sampleMesh = new THREE.Mesh(new THREE.SphereGeometry(0.22, 14, 10), new THREE.MeshStandardMaterial({ color: "#d98cc8", roughness: 0.35, transparent: true, opacity: 0.92 }));
+    sampleMesh.visible = false;
+    sampleMesh.position.set(-1.2, 0.62, 1.3);
+    sampleMesh.userData = { kind: "sample", label: "💧 Namuna tomchisi", icon: "💧", desc: "Oynachaga qo'yiladigan kichik namuna" };
+    handle.scene.add(sampleMesh);
+    sampleRef.current = sampleMesh;
 
     // ✂️ kesilgan tilim — ENDI USHLANADI VA SILJIYDI!
     const slice = new THREE.Group();
@@ -464,7 +580,7 @@ export default function PrepLab() {
 
     // ====== bosish / siljitish ======
     const detachPointer = attachPointer(handle, canvas, {
-      getRoots: () => [...toolsGroup.children, specGroup, micro, ...(sliceRef.current ? [sliceRef.current] : [])],
+      getRoots: () => [...toolsGroup.children, specGroup, micro, ...(sliceRef.current ? [sliceRef.current] : []), ...(sampleRef.current ? [sampleRef.current] : [])],
       moveRef,
       onPick: (root) => {
         const kind = root.userData.kind as string;
@@ -550,11 +666,22 @@ export default function PrepLab() {
           const e = Math.min(1, (t - tr.t0) / 0.9);
           const k = e * e * (3 - 2 * e);
           if (tr.kind === "toSlide" && slideRef.current) {
-            specGroup.position.lerp(slideRef.current.position.clone().add(new THREE.Vector3(0, 0.32, 0)), 0.14);
-            specGroup.scale.setScalar(1 - k * 0.5);
+            // ✅ REAL HAYOT: KATTA namuna stolida qoladi — faqat KICHIK namuna oynachaga o'tadi!
+            const target = slideRef.current.position.clone().add(new THREE.Vector3(0, 0.22, 0));
             if (sliceRef.current && sliceRef.current.visible) {
-              sliceRef.current.position.lerp(slideRef.current.position.clone().add(new THREE.Vector3(0, 0.15, 0)), 0.16);
-              if (e > 0.75) sliceRef.current.visible = false;
+              sliceRef.current.position.lerp(target, 0.16);
+              if (e > 0.72) sliceRef.current.visible = false;
+            }
+            if (sampleRef.current && sampleRef.current.visible) {
+              sampleRef.current.position.lerp(target, 0.18);
+              if (e > 0.72) sampleRef.current.visible = false;
+            }
+            // 🪟 yopqich shisha 45° burchakda sekin tushadi (havo pufakchasi yo'q!)
+            if (coverRef.current && e > 0.45) {
+              const cv = coverRef.current;
+              cv.position.lerp(slideRef.current.position.clone().add(new THREE.Vector3(0, 0.42, 0)), 0.1);
+              cv.rotation.x += (Math.PI / 4 - cv.rotation.x) * 0.12;
+              cv.rotation.y += (0 - cv.rotation.y) * 0.12;
             }
           } else if (tr.kind === "toMicro") {
             const slideObj = slideRef.current;
@@ -568,7 +695,7 @@ export default function PrepLab() {
         }
         // kesish/surtish/surish animatsiyalari
         const cut = cutAnimRef.current;
-        if (cut) {
+        if (cut && cut.mode !== "pipette") {
           const e = t - cut.t0;
           const sp = specGroup.position;
           const approach = (k: number) => {
@@ -610,6 +737,31 @@ export default function PrepLab() {
               else cutAnimRef.current = null;
             }
           } else cutAnimRef.current = null;
+        } else if (cutAnimRef.current?.mode === "pipette") {
+          // 💧 pipetka animatsiyasi
+          const e = t - cutAnimRef.current.t0;
+          const sp = specGroup.position;
+          const pip = toolsGroup.children.find((ch) => ch.userData.kind === "pipette");
+          if (!pip) {
+            cutAnimRef.current = null;
+          } else {
+            const home = new THREE.Vector3(-2.35, 0, 2.7);
+            if (e < 0.6) {
+              const k = e / 0.6;
+              pip.position.lerp(new THREE.Vector3(sp.x + 0.45, 1.55, sp.z + 0.35), 0.12 + k * 0.06);
+              pip.rotation.z += (0.42 - pip.rotation.z) * 0.12;
+            } else if (e < 1.15) {
+              pip.position.y += (0.95 - pip.position.y) * 0.14;
+            } else if (e < 1.8) {
+              pip.position.y += (1.85 - pip.position.y) * 0.1;
+              pip.rotation.z += (0 - pip.rotation.z) * 0.1;
+            } else if (e < 2.4) {
+              pip.position.lerp(home, 0.06);
+            } else {
+              pip.position.copy(home);
+              cutAnimRef.current = null;
+            }
+          }
         } else if (knifeRef.current) {
           const knife = knifeRef.current;
           knife.rotation.y += (-0.5 + Math.sin(t * 0.8) * 0.12 - knife.rotation.y) * 0.06;
@@ -657,7 +809,19 @@ export default function PrepLab() {
     const st = specGroupRef.current;
     if (!st) return;
     st.visible = Boolean(specimen) && stage >= 1;
-    rebuildRef.current?.(specimen, stage >= 2 && prepMode(specimen) === "cut");
+    const mode = prepMode(specimen);
+    rebuildRef.current?.(specimen, stage >= 2 && mode === "cut");
+    // 💧 kichik namuna (pipetka/surtma/surish) — bosqich 2+ da ko'rinadi
+    const sm = sampleRef.current;
+    if (sm) {
+      sm.visible = Boolean(specimen) && stage >= 2 && stage <= 4 && mode !== "cut";
+      if (specimen) {
+        (sm.material as THREE.MeshStandardMaterial).color.set(specimen.rang);
+        if (stage === 2) sm.position.set(-1.2, 0.62, 1.3);
+      }
+    }
+    // namuna KATTA holicha qoladi — faqat kichik namuna oynachaga o'tadi (real hayot!)
+    if (st && specimen && stage >= 4 && mode !== "cut") st.visible = true;
   }, [specimen, stage]);
 
 
@@ -684,7 +848,7 @@ export default function PrepLab() {
     if (!specimen || stage !== 3) return;
     transferRef.current = { t0: performance.now() / 1000, kind: "toSlide" };
     setStage(4);
-    push("🧫 Namuna preparat oynachasiga qo'yildi");
+    push("💧 1 tomchi suv tushdi → 🧫 namuna yoyildi → 🩣 1 tomchi YOD (yadrolar ko'rinadi) → 🪟 yopqich shisha 45° bilan tushdi (havo pufakchasi YO'Q!)");
   };
   const doToMicro = () => {
     if (stage !== 4) return;
@@ -835,26 +999,51 @@ export default function PrepLab() {
         <div className="mt-2 rounded-2xl bg-slate-900 p-2.5 text-white">
           <p className="text-center text-[10px] uppercase tracking-widest text-slate-400">👁 Mikroskop ko'rinishi (sahna ichida)</p>
           <div className="mt-1.5 flex flex-wrap items-center justify-center gap-1.5">
-            {[
-              ["×40", 1],
-              ["×100", 2.2],
-              ["×400", 4.5],
-            ].map(([lbl, z]) => (
-              <button key={lbl as string} onClick={() => setZoom(z as number)} className={`${labChip} ${zoom === z ? "bg-teal-600 text-white" : "bg-slate-700 text-slate-200"}`}>
-                🔍 {lbl as string}
+            {[4, 10, 40, 100].map((n) => (
+              <button key={n} onClick={() => setObj(n)} className={`${labChip} ${objective === n ? "bg-teal-600 text-white" : "bg-slate-700 text-slate-200"}`}>
+                🔍 {n}×
               </button>
             ))}
-            <button onClick={() => setFocus((f) => Math.max(0, +(f - 0.15).toFixed(2)))} className={`${labChip} bg-slate-700 text-slate-200`}>🎯 Fokus −</button>
-            <button onClick={() => setFocus((f) => Math.min(1, +(f + 0.15).toFixed(2)))} className={`${labChip} bg-slate-700 text-slate-200`}>🎯 Fokus +</button>
-            <button onClick={() => setLight((l) => Math.max(0.1, +(l - 0.15).toFixed(2)))} className={`${labChip} bg-slate-700 text-slate-200`}>💡 −</button>
+            <button onClick={() => setFocus((f) => Math.max(0, +(f - 0.15).toFixed(2)))} className={`${labChip} bg-slate-700 text-slate-200`}>🎯 Makrovint −</button>
+            <button onClick={() => setFocus((f) => Math.min(1, +(f + 0.15).toFixed(2)))} className={`${labChip} bg-slate-700 text-slate-200`}>🎯 Mikrovint +</button>
+            <button onClick={() => setLight((l) => Math.max(0.1, +(l - 0.15).toFixed(2)))} className={`${labChip} bg-slate-700 text-slate-200`}>💡 Diyafragma −</button>
             <button onClick={() => setLight((l) => Math.min(1, +(l + 0.15).toFixed(2)))} className={`${labChip} bg-slate-700 text-slate-200`}>💡 +</button>
-            <button onClick={doExitView} className={`${labChip} bg-rose-600 text-white`}>◀ Chiqish</button>
+          </div>
+          <div className="mt-1.5 flex flex-wrap items-center justify-center gap-1.5">
+            <span className="text-[10px] text-slate-400">🎯 Stolcha (X/Y):</span>
+            <button onClick={() => setPan((p2) => ({ ...p2, x: Math.max(-0.35, p2.x - 0.06) }))} className={`${labChip} bg-slate-700 text-slate-200`}>⬅</button>
+            <button onClick={() => setPan((p2) => ({ ...p2, x: Math.min(0.35, p2.x + 0.06) }))} className={`${labChip} bg-slate-700 text-slate-200`}>➡</button>
+            <button onClick={() => setPan((p2) => ({ ...p2, y: Math.max(-0.35, p2.y - 0.06) }))} className={`${labChip} bg-slate-700 text-slate-200`}>⬆</button>
+            <button onClick={() => setPan((p2) => ({ ...p2, y: Math.min(0.35, p2.y + 0.06) }))} className={`${labChip} bg-slate-700 text-slate-200`}>⬇</button>
+            {!cellMode && objective === 100 && (
+              <button
+                onClick={() => {
+                  setCellMode(true);
+                  push("🧬 HUJAYRA ICHIGA KIRILDI — yadro, mitoxondriya va xloroplastlar jonli!");
+                }}
+                className={`${labChip} bg-emerald-600 text-white`}
+              >
+                🧬 Hujayra ichiga kirish
+              </button>
+            )}
+            {cellMode && <span className={`${labChip} bg-emerald-700 text-white`}>🧬 Hujayra ichida (organoidlar)</span>}
+            <button
+              onClick={() => {
+                if (cellMode) setCellMode(false);
+                else doExitView();
+              }}
+              className={`${labChip} bg-rose-600 text-white`}
+            >
+              ◀ {cellMode ? "Mikroskopga qaytish" : "Chiqish"}
+            </button>
           </div>
         </div>
       )}
 
       <p className="px-1 pb-1 pt-2 text-center text-xs text-slate-400">
         🖐 Anjomni <b>sudrab</b> namunaga YAQIN keltiring — <b>tugma o'sha payt</b> chiqadi · 🎮 joystik — atrofni ko'rish
+        <br />
+        🌍 Real hayot: suv tomchisi → namuna → <b>yod</b> (yadrolar ko'rinadi) → <b>yopqich shisha 45°</b> (pufakcha bo'lmasin!) → mikroskop ×100 → <b>hujayra ichiga kirish</b>
       </p>
 
       {log.length > 0 && (

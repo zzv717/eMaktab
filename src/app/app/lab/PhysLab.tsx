@@ -97,6 +97,16 @@ function CircuitLab() {
   const solved = power ? powered : { ...powered, brightness: {}, motorSpeed: {}, buzzerOn: {}, galvNeedle: {}, heatGlow: {}, totalCurrent: 0 };
   const solvedRef = useRef(solved);
   solvedRef.current = solved;
+  // ⚡ VFX: qisqa tutashuv uchqunlari + qora tutun
+  const fxRef = useRef<{
+    sparks: THREE.Points;
+    smoke: THREE.Points;
+    sv: Float32Array;
+    mv: Float32Array;
+    origin: THREE.Vector3;
+    until: number;
+    lastBurst: number;
+  } | null>(null);
   const compRef = useRef(comps);
   compRef.current = comps;
   const wireRef = useRef(wires);
@@ -116,10 +126,29 @@ function CircuitLab() {
     const wireGroup = new THREE.Group();
     handle.scene.add(compGroup, wireGroup);
     compGroupRef.current = compGroup;
+
+    // ⚡ VFX zarrachalari: uchqunlar (sariq-oq) + qora tutun
+    const sparkGeo = new THREE.BufferGeometry();
+    sparkGeo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(70 * 3), 3));
+    const sparks = new THREE.Points(sparkGeo, new THREE.PointsMaterial({ color: "#ffd94a", size: 0.14, transparent: true, opacity: 0, depthWrite: false }));
+    const smokeGeo = new THREE.BufferGeometry();
+    smokeGeo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(26 * 3), 3));
+    const smoke = new THREE.Points(smokeGeo, new THREE.PointsMaterial({ color: "#1c2431", size: 0.55, transparent: true, opacity: 0, depthWrite: false }));
+    handle.scene.add(sparks, smoke);
+    fxRef.current = {
+      sparks,
+      smoke,
+      sv: new Float32Array(70 * 3),
+      mv: new Float32Array(26 * 3),
+      origin: new THREE.Vector3(0, 1, 0),
+      until: 0,
+      lastBurst: -10,
+    };
     wireGroupRef.current = wireGroup;
 
     // bosish/siljitish (qo'l bilan)
     const detachPointer = attachPointer(handle, canvas, {
+      flat: true, // 🧱 buyumlar faqat ish stol yuzasida harakatlanadi
       getRoots: () => compGroup.children,
       moveRef,
       onPick: (root, hit) => {
@@ -239,8 +268,13 @@ function CircuitLab() {
           if (fan) fan.rotation.y += (sol.motorSpeed?.[c.id] ?? 0) * dt * 14;
           const needle = node.getObjectByName("needle") as THREE.Mesh | undefined;
           if (needle) {
+            // 🎯 Strelka INERSIYA bilan — tebranib, so'ng to'xtaydi (haqiqiy asbob kabi!)
             const n = sol.galvNeedle?.[c.id] ?? 0;
-            needle.rotation.z = -n * 1.1;
+            const target = -n * 1.1;
+            const vel = ((needle.userData.vel as number | undefined) ?? 0) + (target - needle.rotation.z) * 30 * dt;
+            const damped = vel * Math.exp(-5.2 * dt);
+            needle.rotation.z += damped * dt;
+            needle.userData.vel = damped;
           }
           const heat = node.getObjectByName("heat") as THREE.Mesh | undefined;
           if (heat) {
@@ -285,6 +319,51 @@ function CircuitLab() {
           mid.y += 0.55;
           const curve = new THREE.CatmullRomCurve3([pa, mid, pb]);
           const flowing = solvedRef.current.ok && solvedRef.current.totalCurrent > 0.01 && powerRef.current;
+          // ⚡ QISQA TUTASHUV — uchqunlar va qora tutun (har 0.35s portlaydi)
+          const fx = fxRef.current;
+          if (fx) {
+            const solE = solvedRef.current;
+            const isShort = !!solE.error?.includes("Qisqa tutashuv");
+            if (isShort && powerRef.current && t - fx.lastBurst > 0.35) {
+              fx.lastBurst = t;
+              fx.until = t + 1.1;
+              const batt = compGroup.children.find((ch) => ch.userData?.type === "battery") ?? compGroup.children[0];
+              if (batt) fx.origin.copy(batt.position).add(new THREE.Vector3(0, 0.8, 0));
+              const sp = fx.sparks.geometry.attributes.position as THREE.BufferAttribute;
+              for (let i = 0; i < sp.count; i++) {
+                sp.setXYZ(i, fx.origin.x, fx.origin.y, fx.origin.z);
+                fx.sv[i * 3] = (Math.random() - 0.5) * 7;
+                fx.sv[i * 3 + 1] = Math.random() * 5.5;
+                fx.sv[i * 3 + 2] = (Math.random() - 0.5) * 7;
+              }
+              sp.needsUpdate = true;
+              const mk = fx.smoke.geometry.attributes.position as THREE.BufferAttribute;
+              for (let i = 0; i < mk.count; i++) {
+                mk.setXYZ(i, fx.origin.x, fx.origin.y + 0.3, fx.origin.z);
+                fx.mv[i * 3] = (Math.random() - 0.5) * 1.1;
+                fx.mv[i * 3 + 1] = 1.1 + Math.random() * 1.3;
+                fx.mv[i * 3 + 2] = (Math.random() - 0.5) * 1.1;
+              }
+              mk.needsUpdate = true;
+            }
+            const fade = fx.until > t ? 1 : Math.max(0, (fx.sparks.material as THREE.PointsMaterial).opacity - dt * 2.4);
+            (fx.sparks.material as THREE.PointsMaterial).opacity = fade;
+            (fx.smoke.material as THREE.PointsMaterial).opacity = Math.max(0, (fx.smoke.material as THREE.PointsMaterial).opacity - dt * 0.55);
+            if (fx.until > t) {
+              const sp = fx.sparks.geometry.attributes.position as THREE.BufferAttribute;
+              for (let i = 0; i < sp.count; i++) {
+                fx.sv[i * 3 + 1] -= 12 * dt;
+                sp.setXYZ(i, sp.getX(i) + fx.sv[i * 3] * dt, sp.getY(i) + fx.sv[i * 3 + 1] * dt, sp.getZ(i) + fx.sv[i * 3 + 2] * dt);
+              }
+              sp.needsUpdate = true;
+              const mk = fx.smoke.geometry.attributes.position as THREE.BufferAttribute;
+              for (let i = 0; i < mk.count; i++) {
+                mk.setXYZ(i, mk.getX(i) + fx.mv[i * 3] * dt, mk.getY(i) + fx.mv[i * 3 + 1] * dt, mk.getZ(i) + fx.mv[i * 3 + 2] * dt);
+              }
+              mk.needsUpdate = true;
+              (fx.smoke.material as THREE.PointsMaterial).opacity = Math.min(0.55, (fx.smoke.material as THREE.PointsMaterial).opacity + dt * 1.2);
+            }
+          }
           const tube = new THREE.Mesh(
             new THREE.TubeGeometry(curve, 18, 0.075, 8, false),
             new THREE.MeshStandardMaterial({
@@ -305,6 +384,7 @@ function CircuitLab() {
       detachPointer();
       handle.dispose();
       handleRef.current = null;
+      fxRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

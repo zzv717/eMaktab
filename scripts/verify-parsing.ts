@@ -891,6 +891,29 @@ check("looksLikeName: ko'rish rad", !looksLikeName("Ko'rish"), true);
   ]);
   check("lab-element: H + Cl → HCl tenglamasi chiqadi", hclSynth.hodisalar.some((h) => h.equation === "H + Cl → HCl"), hclSynth.hodisalar.map((h) => h.equation));
 
+  // ⚖️ STOXIOMETRIYA: H₂O uchun 2 ta H + 1 ta O kerak!
+  const hOnly = simulate([{ reagentId: "h", ml: 10 }, { reagentId: "o", ml: 10 }]);
+  check("lab-element: H + O (1:1) — reaksiya YO'Q (2 ta H kerak!)", !hOnly.hodisalar.some((h) => h.equation?.includes("H₂O")), hOnly.hodisalar.map((h) => h.equation));
+  const h2oSynth = simulate([{ reagentId: "h", ml: 20 }, { reagentId: "o", ml: 10 }]);
+  check("lab-element: 2H + O → H₂O (to'g'ri nisbatda)", h2oSynth.hodisalar.some((h) => h.equation === "2H + O → H₂O"), h2oSynth.hodisalar.map((h) => h.equation));
+
+  // ⚡ ZANJIR MUSTAQILLIGI: ulanmagan qurilma ishlayotgan zanjirga XALAQIT bermaydi!
+  const indep = solveCircuit([
+    { id: "bat", type: "battery", value: 9, a: 1, b: 2 },
+    { id: "heat", type: "heater", value: 10, a: 2, b: 1 },
+    { id: "buz", type: "buzzer", value: 0, a: 3, b: 4 },
+  ]);
+  check("lab-fizika: alohida zanjir mustaqil ishlaydi (isitgich yonadi)", indep.ok && (indep.heatGlow["heat"] ?? 0) > 0.2, indep.error ?? indep.heatGlow);
+  check("lab-fizika: ulanmagan gurj O'CHIQ qoladi", !indep.buzzerOn["buz"]);
+  const indep2 = solveCircuit([
+    { id: "bat", type: "battery", value: 9, a: 1, b: 2 },
+    { id: "heat", type: "heater", value: 10, a: 2, b: 1 },
+    { id: "bat2", type: "battery", value: 9, a: 5, b: 6 },
+    { id: "buz", type: "buzzer", value: 0, a: 6, b: 5 },
+    { id: "sw", type: "switch", value: 0, a: 7, b: 8, closed: true },
+  ]);
+  check("lab-fizika: ikkita ALOHIDA zanjir ham ishlaydi", indep2.ok && (indep2.heatGlow["heat"] ?? 0) > 0.2 && indep2.buzzerOn["buz"], indep2.error);
+
   // Faol metall + kislota → H₂ (Na + HCl)
   const naAcid = simulate([
     { reagentId: "na", ml: 10 },
@@ -1023,7 +1046,10 @@ check("looksLikeName: ko'rish rad", !looksLikeName("Ko'rish"), true);
   check("lab-fizika: ishga tushirish", src("app/app/lab/PhysLab.tsx").includes("Ishga tushirish"));
   check("lab-fizika: tayyor loyihalar", src("app/app/lab/PhysLab.tsx").includes("Tayyor loyihalar"));
   check("lab-biologiya: pichoqcha + mikroskop", src("app/app/lab/PrepLab.tsx").includes("pichoqcha") && src("app/app/lab/PrepLab.tsx").includes("SpecimenView"));
-  check("lab-biologiya: mikroskop boshqaruvi", src("app/app/lab/PrepLab.tsx").includes("×400") && src("app/app/lab/PrepLab.tsx").includes("Fokus"));
+  check("lab-biologiya: mikroskop boshqaruvi (obyektivlar/fokus/diyafragma/stolcha)", src("app/app/lab/PrepLab.tsx").includes("100×") && src("app/app/lab/PrepLab.tsx").includes("Mikrovint") && src("app/app/lab/PrepLab.tsx").includes("Diyafragma") && src("app/app/lab/PrepLab.tsx").includes("Stolcha"));
+  check("lab-biologiya: hujayra ichiga kirish (×100)", src("app/app/lab/PrepLab.tsx").includes("Hujayra ichiga kirish"));
+  check("lab-biologiya: pipetka usuli (yog'/suyuqlik namunalari)", src("app/app/lab/PrepLab.tsx").includes("pipette") && src("app/app/lab/PrepLab.tsx").includes("Pipetka bilan namuna olish"));
+  check("lab-biologiya: faqat kichik namuna oynachaga o'tadi", src("app/app/lab/PrepLab.tsx").includes("KATTA namuna stolida qoladi"));
   // yangi: simulyator oqimi + yaqinlik tugmalari + anjomlar + 11 namuna
   check("lab-biologiya: yaqinlik tugmalari (masofadan emas)", src("app/app/lab/PrepLab.tsx").includes("near.knife") && src("app/app/lab/PrepLab.tsx").includes("slideMicro"));
   check("lab-biologiya: Anjomlar bo'limi", src("app/app/lab/PrepLab.tsx").includes("Anjomlar") && src("app/app/lab/PrepLab.tsx").includes("Pipetka") && src("app/app/lab/PrepLab.tsx").includes("Pinset"));
