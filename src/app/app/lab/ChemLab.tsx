@@ -6,6 +6,7 @@ import * as THREE from "three";
 import { REAGENTS, REAGENT_MAP, simulate, simulateSteps, type VesselContent , getReagent, ELEMENTS, type PourEvent } from "./engine";
 import { attachFrameHooks, attachPointer, benchTop, createScene, glassMaterial, liquidMaterial, type SceneHandle } from "./three-utils";
 import { CameraPad, PickCard, StageBox, labChip, type CatalogItem, type PickInfo } from "./StageBox";
+import { GUIDE_CHEMISTRY } from "./Guides";
 
 type VesselType = "probirka" | "kolba" | "stakan";
 
@@ -721,6 +722,7 @@ export default function ChemLab() {
       title="🧪 Kimyo — 3D laboratoriya (real)"
       catalog={catalog}
       onAdd={handleAdd}
+      guide={GUIDE_CHEMISTRY}
       toolbar={
         <div className="flex flex-wrap gap-1.5">
           <button onClick={() => setPourFrom(pourFrom ? null : sel?.id ?? null)} className={`${labChip} ${pourFrom ? "bg-amber-500 text-white" : "bg-amber-50 text-amber-700"}`}>

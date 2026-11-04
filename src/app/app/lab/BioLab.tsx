@@ -7,6 +7,7 @@ import { MEIOSIS, MITOSIS, ORGANELLES, type DivisionStage, type Organelle } from
 import { attachFrameHooks, createScene, type SceneHandle } from "./three-utils";
 import { CameraPad } from "./StageBox";
 import PrepLab from "./PrepLab";
+import { GuideButton, GUIDE_BIOLOGY } from "./Guides";
 
 type Mode = "cell" | "prep" | "mitosis" | "meiosis";
 
@@ -14,7 +15,7 @@ export default function BioLab() {
   const [mode, setMode] = useState<Mode>("cell");
   return (
     <div>
-      <div className="mb-3 flex flex-wrap gap-2">
+      <div className="mb-3 flex flex-wrap items-center gap-2">
         {(
           [
             ["cell", "🔬 Hujayra tuzilishi"],
@@ -31,6 +32,9 @@ export default function BioLab() {
             {label}
           </button>
         ))}
+        <span className="ml-auto">
+          <GuideButton guide={GUIDE_BIOLOGY} />
+        </span>
       </div>
       {mode === "cell" && <CellLab />}
       {mode === "prep" && <PrepLab />}

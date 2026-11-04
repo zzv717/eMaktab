@@ -8,6 +8,7 @@ import * as THREE from "three";
 import { attachFrameHooks, attachPointer, benchTop, createScene, glassMaterial, type SceneHandle } from "./three-utils";
 import { CameraPad, PickCard, StageBox, labChip, type CatalogItem, type PickInfo } from "./StageBox";
 import { SPECIMENS, type Specimen } from "./engine";
+import { GUIDE_BIOLOGY } from "./Guides";
 import { drawSpecimen } from "./SpecimenView";
 
 type PrepMode = "cut" | "smear" | "scrape";
@@ -771,7 +772,7 @@ export default function PrepLab() {
   };
 
   return (
-    <StageBox title="🧫 Namuna tayyorlash va mikroskop (simulyator)" catalog={catalog} onAdd={handleAdd}>
+    <StageBox title="🧫 Namuna tayyorlash va mikroskop (simulyator)" catalog={catalog} onAdd={handleAdd} guide={GUIDE_BIOLOGY}>
       <div className="relative">
         <canvas ref={canvasRef} className="lab-canvas h-[340px] w-full rounded-2xl bg-slate-100" />
         <CameraPad handleRef={handleRef} />
