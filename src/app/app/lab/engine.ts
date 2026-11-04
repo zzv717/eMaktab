@@ -178,6 +178,106 @@ export const ELEMENTS: Element118[] = mkElements();
 export const ELEMENT_MAP: Record<string, Element118> = Object.fromEntries(ELEMENTS.map((e) => [e.id, e]));
 
 /** Reaktivni REAGENTS yoki 118 ELEMENT ichidan topadi */
+// ========================= 📖 ELEMENTLAR MA'LUMOTI (davr, guruh, elektron konfiguratsiya) =========================
+
+/** Aufbau tartibi — elektronlar shu tartibda to'ldiriladi */
+const AUFBAU: Array<[number, string, number]> = [
+  [1, "s", 2], [2, "s", 2], [2, "p", 6], [3, "s", 2], [3, "p", 6], [4, "s", 2], [3, "d", 10],
+  [4, "p", 6], [5, "s", 2], [4, "d", 10], [5, "p", 6], [6, "s", 2], [4, "f", 14], [5, "d", 10],
+  [6, "p", 6], [7, "s", 2], [5, "f", 14], [6, "d", 10], [7, "p", 6],
+];
+
+/** Nobel gaz yadrolari (konfiguratsiyani qisqartirish uchun) */
+const NOBLE: Array<[number, string]> = [
+  [2, "He"], [10, "Ne"], [18, "Ar"], [36, "Kr"], [54, "Xe"], [86, "Rn"],
+];
+
+/** Tabiiy istisnolar — haqiqiy asosiy holat konfiguratsiyalari */
+const CONFIG_EXCEPTIONS: Record<number, string> = {
+  24: "[Ar] 3d⁵ 4s¹", 29: "[Ar] 3d¹⁰ 4s¹", 41: "[Kr] 4d⁴ 5s¹", 42: "[Kr] 4d⁵ 5s¹",
+  44: "[Kr] 4d⁷ 5s¹", 45: "[Kr] 4d⁸ 5s¹", 46: "[Kr] 4d¹⁰", 47: "[Kr] 4d¹⁰ 5s¹",
+  57: "[Xe] 5d¹ 6s²", 58: "[Xe] 4f¹ 5d¹ 6s²", 64: "[Xe] 4f⁷ 5d¹ 6s²",
+  78: "[Xe] 4f¹⁴ 5d⁹ 6s¹", 79: "[Xe] 4f¹⁴ 5d¹⁰ 6s¹",
+  89: "[Rn] 6d¹ 7s²", 90: "[Rn] 6d² 7s²", 91: "[Rn] 5f² 6d¹ 7s²", 92: "[Rn] 5f³ 6d¹ 7s²",
+  93: "[Rn] 5f⁴ 6d¹ 7s²", 96: "[Rn] 5f⁷ 6d¹ 7s²", 103: "[Rn] 5f¹⁴ 7s² 7p¹",
+};
+
+const SUP = ["⁰", "¹", "²", "³", "⁴", "⁵", "⁶", "⁷", "⁸", "⁹"];
+const sup = (n: number) => String(n).split("").map((d) => SUP[Number(d)] ?? d).join("");
+/** "3d¹⁰" → 10 */
+const supVal = (str: string) => str.split("").reduce((acc, c) => {
+  const i = SUP.indexOf(c);
+  return i >= 0 ? acc * 10 + i : acc;
+}, 0);
+
+export interface ElementDetails {
+  /** elektron konfiguratsiya (qisqartirilgan, haqiqiy) */
+  config: string;
+  /** davr raqami (1–7) */
+  period: number;
+  /** guruh raqami (1–18) yoki "— (f-blok)" */
+  group: string;
+  /** qatlam bloki: s / p / d / f */
+  block: string;
+}
+
+/** Berilgan tartib raqamli elementning haqiqiy elektron konfiguratsiyasi, davri va guruhi (Aufbau + istisnolar). */
+export function elementDetails(num: number): ElementDetails {
+  const exc = CONFIG_EXCEPTIONS[num];
+  const tokens: Array<{ n: number; l: string; count: number }> = [];
+  let config: string;
+  if (exc) {
+    config = exc;
+    const tail = exc.split("] ")[1] ?? "";
+    for (const part of tail.split(" ").filter(Boolean)) {
+      const m = part.match(/^(\d)([sdpf])(.*)$/);
+      if (m) tokens.push({ n: Number(m[1]), l: m[2], count: supVal(m[3]) });
+    }
+  } else {
+    let left = num;
+    for (const [n, l, cap] of AUFBAU) {
+      if (left <= 0) break;
+      const count = Math.min(cap, left);
+      tokens.push({ n, l, count });
+      left -= count;
+    }
+    // qisqartirish — nobel gaz yadrosi
+    const noble = [...NOBLE].reverse().find(([z]) => z < num && num > 2);
+    if (noble) {
+      let coreLeft = noble[0];
+      const tail: string[] = [];
+      for (const tk of tokens) {
+        if (coreLeft > 0) {
+          coreLeft -= tk.count;
+          continue;
+        }
+        tail.push(`${tk.n}${tk.l}${sup(tk.count)}`);
+      }
+      config = `[${noble[1]}] ${tail.join(" ")}`;
+    } else {
+      config = tokens.map((tk) => `${tk.n}${tk.l}${sup(tk.count)}`).join(" ");
+    }
+  }
+  const period = tokens.length ? Math.max(...tokens.map((tk) => tk.n)) : 1;
+  const last = tokens[tokens.length - 1];
+  const block = last?.l ?? "s";
+  const hasF = tokens.some((tk) => tk.l === "f" && tk.count > 0 && tk.n >= 4);
+  // guruh: s → 1–2; p → 13–18; d → 3–12; f → yo'q
+  let group: string;
+  if (hasF && !exc) group = "— (f-blok)";
+  else if ((num >= 58 && num <= 71) || (num >= 90 && num <= 103)) group = "— (f-blok)";
+  else if (num === 2) group = "18";
+  else {
+    const sE = tokens.filter((tk) => tk.l === "s" && tk.n === period).reduce((a, tk) => a + tk.count, 0);
+    const pE = tokens.filter((tk) => tk.l === "p" && tk.n === period).reduce((a, tk) => a + tk.count, 0);
+    const dE = tokens.filter((tk) => tk.l === "d" && tk.n === period - 1).reduce((a, tk) => a + tk.count, 0);
+    if (dE > 0 && pE === 0) group = String(Math.min(12, dE + sE));
+    else if (pE > 0) group = String(10 + sE + pE);
+    else group = String(sE || 1);
+  }
+  return { config, period, group, block };
+}
+
 export function getReagent(id: string): Reagent | undefined {
   const r = REAGENT_MAP[id];
   if (r) return r;

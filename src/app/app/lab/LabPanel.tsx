@@ -8,6 +8,7 @@ import { useState } from "react";
 const ChemLab = dynamic(() => import("./ChemLab"), { ssr: false });
 const PhysLab = dynamic(() => import("./PhysLab"), { ssr: false });
 const BioLab = dynamic(() => import("./BioLab"), { ssr: false });
+const Experiments = dynamic(() => import("./Experiments"), { ssr: false });
 
 type Tab = "chem" | "phys" | "bio";
 
@@ -40,6 +41,9 @@ export default function LabPanel() {
             {label}
           </button>
         ))}
+        <span className="ml-auto">
+          <Experiments onOpen={(t) => setTab(t)} />
+        </span>
       </div>
 
       {tab === "chem" && <ChemLab />}
