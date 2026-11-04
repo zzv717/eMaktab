@@ -516,83 +516,241 @@ function terminalPos(group: THREE.Group, term: "a" | "b"): THREE.Vector3 {
 
 function buildCompMesh(type: CircuitCompType): THREE.Group {
   const g = new THREE.Group();
-  const bodyColor = type === "battery" ? "#3a7d44" : type === "bulb" || type === "led" ? "#5b6b7d" : type === "motor" ? "#4b5f7a" : type === "buzzer" ? "#8a4b5f" : type === "galv" ? "#3b4a63" : "#7a6551";
-  const body = new THREE.Mesh(new THREE.BoxGeometry(1.55, 0.55, 0.95), new THREE.MeshStandardMaterial({ color: bodyColor, roughness: 0.55 }));
-  body.position.y = 0.32;
-  body.castShadow = true;
-  g.add(body);
+  const mat = (color: string, opts: Partial<THREE.MeshStandardMaterialParameters> = {}) =>
+    new THREE.MeshStandardMaterial({ color, roughness: 0.45, ...opts });
+  const add = (...objs: THREE.Object3D[]) => {
+    for (const o of objs) {
+      o.castShadow = true;
+      g.add(o);
+    }
+  };
+
   if (type === "battery") {
-    const plus = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 0.22, 12), new THREE.MeshStandardMaterial({ color: "#c0392b" }));
-    plus.position.set(0.45, 0.72, 0);
-    g.add(plus);
+    // 🔋 Batareya — silindr korpus, rangli yorliq, qutb belgilari
+    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.56, 0.56, 1.75, 26), mat("#2b3a4a", { metalness: 0.35, roughness: 0.4 }));
+    body.position.y = 0.95;
+    const wrap = new THREE.Mesh(new THREE.CylinderGeometry(0.575, 0.575, 1.05, 26), mat("#e8722a", { roughness: 0.5 }));
+    wrap.position.y = 0.95;
+    const wrap2 = new THREE.Mesh(new THREE.CylinderGeometry(0.58, 0.58, 0.18, 26), mat("#22303f"));
+    wrap2.position.y = 1.62;
+    const plusKnob = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.15, 0.16, 14), mat("#c0392b", { metalness: 0.5 }));
+    plusKnob.position.y = 1.9;
+    const minus = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.42, 0.09, 20), mat("#37474f", { metalness: 0.6 }));
+    minus.position.y = 0.1;
+    add(body, wrap, wrap2, plusKnob, minus);
+  } else if (type === "resistor") {
+    // 🎨 Rezistor — keramik tana + RANGLI TASMALAR (haqiqiy rezistor kabi!)
+    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.27, 0.27, 1.3, 20), mat("#d9c7a3", { roughness: 0.6 }));
+    body.rotation.z = Math.PI / 2;
+    body.position.y = 0.78;
+    add(body);
+    const bandColors = ["#6b3b1d", "#c0392b", "#e8a33d", "#c9a227"]; // qo'ng'ir-qizil-sariq-oltin
+    bandColors.forEach((c, i) => {
+      const band = new THREE.Mesh(new THREE.CylinderGeometry(0.285, 0.285, 0.1, 20), mat(c, { roughness: 0.5 }));
+      band.rotation.z = Math.PI / 2;
+      band.position.set(-0.42 + i * 0.26, 0.78, 0);
+      add(band);
+    });
+    for (const sx of [-0.92, 0.92]) {
+      const lead = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.55, 10), mat("#c9d2dc", { metalness: 0.85, roughness: 0.2 }));
+      lead.rotation.z = Math.PI / 2;
+      lead.position.set(sx, 0.78, 0);
+      add(lead);
+    }
   } else if (type === "bulb") {
-    const stand = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.34, 0.35, 16), new THREE.MeshStandardMaterial({ color: "#8d99ae", metalness: 0.5, roughness: 0.4 }));
-    stand.position.y = 0.78;
-    const glow = new THREE.Mesh(new THREE.SphereGeometry(0.52, 20, 14), new THREE.MeshStandardMaterial({ color: "#9aa4b2", emissive: "#ffb84d", emissiveIntensity: 0.12, roughness: 0.25 }));
-    glow.position.y = 1.35;
+    // 💡 Lampochka — vintli asos, shisha gumbaz, SPIRAL (filament)
+    const base = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.33, 0.5, 18), mat("#9aa7b3", { metalness: 0.7, roughness: 0.3 }));
+    base.position.y = 0.35;
+    add(base);
+    for (let i = 0; i < 3; i++) {
+      const ridge = new THREE.Mesh(new THREE.TorusGeometry(0.315, 0.035, 8, 22), mat("#8d99ae", { metalness: 0.7, roughness: 0.3 }));
+      ridge.rotation.x = Math.PI / 2;
+      ridge.position.y = 0.22 + i * 0.16;
+      add(ridge);
+    }
+    const glass = new THREE.Mesh(new THREE.SphereGeometry(0.62, 24, 18), new THREE.MeshPhysicalMaterial({ color: "#eaf2f8", transparent: true, opacity: 0.24, transmission: 0.85, roughness: 0.06, thickness: 0.2, side: THREE.DoubleSide }));
+    glass.position.y = 1.42;
+    glass.name = "glass";
+    const glow = new THREE.Mesh(new THREE.SphereGeometry(0.33, 18, 14), mat("#9aa4b2", { emissive: "#ffb84d", emissiveIntensity: 0.12, roughness: 0.25 }));
+    glow.position.y = 1.38;
     glow.name = "glow";
-    g.add(stand, glow);
+    const filament = new THREE.Mesh(new THREE.TorusGeometry(0.17, 0.032, 8, 22), mat("#7a5c2e", { emissive: "#ff9a3c", emissiveIntensity: 0.5 }));
+    filament.position.y = 1.36;
+    filament.name = "filament";
+    add(glass, glow, filament);
+    for (const sx of [-0.1, 0.1]) {
+      const wire = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.022, 0.55, 8), mat("#b08d4f", { metalness: 0.8 }));
+      wire.position.set(sx, 0.95, 0);
+      add(wire);
+    }
   } else if (type === "led") {
-    const led = new THREE.Mesh(new THREE.ConeGeometry(0.42, 0.85, 18), new THREE.MeshStandardMaterial({ color: "#7f1d1d", emissive: "#ff2d2d", emissiveIntensity: 0.1, roughness: 0.3 }));
-    led.position.y = 1.15;
-    led.name = "led";
-    g.add(led);
-  } else if (type === "resistor" || type === "rheostat" || type === "heater") {
-    const cyl = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.24, 1.15, 18), new THREE.MeshStandardMaterial({ color: type === "heater" ? "#6b3b2b" : "#d9c7a3", roughness: 0.6, emissive: type === "heater" ? "#ff3b00" : "#000", emissiveIntensity: 0 }));
-    cyl.rotation.z = Math.PI / 2;
-    cyl.position.y = 0.78;
-    if (type === "heater") cyl.name = "heat";
-    g.add(cyl);
-    if (type === "rheostat") {
-      const knob = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.3, 0.3), new THREE.MeshStandardMaterial({ color: "#e07b39" }));
-      knob.position.set(0, 1.15, 0);
-      g.add(knob);
+    // 🔴 LED — dumaloq korpus + linza + ikkala oyoq (anod/katod)
+    const flange = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.42, 0.08, 22), mat("#7f1d1d", { roughness: 0.4 }));
+    flange.position.y = 0.28;
+    const dome = new THREE.Mesh(new THREE.SphereGeometry(0.34, 20, 14, 0, Math.PI * 2, 0, Math.PI / 2), mat("#7f1d1d", { emissive: "#ff2d2d", emissiveIntensity: 0.1, roughness: 0.22 }));
+    dome.position.y = 0.32;
+    dome.name = "led";
+    const lens = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.05, 16), mat("#ffd2d2", { emissive: "#ff6b6b", emissiveIntensity: 0.25 }));
+    lens.position.y = 0.64;
+    add(flange, dome, lens);
+    for (const sx of [-0.13, 0.13]) {
+      const leg = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.34, 0.06), mat("#c9d2dc", { metalness: 0.85, roughness: 0.2 }));
+      leg.position.set(sx, 0.12, 0);
+      add(leg);
     }
   } else if (type === "switch") {
-    const lever = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.62, 0.14), new THREE.MeshStandardMaterial({ color: "#e07b39", roughness: 0.5 }));
-    lever.position.set(0, 0.95, 0);
+    // 🔌 Pichoqli kalit — asos, g'altaklar, tayoqcha
+    const base = new THREE.Mesh(new THREE.BoxGeometry(1.65, 0.3, 1.0), mat("#5b4632", { roughness: 0.6 }));
+    base.position.y = 0.18;
+    add(base);
+    for (const sx of [-0.52, 0.52]) {
+      const post = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.16, 0.42, 14), mat("#b08d4f", { metalness: 0.75, roughness: 0.3 }));
+      post.position.set(sx, 0.52, 0);
+      const cap = new THREE.Mesh(new THREE.SphereGeometry(0.11, 12, 10), mat("#c9a86a", { metalness: 0.8, roughness: 0.25 }));
+      cap.position.set(sx, 0.76, 0);
+      add(post, cap);
+    }
+    const lever = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.8, 0.16), mat("#e07b39", { roughness: 0.45 }));
+    lever.position.set(-0.52, 0.72, 0);
+    lever.geometry.translate(0, 0.4, 0);
     lever.name = "lever";
-    lever.geometry.translate(0, 0.31, 0);
-    g.add(lever);
+    const grip = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.16, 0.24), mat("#b2551f"));
+    grip.position.set(0, 0.86, 0);
+    lever.add(grip); // dastasi tayoqcha bilan birga qimirlaydi
+    add(lever);
   } else if (type === "ammeter" || type === "galv") {
-    const face = new THREE.Mesh(new THREE.CylinderGeometry(0.46, 0.46, 0.14, 24), new THREE.MeshStandardMaterial({ color: "#f4f1de", roughness: 0.4 }));
+    // 📊 Strelkali asbob — dumaloq korpus, shkala chiziqlari, strelka, oynali qopqoq
+    const stand = new THREE.Mesh(new THREE.BoxGeometry(1.35, 0.32, 0.85), mat("#3b4a63", { metalness: 0.5, roughness: 0.4 }));
+    stand.position.y = 0.18;
+    const caseM = new THREE.Mesh(new THREE.CylinderGeometry(0.66, 0.66, 0.34, 26), mat("#2c3a4d", { metalness: 0.45, roughness: 0.4 }));
+    caseM.rotation.x = Math.PI / 2;
+    caseM.position.set(0, 1.05, 0.12);
+    const face = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.55, 0.05, 26), mat("#f4f1de", { roughness: 0.35 }));
     face.rotation.x = Math.PI / 2;
-    face.position.set(0, 1.15, 0.3);
-    const needle = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.42, 0.03), new THREE.MeshStandardMaterial({ color: "#b02a2a" }));
-    needle.position.set(0, 1.15, 0.4);
-    needle.geometry.translate(0, 0.2, 0);
+    face.position.set(0, 1.05, 0.31);
+    add(stand, caseM, face);
+    // shkala chiziqlari (yay)
+    for (let i = 0; i <= 10; i++) {
+      const ang = -1.15 + (i / 10) * 2.3;
+      const tick = new THREE.Mesh(new THREE.BoxGeometry(i % 5 === 0 ? 0.035 : 0.02, 0.1, 0.015), mat("#1f2937"));
+      tick.position.set(Math.sin(ang) * 0.44, 1.05 + Math.cos(ang) * 0.44, 0.345);
+      tick.rotation.z = -ang;
+      add(tick);
+    }
+    const needle = new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.48, 0.02), mat("#b02a2a"));
+    needle.position.set(0, 1.05, 0.36);
+    needle.geometry.translate(0, 0.24, 0);
     needle.name = "needle";
-    g.add(face, needle);
+    const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.05, 12), mat("#22303f", { metalness: 0.6 }));
+    hub.rotation.x = Math.PI / 2;
+    hub.position.set(0, 1.05, 0.37);
+    const glassCover = new THREE.Mesh(new THREE.CylinderGeometry(0.57, 0.57, 0.03, 26), new THREE.MeshPhysicalMaterial({ color: "#eaf2f8", transparent: true, opacity: 0.14, transmission: 0.9, roughness: 0.05 }));
+    glassCover.rotation.x = Math.PI / 2;
+    glassCover.position.set(0, 1.05, 0.39);
+    add(needle, hub, glassCover);
   } else if (type === "motor") {
-    const cyl = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 0.95, 22), new THREE.MeshStandardMaterial({ color: "#4b5f7a", metalness: 0.55, roughness: 0.35 }));
-    cyl.position.y = 1.05;
+    // ⚙️ Motor — korpus, val, fan, tayanchlar, ventilyatsiya
+    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.52, 0.52, 1.15, 24), mat("#4b5f7a", { metalness: 0.55, roughness: 0.35 }));
+    body.position.y = 1.05;
+    const capTop = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.55, 0.12, 24), mat("#3a4c63", { metalness: 0.6 }));
+    capTop.position.y = 1.68;
+    const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.085, 0.085, 0.75, 12), mat("#c9d2dc", { metalness: 0.85, roughness: 0.2 }));
+    shaft.position.y = 2.05;
+    add(body, capTop, shaft);
+    for (const sx of [-0.42, 0.42]) {
+      const foot = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.18, 0.85), mat("#3a4c63", { metalness: 0.5 }));
+      foot.position.set(sx, 0.32, 0);
+      add(foot);
+    }
+    for (let i = 0; i < 6; i++) {
+      const vent = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.5, 0.05), mat("#2c3a4d"));
+      const ang = (i / 6) * Math.PI * 2;
+      vent.position.set(Math.cos(ang) * 0.525, 1.05, Math.sin(ang) * 0.525);
+      vent.rotation.y = -ang;
+      add(vent);
+    }
     const fan = new THREE.Group();
-    for (let i = 0; i < 3; i++) {
-      const blade = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.045, 0.2), new THREE.MeshStandardMaterial({ color: "#cbd5e1", metalness: 0.4, roughness: 0.4 }));
-      blade.position.y = 1.72;
-      blade.rotation.y = (i / 3) * Math.PI * 2;
-      blade.translateX(0.32);
+    for (let i = 0; i < 4; i++) {
+      const blade = new THREE.Mesh(new THREE.BoxGeometry(0.68, 0.04, 0.22), mat("#cbd5e1", { metalness: 0.45, roughness: 0.35 }));
+      blade.position.y = 1.82;
+      blade.rotation.y = (i / 4) * Math.PI * 2;
+      blade.translateX(0.36);
+      blade.rotation.z = 0.35;
       fan.add(blade);
     }
     fan.name = "fan";
-    g.add(cyl, fan);
+    g.add(fan);
   } else if (type === "buzzer") {
-    const bell = new THREE.Mesh(new THREE.SphereGeometry(0.55, 20, 12, 0, Math.PI * 2, 0, Math.PI / 2), new THREE.MeshStandardMaterial({ color: "#c9a227", emissive: "#ffdd55", emissiveIntensity: 0, metalness: 0.5, roughness: 0.35 }));
-    bell.position.y = 0.72;
+    // 🔔 Qo'ng'iroq — yarim shar, markaziy bolt, teshikchalar
+    const base = new THREE.Mesh(new THREE.CylinderGeometry(0.58, 0.64, 0.26, 22), mat("#6b4a2f", { roughness: 0.5 }));
+    base.position.y = 0.32;
+    const bell = new THREE.Mesh(new THREE.SphereGeometry(0.56, 22, 12, 0, Math.PI * 2, 0, Math.PI / 2), mat("#c9a227", { emissive: "#ffdd55", emissiveIntensity: 0, metalness: 0.55, roughness: 0.3 }));
+    bell.position.y = 0.45;
     bell.name = "bell";
-    g.add(bell);
+    const bolt = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 0.16, 10), mat("#8a6d1c", { metalness: 0.8 }));
+    bolt.position.y = 1.03;
+    add(base, bell, bolt);
+    for (let i = 0; i < 6; i++) {
+      const hole = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.06, 8), mat("#3a2c12"));
+      const ang = (i / 6) * Math.PI * 2;
+      hole.position.set(Math.cos(ang) * 0.3, 0.86, Math.sin(ang) * 0.3);
+      hole.rotation.x = Math.PI / 2.6;
+      hole.rotation.y = -ang;
+      add(hole);
+    }
+  } else if (type === "rheostat") {
+    // 🎚 Reostat — seramik nay, rel, siljiydigan kontakt
+    const tube = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.32, 1.55, 22), mat("#c9b391", { roughness: 0.65 }));
+    tube.rotation.z = Math.PI / 2;
+    tube.position.y = 0.82;
+    add(tube);
+    for (const sz of [-0.34, 0.34]) {
+      const rail = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.07, 0.09), mat("#c9d2dc", { metalness: 0.85, roughness: 0.2 }));
+      rail.position.set(0, 1.22, sz);
+      add(rail);
+    }
+    for (const sx of [-0.86, 0.86]) {
+      const capE = new THREE.Mesh(new THREE.CylinderGeometry(0.36, 0.36, 0.14, 20), mat("#8d6b3f", { metalness: 0.5, roughness: 0.4 }));
+      capE.rotation.z = Math.PI / 2;
+      capE.position.set(sx, 0.82, 0);
+      add(capE);
+    }
+    const slider = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.2, 0.85), mat("#e07b39", { roughness: 0.45 }));
+    slider.position.set(0.15, 1.36, 0);
+    const knob = new THREE.Mesh(new THREE.CylinderGeometry(0.17, 0.17, 0.22, 14), mat("#b2551f"));
+    knob.position.set(0.15, 1.58, 0);
+    add(slider, knob);
+  } else if (type === "heater") {
+    // 🔥 Isitgich — SPIRAL (haqiyqiy kabi) + ramka
+    const base = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.26, 1.05), mat("#4a3b2c", { roughness: 0.6 }));
+    base.position.y = 0.16;
+    add(base);
+    for (const sx of [-0.82, 0.82]) {
+      const post = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.85, 10), mat("#8d99ae", { metalness: 0.7 }));
+      post.position.set(sx, 0.62, 0);
+      add(post);
+    }
+    const pts: THREE.Vector3[] = [];
+    for (let i = 0; i <= 72; i++) {
+      const t = i / 72;
+      const ang = t * Math.PI * 12;
+      pts.push(new THREE.Vector3(-0.72 + t * 1.44, 0.92 + Math.sin(ang) * 0.21, Math.cos(ang) * 0.21));
+    }
+    const spiral = new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 96, 0.052, 8), mat("#5b3a2a", { emissive: "#ff3b00", emissiveIntensity: 0 }));
+    spiral.name = "heat";
+    add(spiral);
   }
+
+  // ⚡ terminallar (sim ulash uchun)
   for (const term of ["a", "b"] as const) {
-    const t = new THREE.Mesh(new THREE.SphereGeometry(0.26, 14, 10), new THREE.MeshStandardMaterial({ color: term === "a" ? "#2e8b57" : "#8b2e2e", emissive: term === "a" ? "#1d5c38" : "#5c1d1d", emissiveIntensity: 0.25 }));
+    const t = new THREE.Mesh(new THREE.SphereGeometry(0.26, 14, 10), mat(term === "a" ? "#2e8b57" : "#8b2e2e", { emissive: term === "a" ? "#1d5c38" : "#5c1d1d", emissiveIntensity: 0.25 }));
     t.position.set(term === "a" ? -0.95 : 0.95, 0.55, 0);
     t.name = `term-${term}`;
     t.userData = { kind: "terminal", term };
-    g.add(t);
-    // katta "urish" zonasi — ulash masofasini uzaytiradi (ko'rinmas)
-    const hitZone = new THREE.Mesh(
-      new THREE.SphereGeometry(0.85, 10, 8),
-      new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false }),
-    );
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.13, 0.3, 10), mat("#b08d4f", { metalness: 0.75, roughness: 0.3 }));
+    post.position.set(term === "a" ? -0.95 : 0.95, 0.38, 0);
+    g.add(t, post);
+    const hitZone = new THREE.Mesh(new THREE.SphereGeometry(0.85, 10, 8), new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false }));
     hitZone.position.copy(t.position);
     hitZone.name = `termhit-${term}`;
     hitZone.userData = { kind: "terminal", term };

@@ -39,7 +39,7 @@ export default function PrepLab() {
   const flyRef = useRef<{ t0: number; from: THREE.Vector3; to: THREE.Vector3; fromT: THREE.Vector3; toT: THREE.Vector3 } | null>(null);
   const popRef = useRef<{ obj: THREE.Object3D; t0: number }[]>([]);
   const knifeRef = useRef<THREE.Group | null>(null);
-  const sliceRef = useRef<THREE.Mesh | null>(null);
+  const sliceRef = useRef<THREE.Group | null>(null);
   const specGroupRef = useRef<THREE.Group | null>(null);
   const slideRef = useRef<THREE.Object3D | null>(null);
   const microRef = useRef<THREE.Group | null>(null);
@@ -332,10 +332,19 @@ export default function PrepLab() {
     handle.scene.add(drop);
     dropRef.current = drop;
 
-    // kesilgan tilim
-    const slice = new THREE.Mesh(new THREE.BoxGeometry(0.85, 0.16, 0.6), new THREE.MeshStandardMaterial({ color: "#d98cc8", roughness: 0.55 }));
+    // ✂️ kesilgan tilim — ENDI USHLANADI VA SILJIYDI!
+    const slice = new THREE.Group();
+    const sliceMesh = new THREE.Mesh(new THREE.BoxGeometry(0.85, 0.16, 0.6), new THREE.MeshStandardMaterial({ color: "#d98cc8", roughness: 0.55 }));
+    sliceMesh.name = "sliceMesh";
+    sliceMesh.position.y = 0.12;
+    sliceMesh.castShadow = true;
+    slice.add(sliceMesh);
     slice.visible = false;
-    slice.position.set(-1.2, 1.2, 1.1);
+    slice.position.set(-1.2, 0, 1.6);
+    slice.userData = { kind: "slice", label: "✂️ Kesilgan mitti namuna", icon: "✂️", desc: "Uni oling va PREPARAT OYNACHASI oldiga olib boring!" };
+    slice.traverse((o) => {
+      o.userData.pickRoot = slice;
+    });
     handle.scene.add(slice);
     sliceRef.current = slice;
 
@@ -423,9 +432,10 @@ export default function PrepLab() {
         specGroup.add(core);
       }
       if (sliceRef.current) {
-        (sliceRef.current.material as THREE.MeshStandardMaterial).color.set(color);
+        const sm = sliceRef.current.getObjectByName("sliceMesh") as THREE.Mesh | undefined;
+        if (sm) (sm.material as THREE.MeshStandardMaterial).color.set(color);
         sliceRef.current.visible = cut;
-        sliceRef.current.position.set(-0.15, 0.28, 1.35);
+        sliceRef.current.position.set(-0.15, 0, 1.75);
         sliceRef.current.rotation.set(0, 0.5, 0);
       }
     };
@@ -453,7 +463,7 @@ export default function PrepLab() {
 
     // ====== bosish / siljitish ======
     const detachPointer = attachPointer(handle, canvas, {
-      getRoots: () => [...toolsGroup.children, specGroup, micro],
+      getRoots: () => [...toolsGroup.children, specGroup, micro, ...(sliceRef.current ? [sliceRef.current] : [])],
       moveRef,
       onPick: (root) => {
         const kind = root.userData.kind as string;
@@ -541,6 +551,10 @@ export default function PrepLab() {
           if (tr.kind === "toSlide" && slideRef.current) {
             specGroup.position.lerp(slideRef.current.position.clone().add(new THREE.Vector3(0, 0.32, 0)), 0.14);
             specGroup.scale.setScalar(1 - k * 0.5);
+            if (sliceRef.current && sliceRef.current.visible) {
+              sliceRef.current.position.lerp(slideRef.current.position.clone().add(new THREE.Vector3(0, 0.15, 0)), 0.16);
+              if (e > 0.75) sliceRef.current.visible = false;
+            }
           } else if (tr.kind === "toMicro") {
             const slideObj = slideRef.current;
             if (slideObj) {
@@ -608,7 +622,9 @@ export default function PrepLab() {
         const sp = specGroup.position;
         const knifeNear = st2.stage === 1 && specGroup.visible && nearest("knife", sp).d < 2.4;
         const stainNear = st2.stage === 2 && specGroup.visible && nearest("stain", sp).d < 2.4;
-        const slideSpec = st2.stage === 3 && slideRef.current ? dist2(slideRef.current.position, sp) < 2.6 : false;
+        // ✂️ KESILGAN TILIM oynachaga olib boriladi (surtma/surishda — namunaning o'zi)
+        const piecePos = st2.mode === "cut" && sliceRef.current?.visible ? sliceRef.current.position : sp;
+        const slideSpec = st2.stage === 3 && slideRef.current ? dist2(slideRef.current.position, piecePos) < 2.8 : false;
         const slideMicro = st2.stage === 4 && slideRef.current ? dist2(slideRef.current.position, micro.position) < 3.0 : false;
         const nr = nearRef.current;
         if (nr.knife !== knifeNear || nr.stain !== stainNear || nr.slideSpec !== slideSpec || nr.slideMicro !== slideMicro) {
@@ -649,7 +665,13 @@ export default function PrepLab() {
     if (!specimen || stage !== 1) return;
     cutAnimRef.current = { t0: performance.now() / 1000, mode: prepMode(specimen) };
     setStage(2);
-    push(ACTION_LABEL[prepMode(specimen)] + " — animatsiya bajarildi ✅");
+    push(
+      ACTION_LABEL[prepMode(specimen)] +
+        " — animatsiya bajarildi ✅ " +
+        (prepMode(specimen) === "cut"
+          ? "Endi ✂️ KESILGAN MITTI NAMUNANI sudrab oling va 🧫 PREPARAT OYNACHASI oldiga olib boring!"
+          : "Endi namunani 🧫 PREPARAT OYNACHASI oldiga olib boring!"),
+    );
   };
   const doStain = () => {
     if (!specimen || stage !== 2) return;
@@ -782,7 +804,7 @@ export default function PrepLab() {
             )}
             {near.slideSpec && stage === 3 && (
               <button onClick={doToSlide} className="pointer-events-auto rounded-2xl bg-sky-700 px-4 py-2 text-sm font-semibold text-white shadow-lg active:scale-95">
-                🧫 Namunani oynachaga qo'yish
+                🧫 Kesilgan namunani oynachaga qo'yish
               </button>
             )}
             {near.slideMicro && stage === 4 && (

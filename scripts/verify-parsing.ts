@@ -1032,6 +1032,11 @@ check("looksLikeName: ko'rish rad", !looksLikeName("Ko'rish"), true);
   check("lab-biologiya: yangi namunalar (asab/suyak/yog'/qo'ziqorin/bakteriya)", ["nerve", "bone", "fat", "fungi", "bacteria"].every((t) => SPECIMENS.some((sp) => sp.texture === t)));
   check("lab-kimyo: qo'shish stolga shisha tushadi", src("app/app/lab/ChemLab.tsx").includes("spawnBottleRef") && src("app/app/lab/ChemLab.tsx").includes("nearPour"));
   check("lab-kimyo: quyish tugmasi yaqinlikda", src("app/app/lab/ChemLab.tsx").includes("🫗 Quyish"));
+  check("lab-kimyo: qo'shilgan shisha ushlanadi (getRoots)", src("app/app/lab/ChemLab.tsx").includes("bottlesRoot?.children"));
+  check("lab-biologiya: kesilgan tilim siljiydi (kind slice)", src("app/app/lab/PrepLab.tsx").includes('"slice"') && src("app/app/lab/PrepLab.tsx").includes("Kesilgan mitti namuna"));
+  check("lab-biologiya: tilim oynachaga olib boriladi", src("app/app/lab/PrepLab.tsx").includes("piecePos"));
+  check("lab-fizika: realistik modellar (filament/rangli tasmalar/spiral)", src("app/app/lab/PhysLab.tsx").includes("filament") && src("app/app/lab/PhysLab.tsx").includes("bandColors") && src("app/app/lab/PhysLab.tsx").includes("TubeGeometry"));
+  check("lab-fizika: strelkali asbob shkalasi", src("app/app/lab/PhysLab.tsx").includes("tick") && src("app/app/lab/PhysLab.tsx").includes("needle"));
 
   // UI kontraktlari
   check("lab: LabPanel mavjud", src("app/app/lab/LabPanel.tsx").includes("Kimyo") && src("app/app/lab/LabPanel.tsx").includes("Fizika") && src("app/app/lab/LabPanel.tsx").includes("Biologiya"));
