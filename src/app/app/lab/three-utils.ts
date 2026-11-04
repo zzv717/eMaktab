@@ -12,7 +12,193 @@ export interface SceneHandle {
 }
 
 /** Canvas ichida toza 3D sahna yaratadi (yorug'lik + orbit kamera + resize). */
-export function createScene(canvas: HTMLCanvasElement, opts?: { camZ?: number; bg?: string }): SceneHandle {
+/** 🏫 Laboratoriya xonasi — kafel pol, devorlar, derazalar, shkaf, lavabo, xavfsizlik jihozlari (protsedural). */
+export function labRoom(): THREE.Group {
+  const room = new THREE.Group();
+  const tex = (w: number, h: number, draw: (c: THREE.CanvasTexture, ctx: CanvasRenderingContext2D) => void) => {
+    const cv = document.createElement("canvas");
+    cv.width = w;
+    cv.height = h;
+    const ctx = cv.getContext("2d")!;
+    const t = new THREE.CanvasTexture(cv);
+    draw(t, ctx);
+    t.needsUpdate = true;
+    t.colorSpace = THREE.SRGBColorSpace;
+    return t;
+  };
+  // 🧱 kafel pol (protsedural)
+  const floorTex = tex(512, 512, (_t, ctx) => {
+    ctx.fillStyle = "#cdd5dd";
+    ctx.fillRect(0, 0, 512, 512);
+    for (let y = 0; y < 8; y++) {
+      for (let x = 0; x < 8; x++) {
+        const v = 198 + ((x * 7 + y * 13) % 16);
+        ctx.fillStyle = `rgb(${v},${v + 7},${v + 14})`;
+        ctx.fillRect(x * 64 + 2, y * 64 + 2, 60, 60);
+      }
+    }
+    ctx.fillStyle = "rgba(120,132,145,0.85)";
+    for (let i = 0; i <= 8; i++) {
+      ctx.fillRect(i * 64 - 1.5, 0, 3, 512);
+      ctx.fillRect(0, i * 64 - 1.5, 512, 3);
+    }
+  });
+  floorTex.wrapS = floorTex.wrapT = THREE.RepeatWrapping;
+  floorTex.repeat.set(7, 5);
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(34, 24), new THREE.MeshStandardMaterial({ map: floorTex, roughness: 0.82, metalness: 0.04 }));
+  floor.rotation.x = -Math.PI / 2;
+  floor.position.set(0, 0, 1);
+  floor.receiveShadow = true;
+  room.add(floor);
+
+  // 🧱 devorlar
+  const wallMat = new THREE.MeshStandardMaterial({ color: "#e9eef3", roughness: 0.94 });
+  const back = new THREE.Mesh(new THREE.PlaneGeometry(34, 8.4), wallMat);
+  back.position.set(0, 4.2, -10.2);
+  back.receiveShadow = true;
+  const left = new THREE.Mesh(new THREE.PlaneGeometry(24, 8.4), wallMat);
+  left.rotation.y = Math.PI / 2;
+  left.position.set(-17, 4.2, 1);
+  const right = new THREE.Mesh(new THREE.PlaneGeometry(24, 8.4), wallMat);
+  right.rotation.y = -Math.PI / 2;
+  right.position.set(17, 4.2, 1);
+  room.add(back, left, right);
+
+  // 🪟 derazalar (osmon rangli shisha + romlar)
+  for (const wx of [-9.5, -2.5, 4.5, 11.5]) {
+    const frame = new THREE.Mesh(new THREE.BoxGeometry(5.4, 3.4, 0.16), new THREE.MeshStandardMaterial({ color: "#5c6b7a", roughness: 0.5, metalness: 0.35 }));
+    frame.position.set(wx, 4.9, -10.05);
+    const glass = new THREE.Mesh(new THREE.PlaneGeometry(5.0, 3.0), new THREE.MeshBasicMaterial({ color: "#bfe3f7" }));
+    glass.position.set(wx, 4.9, -9.94);
+    const bar1 = new THREE.Mesh(new THREE.BoxGeometry(0.1, 3.0, 0.06), new THREE.MeshStandardMaterial({ color: "#5c6b7a" }));
+    bar1.position.set(wx, 4.9, -9.9);
+    const bar2 = new THREE.Mesh(new THREE.BoxGeometry(5.0, 0.1, 0.06), new THREE.MeshStandardMaterial({ color: "#5c6b7a" }));
+    bar2.position.set(wx, 4.9, -9.9);
+    room.add(frame, glass, bar1, bar2);
+  }
+
+  // 💡 shift + yoritish panellari
+  const ceil = new THREE.Mesh(new THREE.PlaneGeometry(34, 24), new THREE.MeshStandardMaterial({ color: "#f3f6f9", roughness: 0.96 }));
+  ceil.rotation.x = Math.PI / 2;
+  ceil.position.set(0, 8.4, 1);
+  room.add(ceil);
+  for (const [lx, lz] of [[-8, -3], [8, -3], [-8, 5], [8, 5]] as Array<[number, number]>) {
+    const panel = new THREE.Mesh(new THREE.BoxGeometry(3.6, 0.14, 1.5), new THREE.MeshStandardMaterial({ color: "#fff8e6", emissive: "#ffe9b8", emissiveIntensity: 0.85 }));
+    panel.position.set(lx, 8.25, lz);
+    room.add(panel);
+    const pl = new THREE.PointLight(0xfff2d6, 22, 26, 2);
+    pl.position.set(lx, 7.6, lz);
+    room.add(pl);
+  }
+
+  // 🚪 eshik (o'ng devor)
+  const doorFrame = new THREE.Mesh(new THREE.BoxGeometry(0.18, 4.4, 2.6), new THREE.MeshStandardMaterial({ color: "#8a6b4f", roughness: 0.6 }));
+  doorFrame.position.set(16.9, 2.2, 5.5);
+  const door = new THREE.Mesh(new THREE.BoxGeometry(0.12, 4.1, 2.25), new THREE.MeshStandardMaterial({ color: "#b08968", roughness: 0.55 }));
+  door.position.set(16.82, 2.05, 5.5);
+  const handle = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.5, 10), new THREE.MeshStandardMaterial({ color: "#d8c27a", metalness: 0.85, roughness: 0.25 }));
+  handle.rotation.x = Math.PI / 2;
+  handle.position.set(16.68, 2.1, 4.65);
+  room.add(doorFrame, door, handle);
+
+  // 🛟 xavfsizlik buyumlari
+  const sign = (text: string, fg: string, bg: string, w = 1.9, h = 0.8) => {
+    const t = tex(256, 110, (_ct, ctx) => {
+      ctx.fillStyle = bg;
+      ctx.fillRect(0, 0, 256, 110);
+      ctx.fillStyle = fg;
+      ctx.font = "bold 34px sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(text, 128, 55);
+    });
+    return new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ map: t }));
+  };
+  const exitSign = sign("CHIQISH ➜", "#ffffff", "#1f7a3d");
+  exitSign.position.set(16.75, 5.6, 5.5);
+  exitSign.rotation.y = -Math.PI / 2;
+  room.add(exitSign);
+  const warnSign = sign("⚠ EHTIYOT — KIMYO", "#3a2c00", "#ffd23e", 2.6, 0.85);
+  warnSign.position.set(-13.5, 5.4, -10.05);
+  room.add(warnSign);
+  const labSign = sign("🧪 KIMYO · FIZIKA · BIOLOGIYA", "#0c3547", "#d7ecf5", 5.2, 0.9);
+  labSign.position.set(-6, 6.6, -10.05);
+  room.add(labSign);
+
+  // 🔴 yong'in susishtirgichi
+  const extingu = new THREE.Group();
+  const extBody = new THREE.Mesh(new THREE.CylinderGeometry(0.19, 0.21, 0.95, 16), new THREE.MeshStandardMaterial({ color: "#c0392b", roughness: 0.35, metalness: 0.25 }));
+  extBody.position.y = 0.48;
+  const extTop = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.075, 0.28, 10), new THREE.MeshStandardMaterial({ color: "#222" }));
+  extTop.position.y = 1.08;
+  const extHose = new THREE.Mesh(new THREE.TorusGeometry(0.17, 0.035, 8, 16, Math.PI * 1.25), new THREE.MeshStandardMaterial({ color: "#1c1c1c" }));
+  extHose.position.set(0.16, 0.92, 0);
+  extingu.add(extBody, extTop, extHose);
+  extingu.position.set(-15.4, 0, -8.6);
+  extingu.rotation.y = 0.5;
+  extingu.traverse((o) => {
+    if ((o as THREE.Mesh).isMesh) (o as THREE.Mesh).castShadow = true;
+  });
+  room.add(extingu);
+
+  // ⛑ birinchi yordam to'plami
+  const aid = new THREE.Group();
+  const aidBox = new THREE.Mesh(new THREE.BoxGeometry(0.95, 0.7, 0.22), new THREE.MeshStandardMaterial({ color: "#f4f6f8", roughness: 0.5 }));
+  const crossV = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.42, 0.03), new THREE.MeshStandardMaterial({ color: "#d3352b" }));
+  crossV.position.z = 0.125;
+  const crossH = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.14, 0.03), new THREE.MeshStandardMaterial({ color: "#d3352b" }));
+  crossH.position.z = 0.125;
+  aid.add(aidBox, crossV, crossH);
+  aid.position.set(-15.2, 3.1, -10.02);
+  room.add(aid);
+
+  // 🧹 chiqindi idishi
+  const bin = new THREE.Mesh(new THREE.CylinderGeometry(0.38, 0.3, 0.95, 18), new THREE.MeshStandardMaterial({ color: "#39434d", roughness: 0.6 }));
+  bin.position.set(14.6, 0.48, -7.6);
+  bin.castShadow = true;
+  room.add(bin);
+
+  // 🗄 shkaflar (devor bo'ylab)
+  for (const cx of [-10.5, -6.2]) {
+    const cab = new THREE.Group();
+    const body = new THREE.Mesh(new THREE.BoxGeometry(3.7, 3.4, 1.35), new THREE.MeshStandardMaterial({ color: "#c9d3dc", roughness: 0.55 }));
+    body.position.y = 1.7;
+    body.castShadow = true;
+    body.receiveShadow = true;
+    const doorL = new THREE.Mesh(new THREE.BoxGeometry(1.72, 3.1, 0.07), new THREE.MeshStandardMaterial({ color: "#aebfcd", roughness: 0.45, metalness: 0.15 }));
+    doorL.position.set(-0.9, 1.7, 0.71);
+    const doorR = doorL.clone();
+    doorR.position.x = 0.9;
+    const glassFront = new THREE.Mesh(new THREE.BoxGeometry(3.2, 1.15, 0.05), new THREE.MeshStandardMaterial({ color: "#8fb6c9", transparent: true, opacity: 0.55, roughness: 0.12, metalness: 0.2 }));
+    glassFront.position.set(0, 2.55, 0.76);
+    for (const hx of [-0.25, 0.25]) {
+      const hd = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.5, 0.09), new THREE.MeshStandardMaterial({ color: "#6c7a88", metalness: 0.7, roughness: 0.3 }));
+      hd.position.set(hx, 1.6, 0.8);
+      cab.add(hd);
+    }
+    cab.add(body, doorL, doorR, glassFront);
+    cab.position.set(cx, 0, -9.1);
+    room.add(cab);
+  }
+
+  // 🚰 lavabo + kran (o'ng tomon)
+  const counter = new THREE.Mesh(new THREE.BoxGeometry(4.4, 1.05, 1.6), new THREE.MeshStandardMaterial({ color: "#b9c4cd", roughness: 0.5 }));
+  counter.position.set(12.2, 0.53, -8.2);
+  counter.castShadow = true;
+  counter.receiveShadow = true;
+  const basin = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.28, 1.0), new THREE.MeshStandardMaterial({ color: "#dde5eb", roughness: 0.25, metalness: 0.35 }));
+  basin.position.set(12.2, 1.06, -8.2);
+  const faucet = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.055, 0.85, 10), new THREE.MeshStandardMaterial({ color: "#c6d0d8", metalness: 0.85, roughness: 0.2 }));
+  faucet.position.set(12.2, 1.55, -8.85);
+  const spout = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.55, 10), faucet.material);
+  spout.rotation.x = Math.PI / 2;
+  spout.position.set(12.2, 1.92, -8.6);
+  room.add(counter, basin, faucet, spout);
+
+  return room;
+}
+
+export function createScene(canvas: HTMLCanvasElement, opts?: { camZ?: number; bg?: string; noRoom?: boolean }): SceneHandle {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.shadowMap.enabled = true;
@@ -57,6 +243,9 @@ export function createScene(canvas: HTMLCanvasElement, opts?: { camZ?: number; b
   const fill = new THREE.DirectionalLight(0xcfe8ff, 0.45);
   fill.position.set(-7, 5, -5);
   scene.add(fill);
+
+  // 🏫 laboratoriya xonasi (barcha lablar uchun)
+  if (!opts?.noRoom) scene.add(labRoom());
 
   const resize = () => {
     const w = canvas.clientWidth || 1;

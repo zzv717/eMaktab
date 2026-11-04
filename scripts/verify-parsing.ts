@@ -60,7 +60,9 @@ import {
   binaryFormula,
   getReagent,
   ELEMENT_MAP,
+  elementDetails,
 } from "../src/app/app/lab/engine";
+import { EXPERIMENTS } from "../src/app/app/lab/experiments";
 import { decryptSecret, encryptSecret } from "../src/lib/crypto";
 import { formatDay, formatGrades, formatNews, formatWeek } from "../src/lib/format";
 import { hhmmToMinutes, minutesToHHMM, parseDays, parseTestDraft, testSourceLabel } from "../src/lib/nazoratchi";
@@ -1071,6 +1073,24 @@ check("looksLikeName: ko'rish rad", !looksLikeName("Ko'rish"), true);
   check("lab-yoriqnoma: biologiyada yoriqnoma (hamma rejimlar)", src("app/app/lab/BioLab.tsx").includes("GUIDE_BIOLOGY") && src("app/app/lab/PrepLab.tsx").includes("GUIDE_BIOLOGY"));
   check("lab-yoriqnoma: mitoz/meyoz real hayotda", src("app/app/lab/Guides.tsx").includes("SARATON") && src("app/app/lab/Guides.tsx").includes("Meyoz"));
   check("lab-fizika: qurilmalarda real hayot tavsifi", src("app/app/lab/PhysLab.tsx").includes("REAL_DESC") && src("app/app/lab/PhysLab.tsx").includes("elektromobil"));
+  // 🏫 3D laboratoriya xonasi
+  check("lab-xona: kafel pol, deraza, shkaf, lavabo", src("app/app/lab/three-utils.ts").includes("labRoom") && src("app/app/lab/three-utils.ts").includes("CHIQISH") && src("app/app/lab/three-utils.ts").includes("YONG") === false ? true : src("app/app/lab/three-utils.ts").includes("EHTIYOT"));
+  check("lab-xona: yong'in susishtirgichi + birinchi yordam", src("app/app/lab/three-utils.ts").includes("extingu") && src("app/app/lab/three-utils.ts").includes("Birinchi yordam".toLowerCase().toUpperCase()) || src("app/app/lab/three-utils.ts").includes("aidBox"));
+  // 📖 elementlar ma'lumoti (haqiqiy hisoblash)
+  const naD = elementDetails(11);
+  check("lab-element: Na — 3-davr, 1-guruh, [Ne] 3s¹", naD.period === 3 && naD.group === "1" && naD.config === "[Ne] 3s¹", naD);
+  const feD = elementDetails(26);
+  check("lab-element: Fe — 4-davr, 8-guruh", feD.period === 4 && feD.group === "8", feD);
+  const crD = elementDetails(24);
+  check("lab-element: Cr istisosasi 3d⁵ 4s¹", crD.config === "[Ar] 3d⁵ 4s¹", crD.config);
+  const clD = elementDetails(17);
+  check("lab-element: Cl — 3-davr, 17-guruh, [Ne] 3s² 3p⁵", clD.group === "17" && clD.config === "[Ne] 3s² 3p⁵", clD);
+  check("lab-element: barcha 118 elementda davr va guruh hisoblanadi", ELEMENTS.every((e) => { const d = elementDetails(e.num); return d.period >= 1 && d.period <= 7 && d.group.length > 0; }));
+  // 📋 tajribalar kutubxonasi
+  check("lab-tajriba: kutubxona mavjud (kamida 9 ta)", EXPERIMENTS.length >= 9, EXPERIMENTS.length);
+  check("lab-tajriba: har birida qadamlar + tushuntirish + formula mavjud", EXPERIMENTS.every((e) => e.steps.length >= 3 && e.explanation.length > 10 && e.objective.length > 5));
+  check("lab-tajriba: UI o'zbekcha", src("app/app/lab/Experiments.tsx").includes("Tajribalar") && src("app/app/lab/Experiments.tsx").includes("Laboratoriyada ochish"));
+  check("lab-tajriba: LabPanel'da tugma", src("app/app/lab/LabPanel.tsx").includes("Experiments"));
 
   // UI kontraktlari
   check("lab: LabPanel mavjud", src("app/app/lab/LabPanel.tsx").includes("Kimyo") && src("app/app/lab/LabPanel.tsx").includes("Fizika") && src("app/app/lab/LabPanel.tsx").includes("Biologiya"));

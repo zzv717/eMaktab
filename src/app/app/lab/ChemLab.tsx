@@ -3,7 +3,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
-import { REAGENTS, REAGENT_MAP, simulate, simulateSteps, type VesselContent , getReagent, ELEMENTS, type PourEvent } from "./engine";
+import { REAGENTS, REAGENT_MAP, simulate, simulateSteps, type VesselContent , getReagent, ELEMENTS, elementDetails, type PourEvent } from "./engine";
 import { attachFrameHooks, attachPointer, benchTop, createScene, glassMaterial, liquidMaterial, type SceneHandle } from "./three-utils";
 import { CameraPad, PickCard, StageBox, labChip, type CatalogItem, type PickInfo } from "./StageBox";
 import { GUIDE_CHEMISTRY } from "./Guides";
@@ -668,13 +668,16 @@ export default function ChemLab() {
       return { id: `r:${r.id}`, icon: "⚗️", name: `${r.formula} — ${r.name}`, group: "Birikmalar", desc: r.info };
     }),
     // 🧬 Moddalar — 118 elementning HAMMASI (Mendeleyev jadvali, qidiruv bilan)
-    ...ELEMENTS.map((e) => ({
-      id: `e:${e.id}`,
-      icon: e.cat === "metall" ? "🪙" : e.cat === "nobil" ? "💨" : e.cat === "yarim" ? "💠" : "🧫",
-      name: `${e.symbol} — ${e.name}`,
-      group: "Moddalar (118 element)",
-      desc: `#${e.num} · ${e.info}`,
-    })),
+    ...ELEMENTS.map((e) => {
+      const d = elementDetails(e.num);
+      return {
+        id: `e:${e.id}`,
+        icon: e.cat === "metall" ? "🪙" : e.cat === "nobil" ? "💨" : e.cat === "yarim" ? "💠" : "🧫",
+        name: `${e.symbol} — ${e.name}`,
+        group: "Moddalar (118 element)",
+        desc: `#${e.num} · ${d.period}-davr, ${d.group}-guruh · ${d.config} · ${e.info}`,
+      };
+    }),
     { id: "t:stir", icon: "🥄", name: "Aralashtirish", group: "Asboblar" },
     { id: "p:gold", icon: "✨", name: "Loyiha: Oltin yomg'ir", group: "Tayyor loyihalar", desc: "Pb(NO₃)₂ + KI → sariq kristallar; isitib eritib ko'ring!" },
     { id: "p:clock", icon: "⏱", name: "Loyiha: Soat reaksiyasi", group: "Tayyor loyihalar", desc: "Tiosulfat + kislota — bir necha soniya KUTING, loyqalanadi!" },
