@@ -40,7 +40,18 @@ export const GUIDE_PHYSICS: GuideData = {
         "5️⃣ Lampochka yonsa — zanjir TO'G'RI! Yonmasa — joyida ochiq joy qolgan (qizil nuqta chiqadi).",
       ],
       realLife: "🏠 Uyingizdagi chiroq ham SHUNDAY ishlaydi: rozetka → sim → kalit → lampochka → hisoblagich → transformator. Elektrchi aynan shu 'zanjir yopiqmi?' degan savol bilan ishlaydi.",
-      tip: "🖐 Ikkala barmog'ingiz bilan ham: qurilmani sudrash = ko'chirish; terminalga bosish = sim ulash; bo'sh joydan surish = kamera.",
+      tip: "🖐 Ikkala barmog'ingiz bilan ham: qurilmani sudrash = ko'chirish (faqat stol yuzasida!); terminalga bosish = sim ulash; bo'sh joydan surish = kamera.",
+    },
+    {
+      icon: "🔗",
+      title: "ALOHIDA zanjirlar mustaqil ishlaydi!",
+      steps: [
+        "1️⃣ Batareya + isitgichni ulang → isitgich ISHLAYDI. Gurj ulanmagan bo'lsa — u sokin turadi, isitgichga XALAQIT bermaydi!",
+        "2️⃣ Ikkinchi batareya + gurjni ALOHIDA ulang → u ham ishlaydi. Har bir YOPILGAN zanjir o'zi mustaqil!",
+        "3️⃣ Faqat YOPILGAN zanjir ishlaydi: kalit ochiq bo'lsa — tok o'tmaydi.",
+        "4️⃣ ⚠️ QISQA TUTASHUV: batareya (+) va (−) ni bevosita ulasangiz — UCHQUN va qora tutun chiqadi, tok uziladi!",
+      ],
+      realLife: "🏠 Uyingizda ham har bir jihoz ALOHIDA zanjirda: chiroq yonsa, televizor uzilgan bo'lsa — bir-biriga ta'sir qilmaydi. Shuning uchun uzilgan jihoz qolganlarini o'chirmaydi!",
     },
     {
       icon: "🔋",
@@ -217,6 +228,19 @@ export const GUIDE_CHEMISTRY: GuideData = {
       realLife: "🍫 Shokolad quyqanda eriydi, muzlatgichda qotadi. Tuz qishda muzni eritadi (shu uchun yo'lga tuz sepiladi!).",
     },
     {
+      icon: "🧮",
+      title: "Titrlash (HCl + NaOH → NaCl + H₂O) — real laboratoriya!",
+      steps: [
+        "1️⃣ Ko'zoynak va qo'lqop kiying — xavfsizlik birinchi!",
+        "2️⃣ Kolbaga 10 ml HCl quying, 2 tomchi FENOLFTALEIN qo'shing (eritma RANGSIZ, pH < 8.2).",
+        "3️⃣ Buretkadan NaOH ni TOMCHILAB quying — har tomchi bilan pH KO'TARILADI.",
+        "4️⃣ pH = 8.2 ga yetganda eritma OCH PUSHTI bo'ladi 💗 — shu lahza NEYTRALLANISH nuqtasi!",
+        "5️⃣ ORTIQCHA quyilsa — TO'Q PUSHTI (Over-titrated) va tajriba buziladi ⚠️.",
+        "6️⃣ Natija tenglamasi: HCl + NaOH → NaCl + H₂O (oshxona tuzi + suv!).",
+      ],
+      realLife: "🏥 Shifoxona laboratoriyasida ham dorini aynan titrlash bilan o'lchashadi. Oshxonada sirka + osh sodasi — uy titrlashining o'zi! Sanoatda kimyo zavodlari har kuni minglab titrlash o'tkazadi.",
+    },
+    {
       icon: "⚠️",
       title: "Xavfsizlik (haqiqiy laboratoriya qoidalari)",
       steps: [
@@ -238,12 +262,12 @@ export const GUIDE_BIOLOGY: GuideData = {
       icon: "🔬",
       title: "Umumiy oqim (6 bosqich)",
       steps: [
-        "1️⃣ 🧫 Namuna tanlanadi → ish stoliga TUSHADI (pop-in animatsiya).",
-        "2️⃣ 🔪 Anjomni namunaga YAQIN keltiring → tugma chiqadi (masofadan ishlamaydi!) → Kesish/Surtish/Surish.",
-        "3️⃣ 💧 Bo'yovchini YAQIN keltiring → 'Bo'yash' — tomchi tushadi.",
-        "4️⃣ ✂️ Kesilgan namunani oling → 🧫 oynacha oldiga olib boring → 'Oynachaga qo'yish'.",
-        "5️⃣ Oynachani MIKROSKOP oldiga olib boring → 'Joylashtirish'.",
-        "6️⃣ MIKROSKOPKA BOSING → kamera ko'zga uchadi → '👁 Ko'rish' → natija sahna ichida!",
+        "1️⃣ 🧫 Namuna tanlanadi → ish stoliga TUSHADI. Stolda: oynachalar, pipetka, yod, pinset, skalpel, filtr qog'oz.",
+        "2️⃣ TO'G'RI anjomni yaqin keltiring: qattiq namuna → 🔪 skalpel (pinset bilan parda ajratiladi); qon → 🩸 surtma; yog'/suyuqlik/shilliq → 💧 PIPETKA.",
+        "3️⃣ 💧 Pipetka 1 tomchi SUV tomizadi → namuna yoyiladi → 🩣 1 tomchi YOD (yadrolar ko'rinadi!).",
+        "4️⃣ 🪟 Yopqich shisha 45° burchakda SEKIN tushiriladi (havo pufakchasi bo'lmasin!).",
+        "5️⃣ 🔬 MIKROSKOP: ob'yektivlar 4×/10×/40×/100×, Makrovint/Mikrovint (fokus), Diyafragma (yorug'lik), stolcha X/Y.",
+        "6️⃣ ×100 da '🧬 Hujayra ichiga kirish' — kamera hujayra ichiga o'tadi: yadro, mitoxondriya, xloroplastlar!",
       ],
       realLife: "🏥 Shifoxona laboratoriyaning budkasida bemordan qon olinadi, namuna tayyorlanadi, bo'yovchi bilan bo'yaladi va mikroskopda ko'riladi — DIAGNOZ aynan shu bosqichlarda qo'yiladi!",
     },

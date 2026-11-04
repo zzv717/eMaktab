@@ -39,6 +39,7 @@ export default function ChemLab() {
     vessels: Map<string, THREE.Group>;
     liquids: Map<string, THREE.Mesh>;
     bubbles: Map<string, THREE.Mesh[]>;
+    smokes: Map<string, THREE.Mesh[]>;
     precips: Map<string, THREE.Group>;
     flames: Map<string, THREE.Group>;
     bottles: Map<string, THREE.Group>;
@@ -89,6 +90,7 @@ export default function ChemLab() {
       vessels: new Map<string, THREE.Group>(),
       liquids: new Map<string, THREE.Mesh>(),
       bubbles: new Map<string, THREE.Mesh[]>(),
+      smokes: new Map<string, THREE.Mesh[]>(),
       precips: new Map<string, THREE.Group>(),
       flames: new Map<string, THREE.Group>(),
       bottles: new Map<string, THREE.Group>(),
@@ -235,6 +237,14 @@ export default function ChemLab() {
         g.add(b);
         bubbles.push(b);
       }
+      // 🌫 bug'/tutun — issiq reaksiya va qaynashda ko'tariladi (alpha fade)
+      const smokes: THREE.Mesh[] = [];
+      for (let i = 0; i < 7; i++) {
+        const sm = new THREE.Mesh(new THREE.SphereGeometry(0.16 + Math.random() * 0.14, 10, 8), new THREE.MeshStandardMaterial({ color: "#dfe6ee", transparent: true, opacity: 0, roughness: 1, depthWrite: false }));
+        sm.visible = false;
+        g.add(sm);
+        smokes.push(sm);
+      }
       // spirt lampasi
       const lamp = new THREE.Group();
       const lampBody = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.44, 0.58, 18), new THREE.MeshStandardMaterial({ color: "#8b5e34", roughness: 0.5 }));
@@ -252,6 +262,7 @@ export default function ChemLab() {
       maps.vessels.set(v.id, g);
       maps.liquids.set(v.id, liq);
       maps.bubbles.set(v.id, bubbles);
+      maps.smokes.set(v.id, smokes);
       maps.precips.set(v.id, precip);
       maps.flames.set(v.id, lamp);
       g.userData = { kind: "vessel", id: v.id, label: `${VESSEL_LABEL[v.type]}`, icon: "🧪", desc: "Bosib reaktiv quying" };
@@ -274,6 +285,7 @@ export default function ChemLab() {
           maps.vessels.delete(id);
           maps.liquids.delete(id);
           maps.bubbles.delete(id);
+          maps.smokes.delete(id);
           maps.precips.delete(id);
           maps.flames.delete(id);
         }
@@ -370,6 +382,20 @@ export default function ChemLab() {
             b.visible = hasGas;
             if (!hasGas) return;
             b.position.set(Math.sin(i * 2.1 + t) * 0.34, ((t * (0.85 + (i % 4) * 0.2) + i * 0.31) % 2.2) + 0.3, Math.cos(i * 1.7 + t) * 0.34);
+          });
+          // 🌫 bug' — harorat yuqori yoki gaz ajralganda ko'tariladi va yo'qoladi
+          const smokes = maps.smokes.get(v.id) ?? [];
+          const hot = res.temperature > 55 || (Boolean(res.gas) && res.temperature > 32);
+          smokes.forEach((sm, i) => {
+            sm.visible = hot;
+            if (!hot) {
+              (sm.material as THREE.MeshStandardMaterial).opacity = 0;
+              return;
+            }
+            const phase = ((t * (0.32 + (i % 3) * 0.1) + i * 0.37) % 1.6);
+            sm.position.set(Math.sin(i * 2.4 + t * 0.8) * 0.3, 3.6 + phase * 1.9, Math.cos(i * 1.9 + t * 0.6) * 0.3);
+            sm.scale.setScalar(0.7 + phase * 1.25);
+            (sm.material as THREE.MeshStandardMaterial).opacity = Math.max(0, 0.4 * (1 - phase / 1.6));
           });
           const precip = maps.precips.get(v.id);
           if (precip) {
