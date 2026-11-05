@@ -1087,8 +1087,14 @@ check("looksLikeName: ko'rish rad", !looksLikeName("Ko'rish"), true);
   check("lab-element: Cl — 3-davr, 17-guruh, [Ne] 3s² 3p⁵", clD.group === "17" && clD.config === "[Ne] 3s² 3p⁵", clD);
   check("lab-element: barcha 118 elementda davr va guruh hisoblanadi", ELEMENTS.every((e) => { const d = elementDetails(e.num); return d.period >= 1 && d.period <= 7 && d.group.length > 0; }));
   // 📋 tajribalar kutubxonasi
-  check("lab-tajriba: kutubxona mavjud (kamida 9 ta)", EXPERIMENTS.length >= 9, EXPERIMENTS.length);
-  check("lab-tajriba: har birida qadamlar + tushuntirish + formula mavjud", EXPERIMENTS.every((e) => e.steps.length >= 3 && e.explanation.length > 10 && e.objective.length > 5));
+  check("lab-tajriba: 60+ tajriba (20+20+20)", EXPERIMENTS.length >= 60, EXPERIMENTS.length);
+  check("lab-tajriba: har fanda 20+ tajriba", ["Kimyo", "Fizika", "Biologiya"].every((sub) => EXPERIMENTS.filter((e) => e.subject === sub).length >= 20), ["Kimyo", "Fizika", "Biologiya"].map((sub) => `${sub}:${EXPERIMENTS.filter((e) => e.subject === sub).length}`).join(" "));
+  check("lab-tajriba: har birida qadamlar + tushuntirish + savollar", EXPERIMENTS.every((e) => e.steps.length >= 3 && e.explanation.length > 10 && e.objective.length > 5 && e.questions.length >= 2));
+  check("lab-tajriba: id lar noyob (takrorlanish yo'q)", new Set(EXPERIMENTS.map((e) => e.id)).size === EXPERIMENTS.length);
+  check("lab-tajriba: taraqqiyot localStorage orqali", src("app/app/lab/experiments.ts").includes("localStorage") && src("app/app/lab/Experiments.tsx").includes("bajardim"));
+  // 🪑 ish stoli to'liq model (oyoqlar bilan, yassi quti emas!)
+  check("lab-xona: ish stoli OYOQLARI bilan (to'liq model)", src("app/app/lab/three-utils.ts").includes("legH") && src("app/app/lab/three-utils.ts").includes("shelf"));
+  check("lab-kimyo: idishlarda o'lchov shkalasi (ml)", src("app/app/lab/ChemLab.tsx").includes("scaleTexture") && src("app/app/lab/ChemLab.tsx").includes("ml"));
   check("lab-tajriba: UI o'zbekcha", src("app/app/lab/Experiments.tsx").includes("Tajribalar") && src("app/app/lab/Experiments.tsx").includes("Laboratoriyada ochish"));
   check("lab-tajriba: LabPanel'da tugma", src("app/app/lab/LabPanel.tsx").includes("Experiments"));
 

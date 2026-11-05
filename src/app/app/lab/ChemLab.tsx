@@ -194,6 +194,33 @@ export default function ChemLab() {
     maps.bottlesRoot = bottlesRoot;
 
     // --- Idish yaratish
+    // 📏 O'lchov shkalasi (ml belgilari) — haqiqiy idishlardagi kabi!
+    const scaleTexture = (w: number, h: number, marks: number, label: string) => {
+      const cv = document.createElement("canvas");
+      cv.width = w;
+      cv.height = h;
+      const ctx = cv.getContext("2d")!;
+      ctx.clearRect(0, 0, w, h);
+      ctx.strokeStyle = "rgba(40,60,80,0.85)";
+      ctx.fillStyle = "rgba(30,50,70,0.9)";
+      ctx.font = "bold 26px sans-serif";
+      ctx.textAlign = "right";
+      for (let i = 1; i <= marks; i++) {
+        const y = h - (i / (marks + 0.6)) * h;
+        const long = i % 2 === 0;
+        ctx.lineWidth = long ? 3.2 : 2;
+        ctx.beginPath();
+        ctx.moveTo(w - 8, y);
+        ctx.lineTo(long ? w - 62 : w - 36, y);
+        ctx.stroke();
+        if (long) ctx.fillText(`${(i * 10) / (marks > 8 ? 2 : 1)}`, w - 68, y + 8);
+      }
+      ctx.font = "bold 30px sans-serif";
+      ctx.fillText(label, w - 12, 36);
+      const t = new THREE.CanvasTexture(cv);
+      t.colorSpace = THREE.SRGBColorSpace;
+      return t;
+    };
     const buildVessel = (v: VesselObj) => {
       const g = new THREE.Group();
       const glass = glassMaterial();
@@ -221,6 +248,18 @@ export default function ChemLab() {
         rim.position.y = 2.4;
         g.add(cup, bottom, rim);
       }
+      // 📏 shkala qatlami (idish yuzasiga yopishtirilgan)
+      const scaleMat = new THREE.MeshBasicMaterial({
+        map: scaleTexture(160, 512, v.type === "probirka" ? 6 : v.type === "kolba" ? 8 : 10, v.type === "probirka" ? "ml" : v.type === "kolba" ? "100 ml" : "250 ml"),
+        transparent: true,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      });
+      const scaleR = v.type === "probirka" ? 0.565 : v.type === "kolba" ? 1.28 : 1.36;
+      const scaleH = v.type === "probirka" ? 3.0 : v.type === "kolba" ? 2.7 : 2.15;
+      const scaleBand = new THREE.Mesh(new THREE.CylinderGeometry(scaleR, scaleR, scaleH, 40, 1, true, -0.85, 1.7), scaleMat);
+      scaleBand.position.y = (v.type === "kolba" ? 1.62 : v.type === "probirka" ? 1.75 : 1.28);
+      g.add(scaleBand);
       const maxR = v.type === "probirka" ? 0.5 : v.type === "kolba" ? 1.12 : 1.2;
       const maxH = v.type === "probirka" ? 3.1 : v.type === "kolba" ? 3.0 : 2.12;
       const liq = new THREE.Mesh(new THREE.CylinderGeometry(maxR * 0.96, maxR * 0.96, maxH, 36), liquidMaterial("#e9f5ff"));
