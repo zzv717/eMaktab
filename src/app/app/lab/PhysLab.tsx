@@ -7,6 +7,8 @@ import { applyWires, lensPhysics, solveCircuit, springPhysics, type CircuitComp,
 import { attachFrameHooks, attachPointer, benchTop, createScene, type SceneHandle } from "./three-utils";
 import { CameraPad, PickCard, StageBox, labChip, type CatalogItem, type PickInfo } from "./StageBox";
 import { GuideButton, GUIDE_PHYSICS } from "./Guides";
+import { labAudio } from "./audio";
+import { HoverTip } from "./StageBox";
 
 type Mode = "circuit" | "spring" | "optics";
 
@@ -97,6 +99,7 @@ function CircuitLab() {
   const solved = power ? powered : { ...powered, brightness: {}, motorSpeed: {}, buzzerOn: {}, galvNeedle: {}, heatGlow: {}, totalCurrent: 0 };
   const solvedRef = useRef(solved);
   solvedRef.current = solved;
+  const [hoverName, setHoverName] = useState<string | null>(null);
   // ⚡ VFX: qisqa tutashuv uchqunlari + qora tutun
   const fxRef = useRef<{
     sparks: THREE.Points;
@@ -149,6 +152,7 @@ function CircuitLab() {
     // bosish/siljitish (qo'l bilan)
     const detachPointer = attachPointer(handle, canvas, {
       flat: true, // 🧱 buyumlar faqat ish stol yuzasida harakatlanadi
+      onHover: (root) => setHoverName((root?.userData?.label as string | undefined) ?? null),
       getRoots: () => compGroup.children,
       moveRef,
       onPick: (root, hit) => {
@@ -176,6 +180,7 @@ function CircuitLab() {
             );
             const c1 = compRef.current.find((c) => c.id === prev.comp);
             const c2 = compRef.current.find((c) => c.id === compId);
+            labAudio.play("connect");
             setMsg(`⚡ Sim ulandi: ${c1 ? ADD_LABEL[c1.type] : prev.comp}(${prev.term.toUpperCase()}) → ${c2 ? ADD_LABEL[c2.type] : compId}(${term.toUpperCase()})`);
             return null;
           });
@@ -508,6 +513,7 @@ function CircuitLab() {
     >
       <div className="relative">
         <canvas ref={canvasRef} className="lab-canvas h-[300px] w-full rounded-2xl bg-slate-100" />
+        <HoverTip text={hoverName} />
         <CameraPad handleRef={handleRef} />
         <PickCard
           info={pick?.info ?? null}

@@ -4,6 +4,7 @@
 import { useMemo, useState, type ReactNode, type RefObject } from "react";
 import { orbitBy, translateBy, type SceneHandle } from "./three-utils";
 import { GuideButton, type GuideData } from "./Guides";
+import { labAudio } from "./audio";
 
 export interface CatalogItem {
   id: string;
@@ -17,6 +18,18 @@ export interface PickInfo {
   icon: string;
   label: string;
   desc?: string;
+  /** 🎯 kontekstli amallar — faqat shu obyektga tegishli tugmalar chiqadi */
+  actions?: Array<{ label: string; run: () => void }>;
+}
+
+/** 🖱 hover — ustiga kelganda nom chiqadigan chip */
+export function HoverTip({ text }: { text: string | null }) {
+  if (!text) return null;
+  return (
+    <div className="pointer-events-none absolute left-1/2 top-2 z-30 -translate-x-1/2 rounded-full bg-slate-900/90 px-3 py-1 text-xs font-semibold text-white shadow-lg">
+      {text}
+    </div>
+  );
 }
 
 export function StageBox({
@@ -38,6 +51,7 @@ export function StageBox({
   const [fs, setFs] = useState(false);
   const [cat, setCat] = useState(false);
   const [q, setQ] = useState("");
+  const [, setVolTick] = useState(0);
 
   const groups = useMemo(() => {
     const needle = q.trim().toLowerCase();
@@ -56,6 +70,20 @@ export function StageBox({
     <div className="flex items-center justify-between gap-2">
       <p className="min-w-0 truncate text-sm font-semibold text-slate-900">{title}</p>
       <div className="flex shrink-0 gap-1.5">
+        <button
+          onClick={() => {
+            const steps = [0, 0.35, 0.65, 1];
+            const cur = labAudio.volume;
+            const next = steps[(steps.findIndex((v) => Math.abs(v - cur) < 0.05) + 1) % steps.length];
+            labAudio.setVolume(next);
+            labAudio.play("click");
+            setVolTick((t) => t + 1);
+          }}
+          className="rounded-full bg-slate-100 px-3 py-1.5 text-sm font-bold text-slate-700 active:scale-95"
+          title="Ovoz darajasi"
+        >
+          {labAudio.volume <= 0 ? "🔇" : labAudio.volume < 0.5 ? "🔉" : "🔊"}
+        </button>
         {guide && <GuideButton guide={guide} />}
         <button
           onClick={() => setCat((c) => !c)}
@@ -161,6 +189,19 @@ export function PickCard({
         <p className="truncate text-sm font-semibold text-slate-900">{info.label}</p>
         {info.desc && <p className="truncate text-[11px] text-slate-500">{info.desc}</p>}
       </div>
+      {info.actions && info.actions.length > 0 && (
+        <div className="flex max-w-[45%] shrink-0 gap-1 overflow-x-auto">
+          {info.actions.map((a2) => (
+            <button
+              key={a2.label}
+              onClick={a2.run}
+              className="shrink-0 rounded-full bg-teal-50 px-2.5 py-1.5 text-xs font-bold text-teal-700 active:scale-95"
+            >
+              {a2.label}
+            </button>
+          ))}
+        </div>
+      )}
       {extra}
       <button
         onClick={onMove}

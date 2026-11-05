@@ -9,6 +9,8 @@ import { attachFrameHooks, attachPointer, benchTop, createScene, glassMaterial, 
 import { CameraPad, PickCard, StageBox, labChip, type CatalogItem, type PickInfo } from "./StageBox";
 import { SPECIMENS, type Specimen } from "./engine";
 import { GUIDE_BIOLOGY } from "./Guides";
+import { labAudio } from "./audio";
+import { HoverTip } from "./StageBox";
 import { drawSpecimen } from "./SpecimenView";
 
 type PrepMode = "cut" | "smear" | "scrape" | "pipette";
@@ -61,6 +63,8 @@ export default function PrepLab() {
   const viewPlaneRef = useRef<THREE.Mesh | null>(null);
   const stateRef = useRef({ stage: 0, mode: "cut" as PrepMode });
   // yaqinlik holati (frame hook → React, faqat O'ZGARGANDA)
+  const [hoverName, setHoverName] = useState<string | null>(null);
+  const [notes, setNotes] = useState("");
   const [near, setNear] = useState({ knife: false, stain: false, slideSpec: false, slideMicro: false, atEye: false });
   const nearRef = useRef({ knife: false, stain: false, slideSpec: false, slideMicro: false });
   // ko'rish rejimi sozlamalari
@@ -191,6 +195,15 @@ export default function PrepLab() {
       map.needsUpdate = true;
     }
   }, [specimen, zoom, focus, light, viewing, cellMode, pan]);
+
+  // jurnalni yuklash
+  useEffect(() => {
+    try {
+      setNotes(localStorage.getItem("emaktab-prep-notes") ?? "");
+    } catch {
+      /* xotira yopiq */
+    }
+  }, []);
 
   // ---------- 3D sahna ----------
   useEffect(() => {
@@ -580,6 +593,7 @@ export default function PrepLab() {
 
     // ====== bosish / siljitish ======
     const detachPointer = attachPointer(handle, canvas, {
+      onHover: (root) => setHoverName((root?.userData?.label as string | undefined) ?? null),
       getRoots: () => [...toolsGroup.children, specGroup, micro, ...(sliceRef.current ? [sliceRef.current] : []), ...(sampleRef.current ? [sampleRef.current] : [])],
       moveRef,
       onPick: (root) => {
@@ -828,6 +842,7 @@ export default function PrepLab() {
   // ---------- harakatlar (tugmalar faqat yaqinlikda!) ----------
   const doAction = () => {
     if (!specimen || stage !== 1) return;
+    labAudio.play("pickup");
     cutAnimRef.current = { t0: performance.now() / 1000, mode: prepMode(specimen) };
     setStage(2);
     push(
@@ -840,18 +855,21 @@ export default function PrepLab() {
   };
   const doStain = () => {
     if (!specimen || stage !== 2) return;
+    labAudio.play("pour");
     stainAnimRef.current = { t0: performance.now() / 1000 };
     setStage(3);
     push(`💧 Bo'yovchi tomchisi tushdi (${specimen.stain}) — hujayralar yorqinroq ko'rina boshladi`);
   };
   const doToSlide = () => {
     if (!specimen || stage !== 3) return;
+    labAudio.play("place");
     transferRef.current = { t0: performance.now() / 1000, kind: "toSlide" };
     setStage(4);
     push("💧 1 tomchi suv tushdi → 🧫 namuna yoyildi → 🩣 1 tomchi YOD (yadrolar ko'rinadi) → 🪟 yopqich shisha 45° bilan tushdi (havo pufakchasi YO'Q!)");
   };
   const doToMicro = () => {
     if (stage !== 4) return;
+    labAudio.play("place");
     transferRef.current = { t0: performance.now() / 1000, kind: "toMicro" };
     setStage(5);
     push("🔬 Oynacha mikroskop stoliga joylashtirildi — endi MIKROSKOPKA BOSING");
@@ -864,6 +882,7 @@ export default function PrepLab() {
       push("🎥 Kamera mikroskop ko'zi oldiga to'g'irlandi — yana '👁 Ko'rish' ni bosing");
       return;
     }
+    labAudio.play("success");
     setViewing(true);
     setStage(6);
     const plane = viewPlaneRef.current;
@@ -939,6 +958,7 @@ export default function PrepLab() {
     <StageBox title="🧫 Namuna tayyorlash va mikroskop (simulyator)" catalog={catalog} onAdd={handleAdd} guide={GUIDE_BIOLOGY}>
       <div className="relative">
         <canvas ref={canvasRef} className="lab-canvas h-[340px] w-full rounded-2xl bg-slate-100" />
+        <HoverTip text={hoverName} />
         <CameraPad handleRef={handleRef} />
         <PickCard
           info={pickInfo}
@@ -1055,6 +1075,27 @@ export default function PrepLab() {
           ))}
         </div>
       )}
+
+      {/* 📝 KUZATUVLAR JURNALI — o'quvchi yozadi, brauzer xotirasida saqlanadi */}
+      <div className="mt-2 rounded-2xl bg-sky-50 p-2.5">
+        <p className="text-[11px] font-bold uppercase tracking-wider text-sky-700">📝 Kuzatuvlar jurnali</p>
+        <p className="mt-0.5 text-[10px] text-sky-600">
+          Avtomatik: {specimen ? specimen.name : "namuna tanlanmagan"} · {objective}× · fokus {(focus * 100).toFixed(0)}% · yorug'lik {(light * 100).toFixed(0)}%
+        </p>
+        <textarea
+          value={notes}
+          onChange={(e) => {
+            setNotes(e.target.value);
+            try {
+              localStorage.setItem("emaktab-prep-notes", e.target.value);
+            } catch {
+              /* xotira yopiq */
+            }
+          }}
+          placeholder="O'z kuzatuvlaringizni yozing (masalan: 'Yadralar to'q ko'rinadi, hujayralar to'rtburchak')..."
+          className="mt-1.5 h-16 w-full resize-none rounded-xl border border-sky-200 bg-white p-2 text-xs text-slate-700 outline-none focus:border-sky-400"
+        />
+      </div>
     </StageBox>
   );
 }

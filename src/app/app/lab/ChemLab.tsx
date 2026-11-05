@@ -7,6 +7,8 @@ import { REAGENTS, REAGENT_MAP, simulate, simulateSteps, type VesselContent , ge
 import { attachFrameHooks, attachPointer, benchTop, createScene, glassMaterial, liquidMaterial, type SceneHandle } from "./three-utils";
 import { CameraPad, PickCard, StageBox, labChip, type CatalogItem, type PickInfo } from "./StageBox";
 import { GUIDE_CHEMISTRY } from "./Guides";
+import { labAudio } from "./audio";
+import { HoverTip } from "./StageBox";
 
 type VesselType = "probirka" | "kolba" | "stakan";
 
@@ -53,6 +55,7 @@ export default function ChemLab() {
 
   const [vessels, setVessels] = useState<VesselObj[]>([newVessel("stakan", 1)]);
   const [selVessel, setSelVessel] = useState("v1");
+  const [hoverName, setHoverName] = useState<string | null>(null);
   const [selReagent, setSelReagent] = useState("hcl");
   const [pourFrom, setPourFrom] = useState<string | null>(null);
   const [journal, setJournal] = useState<string[]>([]);
@@ -378,22 +381,46 @@ export default function ChemLab() {
     const detachPointer = attachPointer(handle, canvas, {
       getRoots: () => [...maps.vessels.values(), ...(maps.bottlesRoot?.children ?? [])],
       moveRef,
+      onHover: (root) => setHoverName((root?.userData?.label as string | undefined) ?? null),
       onPick: (root) => {
         const ud = root.userData as { kind: string; id: string; label: string; icon: string; desc?: string };
         if (ud.kind === "bottle") {
           setSelReagent(ud.id);
+          labAudio.play("pickup");
           setPick({ info: { icon: ud.icon, label: ud.label, desc: ud.desc }, kind: "bottle", id: ud.id });
         } else if (ud.kind === "vessel") {
           window.dispatchEvent(new CustomEvent("chem-vessel-tap", { detail: ud.id }));
+          labAudio.play("glass");
           const v = vesselsRef.current.find((x) => x.id === ud.id);
+          const vid = ud.id;
           setPick({
-            info: { icon: "🧪", label: ud.label, desc: v && v.contents.length ? `${simulate(v.contents, v.temp).umumiyMl} ml · ${v.temp}°C` : "Bo'sh idish — reaktiv tanlab bosing" },
+            info: {
+              icon: "🧪",
+              label: ud.label,
+              desc: v && v.contents.length ? `${simulate(v.contents, v.temp).umumiyMl} ml · ${v.temp}°C` : "Bo'sh idish — reaktiv tanlab bosing",
+              // 🎯 faqat SHU obyektga tegishli amallar
+              actions: [
+                { label: "🔥 Isitish", run: () => { setVessels((vs) => vs.map((x) => (x.id === vid ? { ...x, heatOn: !x.heatOn } : x))); labAudio.play("switch"); pushLog(`🔥 Spirt lampasi ${vesselsRef.current.find((x) => x.id === vid)?.heatOn ? "o'chirildi" : "yoqildi"}`); } },
+                { label: "🧹 Tozalash", run: () => { setVessels((vs) => vs.map((x) => (x.id === vid ? { ...x, contents: [], heatOn: false } : x))); labAudio.play("place"); pushLog("🧹 Idish tozalandi"); } },
+              ],
+            },
             kind: "vessel",
             id: ud.id,
           });
         } else if (ud.kind === "lamp") {
           window.dispatchEvent(new CustomEvent("chem-lamp-tap", { detail: ud.id }));
-          setPick({ info: { icon: "🔥", label: "Spirt lampasi", desc: "Isitishni yoqadi/o'chiradi" }, kind: "lamp", id: ud.id });
+          labAudio.play("switch");
+          const lid = ud.id;
+          setPick({
+            info: {
+              icon: "🔥",
+              label: "Spirt lampasi",
+              desc: "Isitishni yoqadi/o'chiradi",
+              actions: [{ label: "🔥 Yoqish/o'chirish", run: () => { window.dispatchEvent(new CustomEvent("chem-lamp-tap", { detail: lid })); labAudio.play("switch"); } }],
+            },
+            kind: "lamp",
+            id: ud.id,
+          });
         }
       },
     });
@@ -628,6 +655,7 @@ export default function ChemLab() {
   const pushLog = (line: string) => setJournal((j) => [line, ...j].slice(0, 40));
 
   const doPour = (vesselId: string, reagentId: string) => {
+    labAudio.play("pour");
     if (busy) return;
     setBusy(true);
     setSelVessel(vesselId);
@@ -675,6 +703,7 @@ export default function ChemLab() {
 
   const stirIt = () => {
     if (!sel) return;
+    labAudio.play("mix");
     animRef.current.stir = { until: performance.now() + 1500, vesselId: sel.id };
     // 🥄 Aralashtirish — reaksiya natijasini (tenglama) ham ko'rsatadi
     const res = simulate(sel.contents, sel.temp);
@@ -744,7 +773,10 @@ export default function ChemLab() {
       pushLog(`➕ Stolga qo'shildi: ${r?.formula ?? id} — shishani ushlab, idishga YAQIN olib boring!`);
     } else if (id === "t:stir") stirIt();
     else if (id === "t:clear") {
-      if (sel) setVessels((vs) => vs.map((v) => (v.id === sel.id ? { ...v, contents: [], heatOn: false } : v)));
+      if (sel) {
+        setVessels((vs) => vs.map((v) => (v.id === sel.id ? { ...v, contents: [], heatOn: false } : v)));
+        labAudio.play("place");
+      }
     } else if (id === "t:reset") {
       setVessels([newVessel("stakan", 1)]);
       setSelVessel("v1");
@@ -808,6 +840,7 @@ export default function ChemLab() {
     >
       <div className="relative">
         <canvas ref={canvasRef} className="lab-canvas h-[320px] w-full rounded-2xl bg-slate-100" />
+        <HoverTip text={hoverName} />
         <CameraPad handleRef={handleRef} />
         <PickCard
           info={pick?.info ?? null}
@@ -832,6 +865,21 @@ export default function ChemLab() {
       </div>
 
       {moving && <p className="rounded-2xl bg-amber-50 p-2.5 text-center text-sm text-amber-700">🔀 Siljitish rejimi — obyektni <b>sudrab</b> ish stolining istalgan joyiga qo'ying</p>}
+      {/* 📊 JONLI NATIJALAR — tanlangan idish (har amaldan keyin yangilanadi) */}
+      {sel && (() => {
+        const res = simulate(sel.contents, sel.temp);
+        return (
+          <div className="mt-2 flex flex-wrap items-center justify-center gap-1.5 rounded-2xl bg-slate-900 p-2 text-[11px] text-slate-200">
+            <span className="font-bold text-teal-300">📊 Natijalar:</span>
+            <span>💧 {res.umumiyMl} ml</span>
+            <span>🌡 {res.temperature}°C</span>
+            <span>⚗️ pH {res.ph === null ? "—" : res.ph.toFixed(1)}</span>
+            <span>⚡ {res.hodisalar.length} ta hodisa</span>
+            {res.gas && <span className="text-emerald-300">🫧 {res.gas.name}</span>}
+            {res.precipitate && <span className="text-amber-300">🟤 {res.precipitate.name}</span>}
+          </div>
+        );
+      })()}
       {nearPour && (
         <button
           onClick={() => {

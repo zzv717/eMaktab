@@ -1095,6 +1095,15 @@ check("looksLikeName: ko'rish rad", !looksLikeName("Ko'rish"), true);
   // 🪑 ish stoli to'liq model (oyoqlar bilan, yassi quti emas!)
   check("lab-xona: ish stoli OYOQLARI bilan (to'liq model)", src("app/app/lab/three-utils.ts").includes("legH") && src("app/app/lab/three-utils.ts").includes("shelf"));
   check("lab-kimyo: idishlarda o'lchov shkalasi (ml)", src("app/app/lab/ChemLab.tsx").includes("scaleTexture") && src("app/app/lab/ChemLab.tsx").includes("ml"));
+  // 🔊 ovoz tizimi + 🖱 hover + kontekstli amallar + ⌨️ klaviatura (v13)
+  check("lab-ovoz: protsedural WebAudio tizimi", src("app/app/lab/audio.ts").includes("LabAudio") && src("app/app/lab/audio.ts").includes("AudioContext") && ["pour", "mix", "connect", "switch", "success", "warn", "glass"].every((k) => src("app/app/lab/audio.ts").includes(k)));
+  check("lab-ovoz: barcha lablar ovoz ishlatadi", ["ChemLab.tsx", "PhysLab.tsx", "PrepLab.tsx", "StageBox.tsx"].every((f) => src(`app/app/lab/${f}`).includes("labAudio")));
+  check("lab-hover: obyekt ustiga kelganda yoritish + nom", src("app/app/lab/three-utils.ts").includes("applyHover") && src("app/app/lab/three-utils.ts").includes("onHover") && src("app/app/lab/StageBox.tsx").includes("HoverTip"));
+  check("lab-hover: uchala labda hover chip", ["ChemLab.tsx", "PhysLab.tsx", "PrepLab.tsx"].every((f) => src(`app/app/lab/${f}`).includes("HoverTip")));
+  check("lab-kontekst: faqat tegishli amallar (actions)", src("app/app/lab/StageBox.tsx").includes("actions") && src("app/app/lab/ChemLab.tsx").includes("Isitish") && src("app/app/lab/ChemLab.tsx").includes("Tozalash"));
+  check("lab-klaviatura: WASD + Shift + Esc", src("app/app/lab/three-utils.ts").includes("KeyW") && src("app/app/lab/three-utils.ts").includes("ShiftLeft") && src("app/app/lab/three-utils.ts").includes("Escape"));
+  check("lab-bio: kuzatuvlar jurnali (localStorage)", src("app/app/lab/PrepLab.tsx").includes("Kuzatuvlar jurnali") && src("app/app/lab/PrepLab.tsx").includes("emaktab-prep-notes"));
+  check("lab-kimyo: jonli natijalar paneli (pH/T/ml)", src("app/app/lab/ChemLab.tsx").includes("Natijalar") && src("app/app/lab/ChemLab.tsx").includes("pH"));
   check("lab-tajriba: UI o'zbekcha", src("app/app/lab/Experiments.tsx").includes("Tajribalar") && src("app/app/lab/Experiments.tsx").includes("Laboratoriyada ochish"));
   check("lab-tajriba: LabPanel'da tugma", src("app/app/lab/LabPanel.tsx").includes("Experiments"));
 
