@@ -258,15 +258,46 @@ export function createScene(canvas: HTMLCanvasElement, opts?: { camZ?: number; b
   const ro = new ResizeObserver(resize);
   ro.observe(canvas);
 
+  // ⌨️ KLAVIATURA: WASD/стрелka = yurish, Shift = tez
+  const keys = new Set<string>();
+  const onKeyDown = (e: KeyboardEvent) => {
+    const tag = (e.target as HTMLElement | null)?.tagName;
+    if (tag === "INPUT" || tag === "TEXTAREA") return;
+    keys.add(e.code);
+  };
+  const onKeyUp = (e: KeyboardEvent) => keys.delete(e.code);
+  window.addEventListener("keydown", onKeyDown);
+  window.addEventListener("keyup", onKeyUp);
+
   let raf = 0;
   const tick = () => {
     raf = requestAnimationFrame(tick);
+    if (keys.size) {
+      const speed = keys.has("ShiftLeft") || keys.has("ShiftRight") ? 0.16 : 0.065;
+      const fwd = new THREE.Vector3();
+      camera.getWorldDirection(fwd);
+      fwd.y = 0;
+      fwd.normalize();
+      const right = new THREE.Vector3().crossVectors(fwd, new THREE.Vector3(0, 1, 0)).normalize();
+      const step = new THREE.Vector3();
+      if (keys.has("KeyW") || keys.has("ArrowUp")) step.add(fwd);
+      if (keys.has("KeyS") || keys.has("ArrowDown")) step.sub(fwd);
+      if (keys.has("KeyA") || keys.has("ArrowLeft")) step.sub(right);
+      if (keys.has("KeyD") || keys.has("ArrowRight")) step.add(right);
+      if (step.lengthSq() > 0) {
+        step.normalize().multiplyScalar(speed);
+        camera.position.add(step);
+        controls.target.add(step);
+      }
+    }
     controls.update();
     renderer.render(scene, camera);
   };
   tick();
 
   const dispose = () => {
+    window.removeEventListener("keydown", onKeyDown);
+    window.removeEventListener("keyup", onKeyUp);
     cancelAnimationFrame(raf);
     ro.disconnect();
     controls.dispose();
@@ -341,6 +372,8 @@ export interface PointerOpts {
   onMoveEnd?: (root: THREE.Object3D) => void;
   /** 🧱 buyumlar faqat ish stol YUZASIDA harakatlansin (tepaga ko'tarilmaydi) — fizika uchun */
   flat?: boolean;
+  /** 🖱 ustiga kelganda (hover) — nom ko'rsatish va yoritish uchun */
+  onHover?: (root: THREE.Object3D | null) => void;
 }
 
 /**
@@ -416,7 +449,10 @@ export function attachPointer(handle: SceneHandle, canvas: HTMLCanvasElement, op
   };
   const onMove = (ev: PointerEvent) => {
     moved = Math.max(moved, Math.abs(ev.clientX - downX) + Math.abs(ev.clientY - downY));
-    if (!dragTarget) return;
+    if (!dragTarget) {
+      onMoveHover(ev);
+      return;
+    }
     if (!dragging) {
       // ✋ 8px dan oldin qo'l qimirlasa ham — bu "bosish" (tap) bo'lib qoladi (sim ulash ishlaydi)
       if (moved < 8) return;
@@ -444,6 +480,52 @@ export function attachPointer(handle: SceneHandle, canvas: HTMLCanvasElement, op
       );
     }
   };
+  // 🖱 HOVER — ustiga kelganda obyekt YORITILADI + nom chiqadi
+  const hoverMats = new Map<THREE.Mesh, { emissive: THREE.Color; intensity: number }>();
+  let hoveredRoot: THREE.Object3D | null = null;
+  const clearHover = () => {
+    for (const [m, orig] of hoverMats) {
+      const mat = m.material as THREE.MeshStandardMaterial;
+      if (mat && mat.emissive) {
+        mat.emissive.copy(orig.emissive);
+        mat.emissiveIntensity = orig.intensity;
+      }
+    }
+    hoverMats.clear();
+    hoveredRoot = null;
+    opts.onHover?.(null);
+  };
+  const applyHover = (root: THREE.Object3D) => {
+    clearHover();
+    hoveredRoot = root;
+    root.traverse((o) => {
+      const m = o as THREE.Mesh;
+      const mat = m.material as THREE.MeshStandardMaterial | undefined;
+      if (m.isMesh && mat && mat.emissive && !mat.transparent) {
+        hoverMats.set(m, { emissive: mat.emissive.clone(), intensity: mat.emissiveIntensity });
+        mat.emissive.lerp(new THREE.Color("#3ddc84"), 0.38);
+        mat.emissiveIntensity = Math.max(mat.emissiveIntensity, 0.3);
+      }
+    });
+    opts.onHover?.(root);
+  };
+  const onMoveHover = (ev: PointerEvent) => {
+    if (dragTarget) return;
+    toNdc(ev);
+    ray.setFromCamera(ptr, handle.camera);
+    const hits = ray.intersectObjects(opts.getRoots(), true);
+    let root: THREE.Object3D | null = null;
+    if (hits.length) {
+      let o: THREE.Object3D | null = hits[0].object;
+      while (o && !o.userData?.kind) o = o.parent;
+      root = o;
+    }
+    if (root !== hoveredRoot) {
+      if (root) applyHover(root);
+      else clearHover();
+    }
+  };
+
   const onUp = (ev: PointerEvent) => {
     const wasDragging = dragging;
     const target = dragTarget;
@@ -461,11 +543,23 @@ export function attachPointer(handle: SceneHandle, canvas: HTMLCanvasElement, op
       if (root && hit) opts.onPick(root, hit, ev);
     }
   };
+  // ⎋ ESC — siljitishni bekor qilish (obyekt joyiga qaytadi)
+  const onKey = (e: KeyboardEvent) => {
+    if (e.key === "Escape" && dragTarget) {
+      dragTarget.position.copy(dragStart);
+      dragTarget = null;
+      dragging = false;
+      handle.controls.enabled = true;
+    }
+  };
+  window.addEventListener("keydown", onKey);
   canvas.addEventListener("pointerdown", onDown);
   canvas.addEventListener("pointermove", onMove);
   canvas.addEventListener("pointerup", onUp);
   canvas.addEventListener("pointercancel", onUp);
   return () => {
+    window.removeEventListener("keydown", onKey);
+    clearHover();
     handle.controls.enabled = true;
     canvas.removeEventListener("pointerdown", onDown);
     canvas.removeEventListener("pointermove", onMove);
