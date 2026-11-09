@@ -1161,6 +1161,7 @@ check("looksLikeName: ko'rish rad", !looksLikeName("Ko'rish"), true);
 {
   const emSrc2 = readFileSync(new URL("../src/lib/emaktab.ts", import.meta.url), "utf-8");
   check("teacher: TEACHERV2 belgisi bilan rol aniqlash", emSrc2.includes("TEACHERV2__INITIAL/.test(tHtml)") && emSrc2.includes('role = "teacher";'));
+  check("teacher: /teachers xatosi kirishni to'xtatmaydi (o'quvchi)", emSrc2.includes("O'quvchilar uchun /teachers 401/403") && !/teach=xato"\);\s*\n\s*throw/.test(emSrc2));
   check("teacher: /teachers sahifasi tekshiriladi", emSrc2.includes("`${WEB_BASE}/teachers`"));
 }
 

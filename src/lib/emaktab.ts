@@ -1362,8 +1362,9 @@ async function buildSession(
       } else {
         dbg.push("teach=0");
       }
-    } catch (error) {
-      if (error instanceof EmaktabAuthError) throw error;
+    } catch {
+      // O'quvchilar uchun /teachers 401/403 yoki login'ga yo'naltiradi — bu xato EMAS.
+      // Bu tekshiruv hech qachon kirishni to'xtatmasligi kerak (o'quvchi kirishi buzilmasin).
       dbg.push("teach=xato");
     }
   }
