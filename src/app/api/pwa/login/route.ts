@@ -1,6 +1,6 @@
 // 📱 PWA — eMaktab login/parol bilan kirish (haqiqiy eMaktabdan tekshiriladi)
 import { NextRequest, NextResponse } from "next/server";
-import { captchaDataUrl, loginEmaktab } from "@/lib/emaktab";
+import { captchaDataUrlOrReason, loginEmaktab } from "@/lib/emaktab";
 import { setPendingCaptcha } from "@/lib/pwa-captcha";
 import { finishPwaLogin } from "@/lib/pwa-login";
 
@@ -23,11 +23,17 @@ export async function POST(req: NextRequest) {
     const result = await loginEmaktab(login, password);
     if (result.status === "captcha_required" && result.formState) {
       // Captcha: foydalanuvchi rasmdagi kodni kiritadi (avtomatik yechilmaydi).
-      const captchaImage = await captchaDataUrl(result.formState);
+      const img = await captchaDataUrlOrReason(result.formState);
+      if (!("dataUrl" in img)) {
+        return NextResponse.json(
+          { ok: false, error: `eMaktab captcha rasmini bermadi (${img.reason}). Bir ozdan so'ng qayta urinib ko'ring.` },
+          { status: 502 },
+        );
+      }
       const res = NextResponse.json({
         ok: false,
         captcha: true,
-        captchaImage,
+        captchaImage: img.dataUrl,
         error: "eMaktab rasmdagi kodni so'ramoqda. Kodni kiriting.",
       });
       setPendingCaptcha(res, { login, password, form: result.formState });

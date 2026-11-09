@@ -381,7 +381,8 @@ export default function AppClient() {
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={captchaImage ?? `/api/pwa/login/captcha-image?t=${captchaNonce}`}
-                alt="Captcha"
+                alt="Captcha rasmi"
+                onError={() => setError("Captcha rasmi yuklanmadi. \"Bekor qilish\" ni bosib, qayta kiring.")}
                 className="h-14 w-auto rounded-lg bg-white p-1"
               />
               <input

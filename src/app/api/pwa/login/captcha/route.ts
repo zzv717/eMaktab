@@ -1,6 +1,6 @@
 // 📱 PWA — captcha kodini yuborish va loginni yakunlash
 import { NextRequest, NextResponse } from "next/server";
-import { captchaDataUrl, submitCaptchaLogin } from "@/lib/emaktab";
+import { captchaDataUrlOrReason, submitCaptchaLogin } from "@/lib/emaktab";
 import { clearPendingCaptcha, readPendingCaptcha, setPendingCaptcha } from "@/lib/pwa-captcha";
 import { finishPwaLogin } from "@/lib/pwa-login";
 
@@ -29,11 +29,19 @@ export async function POST(req: NextRequest) {
     }
     if (result.status === "captcha_required" && result.formState) {
       // Kod noto'g'ri — yangi captcha bilan qayta urinish
-      const captchaImage = await captchaDataUrl(result.formState);
+      const img = await captchaDataUrlOrReason(result.formState);
+      if (!("dataUrl" in img)) {
+        const bad = NextResponse.json(
+          { ok: false, error: `eMaktab yangi captcha rasmini bermadi (${img.reason}). Qayta kirib ko'ring.` },
+          { status: 502 },
+        );
+        clearPendingCaptcha(bad);
+        return bad;
+      }
       const res = NextResponse.json({
         ok: false,
         captcha: true,
-        captchaImage,
+        captchaImage: img.dataUrl,
         error: "Kod noto'g'ri. Qaytadan kiriting.",
       });
       setPendingCaptcha(res, { login: pending.login, password: pending.password, form: result.formState });
