@@ -64,7 +64,6 @@ export default function AppClient() {
   const [captchaOpen, setCaptchaOpen] = useState(false);
   const [captchaCode, setCaptchaCode] = useState("");
   const [captchaNonce, setCaptchaNonce] = useState(() => Date.now());
-  const [captchaImage, setCaptchaImage] = useState<string | null>(null);
 
   // Face ID bilan kirish (kichik oyna)
   const [faceOpen, setFaceOpen] = useState(false);
@@ -129,14 +128,13 @@ export default function AppClient() {
     setBusy(true);
     setError("");
     try {
-      const r = await api<{ ok: boolean; error?: string; captcha?: boolean; captchaImage?: string | null; profile?: Profile; hasPasskey?: boolean }>(
+      const r = await api<{ ok: boolean; error?: string; captcha?: boolean; profile?: Profile; hasPasskey?: boolean }>(
         "/api/pwa/login",
         { login: login.trim(), password },
       );
       if (r.captcha) {
         setCaptchaOpen(true);
         setCaptchaCode("");
-        setCaptchaImage(r.captchaImage ?? null);
         setCaptchaNonce(Date.now());
         setError(r.error ?? "Rasmdagi kodni kiriting");
         return;
@@ -157,13 +155,12 @@ export default function AppClient() {
     setBusy(true);
     setError("");
     try {
-      const r = await api<{ ok: boolean; error?: string; captcha?: boolean; captchaImage?: string | null; profile?: Profile; hasPasskey?: boolean }>(
+      const r = await api<{ ok: boolean; error?: string; captcha?: boolean; profile?: Profile; hasPasskey?: boolean }>(
         "/api/pwa/login/captcha",
         { code: captchaCode.trim() },
       );
       if (r.captcha) {
         setCaptchaCode("");
-        setCaptchaImage(r.captchaImage ?? null);
         setCaptchaNonce(Date.now());
         setError(r.error ?? "Kod noto'g'ri. Qaytadan kiriting.");
         return;
@@ -380,7 +377,7 @@ export default function AppClient() {
               {/* eslatma: rasm faqat shu sessiya uchun serverdan olinadi */}
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
-                src={captchaImage ?? `/api/pwa/login/captcha-image?t=${captchaNonce}`}
+                src={`/api/pwa/login/captcha-image?t=${captchaNonce}`}
                 alt="Captcha"
                 className="h-14 w-auto rounded-lg bg-white p-1"
               />

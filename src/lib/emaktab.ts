@@ -515,24 +515,10 @@ export async function fetchCaptchaImage(url: string): Promise<Uint8Array | null>
  * Login formasi sessiyasi (cookie jar) bilan captcha rasmini olish — ilova proksi uchun.
  * Captcha rasmi shu sessiyaga bog'liq, shuning uchun cookie'lar yuboriladi.
  */
-function sniffImageType(bytes: Uint8Array): string {
-  if (bytes[0] === 0x89 && bytes[1] === 0x50) return "image/png";
-  if (bytes[0] === 0xff && bytes[1] === 0xd8) return "image/jpeg";
-  if (bytes[0] === 0x47 && bytes[1] === 0x49) return "image/gif";
-  if (bytes[0] === 0x52 && bytes[1] === 0x49) return "image/webp";
-  return "image/png";
-}
-
-/**
- * Captcha rasmini olish. Avval botdagi kabi cookie'siz (ishonchli usul),
- * yo'q bo'lsa login sessiyasi cookie'lari bilan urinadi.
- */
 export async function fetchCaptchaImageForForm(
   form: LoginFormState,
 ): Promise<{ bytes: Uint8Array; contentType: string } | null> {
   if (!form.captchaUrl) return null;
-  const plain = await fetchCaptchaImage(form.captchaUrl);
-  if (plain && plain.byteLength > 0) return { bytes: plain, contentType: sniffImageType(plain) };
   try {
     const cookie = Object.entries(form.cookies)
       .map(([k, v]) => `${k}=${v}`)
@@ -541,19 +527,13 @@ export async function fetchCaptchaImageForForm(
       headers: { "User-Agent": LOGIN_USER_AGENT, Referer: LOGIN_URL, ...(cookie ? { Cookie: cookie } : {}) },
     });
     if (!res.ok) return null;
-    const bytes = new Uint8Array(await res.arrayBuffer());
-    if (bytes.byteLength === 0) return null;
-    return { bytes, contentType: sniffImageType(bytes) };
+    return {
+      bytes: new Uint8Array(await res.arrayBuffer()),
+      contentType: res.headers.get("content-type") || "image/png",
+    };
   } catch {
     return null;
   }
-}
-
-/** Captcha rasmini brauzer uchun data: URL ko'rinishida (rasm alohida so'rovsiz ko'rinadi). */
-export async function captchaDataUrl(form: LoginFormState): Promise<string | null> {
-  const img = await fetchCaptchaImageForForm(form);
-  if (!img) return null;
-  return `data:${img.contentType};base64,${Buffer.from(img.bytes).toString("base64")}`;
 }
 
 /** Captcha rasm URL'idagi uuid (Captcha.Id uchun zaxira). */
