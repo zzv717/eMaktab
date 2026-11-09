@@ -344,6 +344,11 @@ export function captchaVisible(html: string): boolean {
       return true;
     }
   }
+  // Yangi markup: ko'rinadigan captcha rasmi (captcha__image / /captcha/ src) yoki
+  // yashirin bo'lmagan Captcha.Input maydoni. Oddiy login formada bu yo'q.
+  if (/<img\b[^>]*(class="[^"]*captcha__image[^"]*"|src="[^"]*\/captcha\/[^"]*")/i.test(html)) return true;
+  const capInputs = html.match(/<input\b[^>]*name="Captcha\.Input"[^>]*>/gi) ?? [];
+  if (capInputs.some((t) => !/type="hidden"/i.test(t))) return true;
   return false;
 }
 
@@ -501,6 +506,31 @@ export async function fetchCaptchaImage(url: string): Promise<Uint8Array | null>
     });
     if (!res.ok) return null;
     return new Uint8Array(await res.arrayBuffer());
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Login formasi sessiyasi (cookie jar) bilan captcha rasmini olish — ilova proksi uchun.
+ * Captcha rasmi shu sessiyaga bog'liq, shuning uchun cookie'lar yuboriladi.
+ */
+export async function fetchCaptchaImageForForm(
+  form: LoginFormState,
+): Promise<{ bytes: Uint8Array; contentType: string } | null> {
+  if (!form.captchaUrl) return null;
+  try {
+    const cookie = Object.entries(form.cookies)
+      .map(([k, v]) => `${k}=${v}`)
+      .join("; ");
+    const res = await fetch(form.captchaUrl, {
+      headers: { "User-Agent": LOGIN_USER_AGENT, Referer: LOGIN_URL, ...(cookie ? { Cookie: cookie } : {}) },
+    });
+    if (!res.ok) return null;
+    return {
+      bytes: new Uint8Array(await res.arrayBuffer()),
+      contentType: res.headers.get("content-type") || "image/png",
+    };
   } catch {
     return null;
   }
