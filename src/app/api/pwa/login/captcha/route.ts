@@ -1,6 +1,6 @@
 // 📱 PWA — captcha kodini yuborish va loginni yakunlash
 import { NextRequest, NextResponse } from "next/server";
-import { submitCaptchaLogin } from "@/lib/emaktab";
+import { captchaDataUrl, submitCaptchaLogin } from "@/lib/emaktab";
 import { clearPendingCaptcha, readPendingCaptcha, setPendingCaptcha } from "@/lib/pwa-captcha";
 import { finishPwaLogin } from "@/lib/pwa-login";
 
@@ -29,7 +29,13 @@ export async function POST(req: NextRequest) {
     }
     if (result.status === "captcha_required" && result.formState) {
       // Kod noto'g'ri — yangi captcha bilan qayta urinish
-      const res = NextResponse.json({ ok: false, captcha: true, error: "Kod noto'g'ri. Qaytadan kiriting." });
+      const captchaImage = await captchaDataUrl(result.formState);
+      const res = NextResponse.json({
+        ok: false,
+        captcha: true,
+        captchaImage,
+        error: "Kod noto'g'ri. Qaytadan kiriting.",
+      });
       setPendingCaptcha(res, { login: pending.login, password: pending.password, form: result.formState });
       return res;
     }
