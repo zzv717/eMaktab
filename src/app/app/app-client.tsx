@@ -11,6 +11,7 @@ import {
 import { api } from "./api";
 import {
   ConductPanel,
+  CtpPanel,
   GradesPanel,
   GuidePanel,
   MaqomPanel,
@@ -35,6 +36,7 @@ type View =
   | "maqom"
   | "sinfim"
   | "conduct"
+  | "ctp"
   | "lab"
   | "settings"
   | "guide";
@@ -238,6 +240,7 @@ export default function AppClient() {
     maqom: "✅ Maqom",
     sinfim: "🏫 Sinfim",
     conduct: "✅ Darsni o'tildi qilish",
+    ctp: "📄 Ish reja joylashtirish",
     lab: "🧪 Laboratoriya va fanlar",
     settings: "⚙️ Sozlamalar",
     guide: "📖 Yoriqnoma",
@@ -250,6 +253,7 @@ export default function AppClient() {
         { id: "schedule", label: "📚 Dars jadvali" },
         { id: "maqom", label: "✅ Maqom" },
         { id: "conduct", label: "✅ Darsni o'tildi" },
+        { id: "ctp", label: "📄 Ish reja" },
         { id: "sinfim", label: "🏫 Sinfim" },
         { id: "nazoratchi", label: "👁 Nazoratchi" },
         { id: "tests", label: "📝 Testlar" },
@@ -436,6 +440,7 @@ export default function AppClient() {
               {view === "maqom" && <MaqomPanel />}
               {view === "sinfim" && <SinfimPanel />}
               {view === "conduct" && <ConductPanel />}
+              {view === "ctp" && <CtpPanel />}
               {view === "lab" && <LabPanel />}
               {view === "settings" && <SettingsPanel profile={profile} hasPasskey={hasPasskey} />}
               {view === "guide" && <GuidePanel />}
