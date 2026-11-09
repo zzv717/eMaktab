@@ -60,6 +60,10 @@ export default function AppClient() {
   // Login form
   const [login, setLogin] = useState("");
   const [password, setPassword] = useState("");
+  // eMaktab rasmli kod (captcha) so'rasa — foydalanuvchi kodni o'zi kiritadi
+  const [captchaOpen, setCaptchaOpen] = useState(false);
+  const [captchaCode, setCaptchaCode] = useState("");
+  const [captchaNonce, setCaptchaNonce] = useState(() => Date.now());
 
   // Face ID bilan kirish (kichik oyna)
   const [faceOpen, setFaceOpen] = useState(false);
@@ -108,23 +112,65 @@ export default function AppClient() {
     })();
   }, [refresh]);
 
+  // Login muvaffaqiyatli bo'lgandan keyingi umumiy o'tish (parol va captcha uchun)
+  const applyLoginOk = (r: { profile?: Profile; hasPasskey?: boolean }) => {
+    if (!r.profile) return;
+    localStorage.setItem("pwa_last_login", r.profile.login);
+    setPassword("");
+    setCaptchaOpen(false);
+    setCaptchaCode("");
+    setProfile(r.profile);
+    setHasPasskey(Boolean(r.hasPasskey));
+    setScreen(r.hasPasskey ? "home" : "setup");
+  };
+
   const doPasswordLogin = async () => {
     setBusy(true);
     setError("");
     try {
-      const r = await api<{ ok: boolean; error?: string; profile?: Profile; hasPasskey?: boolean }>("/api/pwa/login", {
-        login: login.trim(),
-        password,
-      });
+      const r = await api<{ ok: boolean; error?: string; captcha?: boolean; profile?: Profile; hasPasskey?: boolean }>(
+        "/api/pwa/login",
+        { login: login.trim(), password },
+      );
+      if (r.captcha) {
+        setCaptchaOpen(true);
+        setCaptchaCode("");
+        setCaptchaNonce(Date.now());
+        setError(r.error ?? "Rasmdagi kodni kiriting");
+        return;
+      }
       if (!r.ok || !r.profile) {
         setError(r.error ?? "Login yoki parol noto'g'ri");
         return;
       }
-      localStorage.setItem("pwa_last_login", r.profile.login);
-      setPassword("");
-      setProfile(r.profile);
-      setHasPasskey(Boolean(r.hasPasskey));
-      setScreen(r.hasPasskey ? "home" : "setup");
+      applyLoginOk(r);
+    } catch {
+      setError("Tarmoq xatosi — qaytadan urinib ko'ring");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const doCaptchaLogin = async () => {
+    setBusy(true);
+    setError("");
+    try {
+      const r = await api<{ ok: boolean; error?: string; captcha?: boolean; profile?: Profile; hasPasskey?: boolean }>(
+        "/api/pwa/login/captcha",
+        { code: captchaCode.trim() },
+      );
+      if (r.captcha) {
+        setCaptchaCode("");
+        setCaptchaNonce(Date.now());
+        setError(r.error ?? "Kod noto'g'ri. Qaytadan kiriting.");
+        return;
+      }
+      if (!r.ok || !r.profile) {
+        setCaptchaOpen(false);
+        setError(r.error ?? "Kirish amalga oshmadi");
+        return;
+      }
+      applyLoginOk(r);
     } catch {
       setError("Tarmoq xatosi — qaytadan urinib ko'ring");
     } finally {
@@ -318,10 +364,52 @@ export default function AppClient() {
                 if (e.key === "Enter" && login && password && !busy) void doPasswordLogin();
               }}
             />
-            <button className={btnPrimary} disabled={busy || !login || !password} onClick={() => void doPasswordLogin()}>
-              {busy ? "⏳ Iltimos kuting…" : "🔐 Kirish"}
-            </button>
+            {!captchaOpen && (
+              <button className={btnPrimary} disabled={busy || !login || !password} onClick={() => void doPasswordLogin()}>
+                {busy ? "⏳ Iltimos kuting…" : "🔐 Kirish"}
+              </button>
+            )}
           </div>
+
+          {captchaOpen && (
+            <div className="mt-4 space-y-3 rounded-2xl bg-amber-50 p-4">
+              <p className="text-sm font-medium text-slate-800">eMaktab rasmdagi kodni so&apos;rayapti:</p>
+              {/* eslatma: rasm faqat shu sessiya uchun serverdan olinadi */}
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={`/api/pwa/login/captcha-image?t=${captchaNonce}`}
+                alt="Captcha"
+                className="h-14 w-auto rounded-lg bg-white p-1"
+              />
+              <input
+                className={input}
+                placeholder="Rasmdagi belgilar"
+                autoCapitalize="none"
+                autoCorrect="off"
+                value={captchaCode}
+                onChange={(e) => setCaptchaCode(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && captchaCode.trim() && !busy) void doCaptchaLogin();
+                }}
+              />
+              <div className="flex gap-2">
+                <button className={btnPrimary} disabled={busy || !captchaCode.trim()} onClick={() => void doCaptchaLogin()}>
+                  {busy ? "⏳ Tekshirilmoqda…" : "✅ Tasdiqlash"}
+                </button>
+                <button
+                  className={btnGhost}
+                  disabled={busy}
+                  onClick={() => {
+                    setCaptchaOpen(false);
+                    setCaptchaCode("");
+                    setError("");
+                  }}
+                >
+                  Bekor qilish
+                </button>
+              </div>
+            </div>
+          )}
 
           {faceOk && (
             <>
