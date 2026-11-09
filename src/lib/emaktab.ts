@@ -1366,6 +1366,36 @@ async function buildSession(
   // Yakuniy URL /teachers bo'lsa — bu o'qituvchi portali.
   if ((meta?.finalUrl ?? "").toLowerCase().includes("teacher")) role = "teacher";
 
+  // O'qituvchi belgisi: /teachers sahifasida TEACHERV2 holati bo'lsa — o'qituvchi.
+  // (Userfeed/URL belgilari yetarli bo'lmasa ham o'qituvchi to'g'ri aniqlanadi.)
+  if (role === "student") {
+    try {
+      const tHtml = await pageGet(cookies, `${WEB_BASE}/teachers`);
+      if (/TEACHERV2__INITIAL/.test(tHtml)) {
+        role = "teacher";
+        dbg.push("teach=1");
+        if (persons.length === 0) {
+          const tState = extractAnyState(tHtml).find((x) => x.marker.includes("TEACHERV2"));
+          const schoolId =
+            deepFind(tState?.data ?? {}, /^school_?id$/i) || talkUser?.schoolIds?.[0] || "";
+          persons.push({
+            personId: talkUser?.userId || cookies["t0"] || "",
+            schoolId,
+            groupId: "",
+            fullName,
+            schoolName: "",
+            groupName: "",
+          });
+        }
+      } else {
+        dbg.push("teach=0");
+      }
+    } catch (error) {
+      if (error instanceof EmaktabAuthError) throw error;
+      dbg.push("teach=xato");
+    }
+  }
+
   // Rolni chat state'idagi roles/teacherGroups/classTeacherGroups dan aniqlaymiz.
   if (talkUser) {
     const roles = talkUser.roles.map((r) => r.toLowerCase());

@@ -1166,5 +1166,12 @@ check("looksLikeName: ko'rish rad", !looksLikeName("Ko'rish"), true);
   check("login: postLogin challenge → captcha", emSrc.includes("if (isChallengePage(result.body))") && emSrc.includes('status: "captcha"'));
 }
 
+// 👨‍🏫 O'qituvchi roli: /teachers (TEACHERV2) belgisi bilan aniqlanadi
+{
+  const emSrc2 = readFileSync(new URL("../src/lib/emaktab.ts", import.meta.url), "utf-8");
+  check("teacher: TEACHERV2 belgisi bilan rol aniqlash", emSrc2.includes("TEACHERV2__INITIAL/.test(tHtml)") && emSrc2.includes('role = "teacher";'));
+  check("teacher: /teachers sahifasi tekshiriladi", emSrc2.includes("`${WEB_BASE}/teachers`"));
+}
+
 console.log(`\nNatija: ${passed} o'tdi, ${failed} yiqildi`);
 process.exit(failed > 0 ? 1 : 0);
