@@ -549,6 +549,41 @@ export async function fetchCaptchaImageForForm(
   }
 }
 
+/**
+ * Captcha rasmini data: URL qilib olish. Muvaffaqiyatsiz bo'lsa — aniq sabab (HTTP holati yoki xato),
+ * shunda foydalanuvchi buzilgan rasm o'rniga sababni ko'radi.
+ */
+export async function captchaDataUrlOrReason(
+  form: LoginFormState,
+): Promise<{ dataUrl: string } | { reason: string }> {
+  if (!form.captchaUrl) return { reason: "captcha manzili topilmadi" };
+  let reason = "noma'lum";
+  const attempts: Array<Record<string, string>> = [{ "User-Agent": LOGIN_USER_AGENT, Referer: LOGIN_URL }];
+  const cookie = Object.entries(form.cookies)
+    .map(([k, v]) => `${k}=${v}`)
+    .join("; ");
+  if (cookie) attempts.push({ "User-Agent": LOGIN_USER_AGENT, Referer: LOGIN_URL, Cookie: cookie });
+  for (const headers of attempts) {
+    try {
+      const res = await fetch(form.captchaUrl, { headers });
+      if (!res.ok) {
+        reason = `HTTP ${res.status}`;
+        continue;
+      }
+      const bytes = new Uint8Array(await res.arrayBuffer());
+      if (bytes.byteLength === 0) {
+        reason = "bo'sh javob";
+        continue;
+      }
+      return { dataUrl: `data:${sniffImageType(bytes)};base64,${Buffer.from(bytes).toString("base64")}` };
+    } catch (error) {
+      reason = `tarmoq: ${(error instanceof Error ? error.message : String(error)).slice(0, 60)}`;
+    }
+  }
+  console.error("captcha image failed:", reason, new URL(form.captchaUrl).pathname.slice(0, 40));
+  return { reason };
+}
+
 /** Captcha rasmini brauzer uchun data: URL ko'rinishida (rasm alohida so'rovsiz ko'rinadi). */
 export async function captchaDataUrl(form: LoginFormState): Promise<string | null> {
   const img = await fetchCaptchaImageForForm(form);
