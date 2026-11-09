@@ -569,6 +569,16 @@ async function postLogin(
   const authCookie = Boolean(
     form.cookies["UZDnevnikAuth_a"] ?? form.cookies["UZDnevnikAuth_s"],
   );
+  // eMaktab hisobni tasdiqlashni so'raydi (__2FA__ sahifasi: telefon, Telegram bot yoki
+  // xavfsizlik savoli). Bu kod bilan chetlab o'tilmaydi — foydalanuvchiga aniq xabar beramiz.
+  if (/__2FA__/.test(result.body)) {
+    return {
+      status: "error",
+      message:
+        "eMaktab hisobingizni tasdiqlashni so'ramoqda (telefon, Telegram yoki xavfsizlik savoli). " +
+        "login.emaktab.uz saytida shu hisobga kirib tasdiqlang, so'ng qayta urinib ko'ring.",
+    };
+  }
   const errors = extractLoginErrors(result.body);
   if (!errors?.hasErrors && (authCookie || !hasLoginForm(result.body))) {
     return {

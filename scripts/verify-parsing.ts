@@ -1165,5 +1165,11 @@ check("looksLikeName: ko'rish rad", !looksLikeName("Ko'rish"), true);
   check("teacher: /teachers sahifasi tekshiriladi", emSrc2.includes("`${WEB_BASE}/teachers`"));
 }
 
+// 🔐 Hisob tasdiqlash sahifasi (__2FA__) — aniq xabar, captcha emas
+{
+  const emSrc3 = readFileSync(new URL("../src/lib/emaktab.ts", import.meta.url), "utf-8");
+  check("login: __2FA__ sahifa aniq xabar bilan to'xtaydi", emSrc3.includes("/__2FA__/.test(result.body)") && emSrc3.includes("hisobingizni tasdiqlashni"));
+}
+
 console.log(`\nNatija: ${passed} o'tdi, ${failed} yiqildi`);
 process.exit(failed > 0 ? 1 : 0);
