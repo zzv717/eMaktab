@@ -344,11 +344,6 @@ export function captchaVisible(html: string): boolean {
       return true;
     }
   }
-  // Yangi markup: ko'rinadigan captcha rasmi (captcha__image / /captcha/ src) yoki
-  // yashirin bo'lmagan Captcha.Input maydoni. Oddiy login formada bu yo'q.
-  if (/<img\b[^>]*(class="[^"]*captcha__image[^"]*"|src="[^"]*\/captcha\/[^"]*")/i.test(html)) return true;
-  const capInputs = html.match(/<input\b[^>]*name="Captcha\.Input"[^>]*>/gi) ?? [];
-  if (capInputs.some((t) => !/type="hidden"/i.test(t))) return true;
   return false;
 }
 
@@ -454,14 +449,6 @@ function classifyFormResult(result: FollowedResponse, jar: Record<string, string
   };
 }
 
-/**
- * eMaktab ko'p noto'g'ri urinishdan keyin "__2FA__" sahifasini qaytaradi. Bu SMS/Telegram kod emas —
- * raqamli captcha (rasm) yechiladi. Sahifa "muvaffaqiyatli kirish" emas.
- */
-export function isChallengePage(body: string): boolean {
-  return /__2FA__/.test(body);
-}
-
 /** Captcha bilan bog'liq maydonlar (faqat Captcha.Input yechim bilan yuboriladi). */
 function isCaptchaField(name: string): boolean {
   return /captcha/i.test(name);
@@ -509,86 +496,6 @@ export async function fetchCaptchaImage(url: string): Promise<Uint8Array | null>
   } catch {
     return null;
   }
-}
-
-/**
- * Login formasi sessiyasi (cookie jar) bilan captcha rasmini olish — ilova proksi uchun.
- * Captcha rasmi shu sessiyaga bog'liq, shuning uchun cookie'lar yuboriladi.
- */
-function sniffImageType(bytes: Uint8Array): string {
-  if (bytes[0] === 0x89 && bytes[1] === 0x50) return "image/png";
-  if (bytes[0] === 0xff && bytes[1] === 0xd8) return "image/jpeg";
-  if (bytes[0] === 0x47 && bytes[1] === 0x49) return "image/gif";
-  if (bytes[0] === 0x52 && bytes[1] === 0x49) return "image/webp";
-  return "image/png";
-}
-
-/**
- * Captcha rasmini olish. Avval botdagi kabi cookie'siz (ishonchli usul),
- * yo'q bo'lsa login sessiyasi cookie'lari bilan urinadi.
- */
-export async function fetchCaptchaImageForForm(
-  form: LoginFormState,
-): Promise<{ bytes: Uint8Array; contentType: string } | null> {
-  if (!form.captchaUrl) return null;
-  const plain = await fetchCaptchaImage(form.captchaUrl);
-  if (plain && plain.byteLength > 0) return { bytes: plain, contentType: sniffImageType(plain) };
-  try {
-    const cookie = Object.entries(form.cookies)
-      .map(([k, v]) => `${k}=${v}`)
-      .join("; ");
-    const res = await fetch(form.captchaUrl, {
-      headers: { "User-Agent": LOGIN_USER_AGENT, Referer: LOGIN_URL, ...(cookie ? { Cookie: cookie } : {}) },
-    });
-    if (!res.ok) return null;
-    const bytes = new Uint8Array(await res.arrayBuffer());
-    if (bytes.byteLength === 0) return null;
-    return { bytes, contentType: sniffImageType(bytes) };
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Captcha rasmini data: URL qilib olish. Muvaffaqiyatsiz bo'lsa — aniq sabab (HTTP holati yoki xato),
- * shunda foydalanuvchi buzilgan rasm o'rniga sababni ko'radi.
- */
-export async function captchaDataUrlOrReason(
-  form: LoginFormState,
-): Promise<{ dataUrl: string } | { reason: string }> {
-  if (!form.captchaUrl) return { reason: "captcha manzili topilmadi" };
-  let reason = "noma'lum";
-  const attempts: Array<Record<string, string>> = [{ "User-Agent": LOGIN_USER_AGENT, Referer: LOGIN_URL }];
-  const cookie = Object.entries(form.cookies)
-    .map(([k, v]) => `${k}=${v}`)
-    .join("; ");
-  if (cookie) attempts.push({ "User-Agent": LOGIN_USER_AGENT, Referer: LOGIN_URL, Cookie: cookie });
-  for (const headers of attempts) {
-    try {
-      const res = await fetch(form.captchaUrl, { headers });
-      if (!res.ok) {
-        reason = `HTTP ${res.status}`;
-        continue;
-      }
-      const bytes = new Uint8Array(await res.arrayBuffer());
-      if (bytes.byteLength === 0) {
-        reason = "bo'sh javob";
-        continue;
-      }
-      return { dataUrl: `data:${sniffImageType(bytes)};base64,${Buffer.from(bytes).toString("base64")}` };
-    } catch (error) {
-      reason = `tarmoq: ${(error instanceof Error ? error.message : String(error)).slice(0, 60)}`;
-    }
-  }
-  console.error("captcha image failed:", reason, new URL(form.captchaUrl).pathname.slice(0, 40));
-  return { reason };
-}
-
-/** Captcha rasmini brauzer uchun data: URL ko'rinishida (rasm alohida so'rovsiz ko'rinadi). */
-export async function captchaDataUrl(form: LoginFormState): Promise<string | null> {
-  const img = await fetchCaptchaImageForForm(form);
-  if (!img) return null;
-  return `data:${img.contentType};base64,${Buffer.from(img.bytes).toString("base64")}`;
 }
 
 /** Captcha rasm URL'idagi uuid (Captcha.Id uchun zaxira). */
@@ -662,26 +569,6 @@ async function postLogin(
   const authCookie = Boolean(
     form.cookies["UZDnevnikAuth_a"] ?? form.cookies["UZDnevnikAuth_s"],
   );
-  if (isChallengePage(result.body)) {
-    // Captcha rasmi JSON ichida "\/captcha\/" ko'rinishida bo'lishi mumkin — avval ochamiz.
-    const unescaped = result.body.replace(/\\\//g, "/");
-    const captchaUrl = extractCaptchaUrl(unescaped, result.finalUrl);
-    if (!captchaUrl) {
-      return {
-        status: "error",
-        message: "eMaktab tekshiruv kodini (captcha) ko'rsatmadi. Bir necha daqiqadan so'ng qayta urinib ko'ring.",
-      };
-    }
-    return {
-      status: "captcha",
-      form: {
-        cookies: form.cookies,
-        hidden: parseHiddenInputs(result.body),
-        postUrl: result.finalUrl,
-        captchaUrl,
-      },
-    };
-  }
   const errors = extractLoginErrors(result.body);
   if (!errors?.hasErrors && (authCookie || !hasLoginForm(result.body))) {
     return {
@@ -1633,7 +1520,8 @@ async function buildSession(
   if (persons.length === 0) {
     throw new EmaktabApiError(
       "eMaktab profilingizda o'quvchi konteksti topilmadi. " +
-        `[diag: ${dbg.join(" ")} talk=${talkUser ? 1 : 0} ism=${fullName === login ? 0 : 1}]`,
+        `[diag: ${dbg.join(" ")} talk=${talkUser ? 1 : 0} ism=${fullName === login ? 0 : 1}` +
+        ` h1=${pageHints(landBody)} h2=${pageHints(ufBody)}]`,
     );
   }
 

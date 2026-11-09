@@ -69,7 +69,6 @@ import { hhmmToMinutes, minutesToHHMM, parseDays, parseTestDraft, testSourceLabe
 import { localQuestion } from "../src/lib/ai";
 import { hashSecret } from "../src/lib/system-admin";
 import { safeTgText } from "../src/lib/tg-text";
-import { isChallengePage } from "../src/lib/emaktab";
 
 let passed = 0;
 let failed = 0;
@@ -731,7 +730,7 @@ check("looksLikeName: ko'rish rad", !looksLikeName("Ko'rish"), true);
   check("panel: schema pwa_accounts", src("db/schema.ts").includes("pwa_accounts"));
   check("panel: migrate pwa_accounts", src("app/api/admin/migrate-schema/route.ts").includes("create pwa_accounts"));
   check("panel: withEmaktabSession kesh bilan", src("lib/pwa.ts").includes("withEmaktabSession"));
-  check("panel: hisob saqlanadi (login)", src("lib/pwa-login.ts").includes("saveAccount") && src("app/api/pwa/login/route.ts").includes("finishPwaLogin("));
+  check("panel: hisob saqlanadi (login)", src("app/api/pwa/login/route.ts").includes("saveAccount"));
   check("panel: baholar route", exists("src/app/api/pwa/data/grades/route.ts"));
   check("panel: jadval route", exists("src/app/api/pwa/data/schedule/route.ts"));
   check("panel: yangiliklar route", exists("src/app/api/pwa/data/news/route.ts"));
@@ -759,7 +758,7 @@ check("looksLikeName: ko'rish rad", !looksLikeName("Ko'rish"), true);
   check("sessiya: schema session_enc", src("db/schema.ts").includes("session_enc"));
   check("sessiya: migrate session_enc", src("app/api/admin/migrate-schema/route.ts").includes("pwa_accounts.session_enc"));
   check("ux: Qayta kirish tugmasi", src("app/app/panels.tsx").includes("Qayta kirish"));
-  check("login: sessiya cookie saqlanadi", src("lib/pwa-login.ts").includes("session.cookies"));
+  check("login: sessiya cookie saqlanadi", src("app/api/pwa/login/route.ts").includes("result.session.cookies"));
   check("probe: pwadata rejimi", src("app/api/admin/probe-login/route.ts").includes('sp.get("pwadata")'));
   check("lookup: login case-insensitive", src("app/api/pwa/data/nazoratchi/route.ts").includes("lower("));
 }
@@ -1158,34 +1157,11 @@ check("looksLikeName: ko'rish rad", !looksLikeName("Ko'rish"), true);
   check("ctp: ekranga ulangan", appClient.includes('view === "ctp" && <CtpPanel />'));
 }
 
-// 🔐 eMaktab tekshiruv sahifasi (__2FA__) — captcha sifatida ko'rilishi kerak, "muvaffaqiyat" emas
-{
-  check("login: __2FA__ sahifa aniqlanadi", isChallengePage('window.__2FA__INITIAL__STATE__ = {"authToken":"x"}'));
-  check("login: oddiy sahifa challenge emas", !isChallengePage("<html>Kundalik</html>"));
-  const emSrc = readFileSync(new URL("../src/lib/emaktab.ts", import.meta.url), "utf-8");
-  check("login: postLogin challenge → captcha", emSrc.includes("if (isChallengePage(result.body))") && emSrc.includes('status: "captcha"'));
-}
-
 // 👨‍🏫 O'qituvchi roli: /teachers (TEACHERV2) belgisi bilan aniqlanadi
 {
   const emSrc2 = readFileSync(new URL("../src/lib/emaktab.ts", import.meta.url), "utf-8");
   check("teacher: TEACHERV2 belgisi bilan rol aniqlash", emSrc2.includes("TEACHERV2__INITIAL/.test(tHtml)") && emSrc2.includes('role = "teacher";'));
   check("teacher: /teachers sahifasi tekshiriladi", emSrc2.includes("`${WEB_BASE}/teachers`"));
-}
-
-// 🖼 Captcha (ilova oqimi): rasm/maydon aniqlanadi, oddiy forma aniqlanmaydi; oqim fayllari mavjud
-{
-  const capMarkup = '<input name="Captcha.Input" class="input__field"><img class="captcha__image" src="https://login.emaktab.uz/captcha/true/abc">';
-  check("captcha: yangi markup aniqlanadi", captchaVisible(capMarkup));
-  check("captcha: oddiy login formada yo'q", !captchaVisible('<form><input type="text" name="login"><input type="password" name="password"></form>'));
-  const capRoute = readFileSync(new URL("../src/app/api/pwa/login/captcha/route.ts", import.meta.url), "utf-8");
-  check("captcha: kodni qabul qiluvchi route", capRoute.includes("submitCaptchaLogin(") && capRoute.includes("finishPwaLogin("));
-  const capImg = readFileSync(new URL("../src/app/api/pwa/login/captcha-image/route.ts", import.meta.url), "utf-8");
-  check("captcha: rasm proksi (sessiya bilan)", capImg.includes("fetchCaptchaImageForForm("));
-  const appC = readFileSync(new URL("../src/app/app/app-client.tsx", import.meta.url), "utf-8");
-  check("captcha: rasm login javobida data: URL sifatida", readFileSync(new URL("../src/app/api/pwa/login/route.ts", import.meta.url), "utf-8").includes("captchaDataUrlOrReason(") && appC.includes("setCaptchaImage(r.captchaImage"));
-  check("captcha: rasm topilmasa aniq sabab (buzilgan rasm emas)", readFileSync(new URL("../src/app/api/pwa/login/route.ts", import.meta.url), "utf-8").includes("captchaDataUrlOrReason(") && appC.includes("Captcha rasmi yuklanmadi"));
-  check("captcha: ilovada rasm va kod maydoni", appC.includes("/api/pwa/login/captcha-image") && appC.includes("/api/pwa/login/captcha\""));
 }
 
 console.log(`\nNatija: ${passed} o'tdi, ${failed} yiqildi`);
