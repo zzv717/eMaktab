@@ -1056,7 +1056,16 @@ export function pageHints(html: string): string {
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 160);
-  return `api=[${[...apis].slice(0, 10).join(",")}] mk=[${markers.slice(0, 6).join(",")}] ${forms.join(" ")} txt="${text}"`.slice(0, 520);
+  // 2FA/boshqa holat obyektining kalit tuzilishi (qiymatlarsiz)
+  const keyShape = (v: unknown, depth: number): string => {
+    if (depth > 2 || !v || typeof v !== "object") return typeof v;
+    if (Array.isArray(v)) return `[${v.length}:${v.length ? keyShape(v[0], depth + 1) : ""}]`;
+    const o = v as Record<string, unknown>;
+    return `{${Object.keys(o).slice(0, 14).map((k) => `${k}:${keyShape(o[k], depth + 1)}`).join(",")}}`;
+  };
+  const st = extractAnyState(html).map((x) => `${x.marker}=${keyShape(x.data, 0)}`).join(" ");
+  const inputs = [...html.matchAll(/<input[^>]*name="([^"]+)"/gi)].map((i) => i[1]).slice(0, 10).join(",");
+  return `api=[${[...apis].slice(0, 10).join(",")}] mk=[${markers.slice(0, 6).join(",")}] ${forms.join(" ")} inp=[${inputs}] st=${st} txt="${text}"`.slice(0, 900);
 }
 
 /** HTML bosh sahifa (userfeed) — __USER__START__PAGE__INITIAL__STATE__ shu yerda. */
