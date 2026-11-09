@@ -1038,10 +1038,20 @@ async function fetchStartPage(
   }
 }
 
+/** Diagnostika: sahifadagi API manzillari va holat belgilari (qiymatlarsiz, qisqa). */
+export function pageHints(html: string): string {
+  const apis = new Set<string>();
+  for (const m of html.matchAll(/["'`]((?:https?:\/\/[a-z0-9.-]*emaktab\.uz)?\/?api\/[A-Za-z0-9_\/.\-]{2,60})/gi)) {
+    apis.add(m[1].replace(/^https?:\/\/[^/]+/, ""));
+  }
+  const markers = [...new Set([...html.matchAll(/window\.(__[A-Z0-9_]+__)/g)].map((m) => m[1]))];
+  return `api=[${[...apis].slice(0, 10).join(",")}] mk=[${markers.slice(0, 6).join(",")}]`.slice(0, 260);
+}
+
 /** HTML bosh sahifa (userfeed) — __USER__START__PAGE__INITIAL__STATE__ shu yerda. */
 async function fetchUserfeedHtml(
   cookies: Record<string, string>,
-): Promise<{ state: StartState | null; talkUser: TalkUser | null; dbg: string }> {
+): Promise<{ state: StartState | null; talkUser: TalkUser | null; dbg: string; body: string }> {
   try {
     // fetchFollowing — 302 redirect'larni kuzatadi (apiGet 302 ni xato deb tashlaydi).
     const res = await fetchFollowing(
@@ -1054,10 +1064,11 @@ async function fetchUserfeedHtml(
       state,
       talkUser: extractTalkUser(res.body),
       dbg: `uf=${res.status} st=${state ? 1 : 0} uctx=${safeList(state?.userContext?.contextPersons).length}`,
+      body: res.body,
     };
   } catch (error) {
     // Fallback — hech qachon tashlamaydi.
-    return { state: null, talkUser: null, dbg: `uf=xato:${(error instanceof Error ? error.message : String(error)).slice(0, 20)}` };
+    return { state: null, talkUser: null, dbg: `uf=xato:${(error instanceof Error ? error.message : String(error)).slice(0, 20)}`, body: "" };
   }
 }
 
@@ -1241,6 +1252,8 @@ async function buildSession(
     `fu=${(meta?.finalUrl ?? "").slice(-40)} mk=${meta?.markers ?? ""} ck=${Object.keys(cookies).join(",").slice(0, 160)}`,
   ];
   let talkUser: TalkUser | null = null;
+  let ufBody = "";
+  let landBody = "";
   try {
   const startPage = await fetchStartPage(cookies);
   let { state } = startPage;
@@ -1253,6 +1266,7 @@ async function buildSession(
   if (persons.length === 0) {
     const uf = await fetchUserfeedHtml(cookies);
     dbg.push(uf.dbg);
+    ufBody = uf.body;
     if (uf.state && personsFromStartState(uf.state).length > 0) {
       state = uf.state;
       talkUser = uf.talkUser ?? talkUser;
@@ -1270,6 +1284,7 @@ async function buildSession(
         { headers: { Referer: `${WEB_BASE}/` } },
         cookies,
       );
+      landBody = land.body;
       const states = extractAnyState(land.body);
       dbg.push(`land=${land.status} st=${states.length}`);
       for (const s of states) {
@@ -1455,7 +1470,8 @@ async function buildSession(
   if (persons.length === 0) {
     throw new EmaktabApiError(
       "eMaktab profilingizda o'quvchi konteksti topilmadi. " +
-        `[diag: ${dbg.join(" ")} talk=${talkUser ? 1 : 0} ism=${fullName === login ? 0 : 1}]`,
+        `[diag: ${dbg.join(" ")} talk=${talkUser ? 1 : 0} ism=${fullName === login ? 0 : 1}` +
+        ` h1=${pageHints(landBody)} h2=${pageHints(ufBody)}]`,
     );
   }
 
