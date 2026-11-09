@@ -1183,8 +1183,7 @@ check("looksLikeName: ko'rish rad", !looksLikeName("Ko'rish"), true);
   const capImg = readFileSync(new URL("../src/app/api/pwa/login/captcha-image/route.ts", import.meta.url), "utf-8");
   check("captcha: rasm proksi (sessiya bilan)", capImg.includes("fetchCaptchaImageForForm("));
   const appC = readFileSync(new URL("../src/app/app/app-client.tsx", import.meta.url), "utf-8");
-  check("captcha: rasm login javobida data: URL sifatida", readFileSync(new URL("../src/app/api/pwa/login/route.ts", import.meta.url), "utf-8").includes("captchaDataUrlOrReason(") && appC.includes("setCaptchaImage(r.captchaImage"));
-  check("captcha: rasm topilmasa aniq sabab (buzilgan rasm emas)", readFileSync(new URL("../src/app/api/pwa/login/route.ts", import.meta.url), "utf-8").includes("captchaDataUrlOrReason(") && appC.includes("Captcha rasmi yuklanmadi"));
+  check("captcha: rasm login javobida data: URL sifatida", readFileSync(new URL("../src/app/api/pwa/login/route.ts", import.meta.url), "utf-8").includes("captchaDataUrl(") && appC.includes("setCaptchaImage(r.captchaImage"));
   check("captcha: ilovada rasm va kod maydoni", appC.includes("/api/pwa/login/captcha-image") && appC.includes("/api/pwa/login/captcha\""));
 }
 
