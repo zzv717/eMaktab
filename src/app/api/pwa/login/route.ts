@@ -1,8 +1,7 @@
 // 📱 PWA — eMaktab login/parol bilan kirish (haqiqiy eMaktabdan tekshiriladi)
 import { NextRequest, NextResponse } from "next/server";
 import { loginEmaktab } from "@/lib/emaktab";
-import { setPendingCaptcha } from "@/lib/pwa-captcha";
-import { finishPwaLogin } from "@/lib/pwa-login";
+import { credentialsForLogin, issueSessionCookie, saveAccount, type PwaProfile } from "@/lib/pwa";
 
 export const dynamic = "force-dynamic";
 
@@ -21,23 +20,25 @@ export async function POST(req: NextRequest) {
 
   try {
     const result = await loginEmaktab(login, password);
-    if (result.status === "captcha_required" && result.formState) {
-      // Captcha: foydalanuvchi rasmdagi kodni kiritadi (avtomatik yechilmaydi).
-      const res = NextResponse.json({
-        ok: false,
-        captcha: true,
-        error: "eMaktab rasmdagi kodni so'ramoqda. Kodni kiriting.",
-      });
-      setPendingCaptcha(res, { login, password, form: result.formState });
-      return res;
-    }
     if (result.status !== "ok") {
       return NextResponse.json(
         { ok: false, error: result.message || "Login yoki parol noto'g'ri" },
         { status: 401 },
       );
     }
-    return await finishPwaLogin(login, password, result.session);
+    const profile: PwaProfile = {
+      login,
+      name: result.session.fullName || login,
+      role: result.session.role,
+      school: result.session.active.schoolName ?? "-",
+      group: result.session.active.groupName ?? "-",
+    };
+    // Ma'lumot paneli uchun hisobni serverda saqlaymiz (shifrlangan) + sessiya cookie'lari
+    await saveAccount(login, password, profile, result.session.cookies);
+    const creds = await credentialsForLogin(login);
+    const res = NextResponse.json({ ok: true, profile, hasPasskey: creds.length > 0 });
+    issueSessionCookie(res, profile);
+    return res;
   } catch (error) {
     const msg = error instanceof Error ? error.message.slice(0, 120) : "Xatolik";
     return NextResponse.json({ ok: false, error: `eMaktabga ulanib bo'lmadi: ${msg}` }, { status: 502 });
