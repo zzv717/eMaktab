@@ -69,6 +69,7 @@ import { hhmmToMinutes, minutesToHHMM, parseDays, parseTestDraft, testSourceLabe
 import { localQuestion } from "../src/lib/ai";
 import { hashSecret } from "../src/lib/system-admin";
 import { safeTgText } from "../src/lib/tg-text";
+import { isChallengePage } from "../src/lib/emaktab";
 
 let passed = 0;
 let failed = 0;
@@ -1155,6 +1156,14 @@ check("looksLikeName: ko'rish rad", !looksLikeName("Ko'rish"), true);
   const appClient = readFileSync(new URL("../src/app/app/app-client.tsx", import.meta.url), "utf-8");
   check("ctp: o'qituvchi menyusida 📄 Ish reja", appClient.includes('{ id: "ctp", label: "📄 Ish reja" }'));
   check("ctp: ekranga ulangan", appClient.includes('view === "ctp" && <CtpPanel />'));
+}
+
+// 🔐 eMaktab tekshiruv sahifasi (__2FA__) — captcha sifatida ko'rilishi kerak, "muvaffaqiyat" emas
+{
+  check("login: __2FA__ sahifa aniqlanadi", isChallengePage('window.__2FA__INITIAL__STATE__ = {"authToken":"x"}'));
+  check("login: oddiy sahifa challenge emas", !isChallengePage("<html>Kundalik</html>"));
+  const emSrc = readFileSync(new URL("../src/lib/emaktab.ts", import.meta.url), "utf-8");
+  check("login: postLogin challenge → captcha", emSrc.includes("if (isChallengePage(result.body))") && emSrc.includes('status: "captcha"'));
 }
 
 console.log(`\nNatija: ${passed} o'tdi, ${failed} yiqildi`);
