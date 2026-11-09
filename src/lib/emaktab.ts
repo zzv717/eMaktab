@@ -449,6 +449,14 @@ function classifyFormResult(result: FollowedResponse, jar: Record<string, string
   };
 }
 
+/**
+ * eMaktab ko'p noto'g'ri urinishdan keyin "__2FA__" sahifasini qaytaradi. Bu SMS/Telegram kod emas —
+ * raqamli captcha (rasm) yechiladi. Sahifa "muvaffaqiyatli kirish" emas.
+ */
+export function isChallengePage(body: string): boolean {
+  return /__2FA__/.test(body);
+}
+
 /** Captcha bilan bog'liq maydonlar (faqat Captcha.Input yechim bilan yuboriladi). */
 function isCaptchaField(name: string): boolean {
   return /captcha/i.test(name);
@@ -569,6 +577,26 @@ async function postLogin(
   const authCookie = Boolean(
     form.cookies["UZDnevnikAuth_a"] ?? form.cookies["UZDnevnikAuth_s"],
   );
+  if (isChallengePage(result.body)) {
+    // Captcha rasmi JSON ichida "\/captcha\/" ko'rinishida bo'lishi mumkin — avval ochamiz.
+    const unescaped = result.body.replace(/\\\//g, "/");
+    const captchaUrl = extractCaptchaUrl(unescaped, result.finalUrl);
+    if (!captchaUrl) {
+      return {
+        status: "error",
+        message: "eMaktab tekshiruv kodini (captcha) ko'rsatmadi. Bir necha daqiqadan so'ng qayta urinib ko'ring.",
+      };
+    }
+    return {
+      status: "captcha",
+      form: {
+        cookies: form.cookies,
+        hidden: parseHiddenInputs(result.body),
+        postUrl: result.finalUrl,
+        captchaUrl,
+      },
+    };
+  }
   const errors = extractLoginErrors(result.body);
   if (!errors?.hasErrors && (authCookie || !hasLoginForm(result.body))) {
     return {
@@ -1490,8 +1518,7 @@ async function buildSession(
   if (persons.length === 0) {
     throw new EmaktabApiError(
       "eMaktab profilingizda o'quvchi konteksti topilmadi. " +
-        `[diag: ${dbg.join(" ")} talk=${talkUser ? 1 : 0} ism=${fullName === login ? 0 : 1}` +
-        ` h1=${pageHints(landBody)} h2=${pageHints(ufBody)}]`,
+        `[diag: ${dbg.join(" ")} talk=${talkUser ? 1 : 0} ism=${fullName === login ? 0 : 1}]`,
     );
   }
 
