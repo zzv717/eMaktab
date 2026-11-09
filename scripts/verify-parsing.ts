@@ -68,6 +68,7 @@ import { formatDay, formatGrades, formatNews, formatWeek } from "../src/lib/form
 import { hhmmToMinutes, minutesToHHMM, parseDays, parseTestDraft, testSourceLabel } from "../src/lib/nazoratchi";
 import { localQuestion } from "../src/lib/ai";
 import { hashSecret } from "../src/lib/system-admin";
+import { safeTgText } from "../src/lib/tg-text";
 
 let passed = 0;
 let failed = 0;
@@ -1134,6 +1135,26 @@ check("looksLikeName: ko'rish rad", !looksLikeName("Ko'rish"), true);
   check("apk: eski klasslar o'chirildi", !exists2("android/app/src/main/java/uz/emaktab/app/LauncherActivity.java"));
   check("apk: versiya 2", gradle.includes("versionCode 2"));
   check("apk: WebView JS+DOM", exists2("android/app/src/main/java/uz/emaktab/app/MainActivity.java") && readFileSync(new URL("../android/app/src/main/java/uz/emaktab/app/MainActivity.java", import.meta.url), "utf-8").includes("setDomStorageEnabled"));
+}
+
+// 🧹 Telegram matn xavfsizligi + ish reja (ctp) bo'limi + bot qayta urinish
+{
+  const lone = "ab\uD83D" + "cd";
+  check("tg: yolg'iz surrogat olib tashlanadi", safeTgText(lone) === "abcd");
+  check("tg: emoji buzilmaydi", safeTgText("👥 Sinf 5-A") === "👥 Sinf 5-A");
+  const cut = safeTgText("👥👥👥👥", 2);
+  check("tg: qisqartirish emoji juftini kesmaydi", cut === "👥👥" && !/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/.test(cut));
+  const tgSrc = readFileSync(new URL("../src/lib/telegram.ts", import.meta.url), "utf-8");
+  check("tg: payload sanitizatsiya callTelegram'da", tgSrc.includes("sanitizeTgPayload(rawPayload)"));
+  check("tg: 502/503 uchun qayta urinish", tgSrc.includes("isTransientTgErr(e)"));
+  const ctpApi = readFileSync(new URL("../src/app/api/pwa/data/ctp/route.ts", import.meta.url), "utf-8");
+  check("ctp: API importLessonPlan + teacher-only", ctpApi.includes("importLessonPlan(") && ctpApi.includes('s.role !== "teacher"'));
+  check("ctp: faqat xls/xlsx", ctpApi.includes(".xlsx") && ctpApi.includes(".xls\""));
+  const ctpPanel = readFileSync(new URL("../src/app/app/panels.tsx", import.meta.url), "utf-8");
+  check("ctp: CtpPanel komponenti", ctpPanel.includes("export function CtpPanel"));
+  const appClient = readFileSync(new URL("../src/app/app/app-client.tsx", import.meta.url), "utf-8");
+  check("ctp: o'qituvchi menyusida 📄 Ish reja", appClient.includes('{ id: "ctp", label: "📄 Ish reja" }'));
+  check("ctp: ekranga ulangan", appClient.includes('view === "ctp" && <CtpPanel />'));
 }
 
 console.log(`\nNatija: ${passed} o'tdi, ${failed} yiqildi`);
