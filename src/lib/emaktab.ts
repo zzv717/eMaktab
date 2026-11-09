@@ -1045,7 +1045,18 @@ export function pageHints(html: string): string {
     apis.add(m[1].replace(/^https?:\/\/[^/]+/, ""));
   }
   const markers = [...new Set([...html.matchAll(/window\.(__[A-Z0-9_]+__)/g)].map((m) => m[1]))];
-  return `api=[${[...apis].slice(0, 10).join(",")}] mk=[${markers.slice(0, 6).join(",")}]`.slice(0, 260);
+  const forms = [...html.matchAll(/<form[^>]*action="([^"]*)"[^>]*>([\s\S]*?)<\/form>/gi)].slice(0, 2).map((f) => {
+    const names = [...f[2].matchAll(/<input[^>]*name="([^"]+)"[^>]*>/gi)].map((i) => i[1]).slice(0, 8);
+    return `act=${f[1].slice(0, 60)} in=[${names.join(",")}]`;
+  });
+  const text = html
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 160);
+  return `api=[${[...apis].slice(0, 10).join(",")}] mk=[${markers.slice(0, 6).join(",")}] ${forms.join(" ")} txt="${text}"`.slice(0, 520);
 }
 
 /** HTML bosh sahifa (userfeed) — __USER__START__PAGE__INITIAL__STATE__ shu yerda. */
