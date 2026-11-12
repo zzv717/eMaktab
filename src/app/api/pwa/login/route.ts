@@ -1,13 +1,7 @@
 // 📱 PWA — eMaktab login/parol bilan kirish (haqiqiy eMaktabdan tekshiriladi)
 import { NextRequest, NextResponse } from "next/server";
 import { loginEmaktab } from "@/lib/emaktab";
-import {
-  credentialsForLogin,
-  issueSessionCookie,
-  saveAccount,
-  storedSessionFor,
-  type PwaProfile,
-} from "@/lib/pwa";
+import { credentialsForLogin, issueSessionCookie, saveAccount, type PwaProfile } from "@/lib/pwa";
 
 export const dynamic = "force-dynamic";
 
@@ -25,11 +19,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    // Avval oldin saqlangan ishlaydigan sessiyani sinaymiz (yangi login — tasdiqlash/captcha ehtimolini oshiradi).
-    const stored = await storedSessionFor(login, password).catch(() => null);
-    const result = stored
-      ? ({ status: "ok", session: stored } as const)
-      : await loginEmaktab(login, password);
+    const result = await loginEmaktab(login, password);
     if (result.status !== "ok") {
       return NextResponse.json(
         { ok: false, error: result.message || "Login yoki parol noto'g'ri" },

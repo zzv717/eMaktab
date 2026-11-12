@@ -390,36 +390,6 @@ export async function getAccount(login: string): Promise<{ passwordEnc: string; 
   return rows[0] ?? null;
 }
 
-/**
- * Oldin saqlangan ISHLAYDIGAN sessiyani qayta ishlatish — yangi login qilmaslik.
- * Bot ham shunday qiladi. Faqat parol mos kelganda; cookie eskirgan bo'lsa null (oddiy login davom etadi).
- */
-export async function storedSessionFor(login: string, password: string): Promise<EmaktabSession | null> {
-  const key = login.toLowerCase();
-  const candidates: Array<{ passwordEnc: string; sessionEnc: string | null }> = [];
-  const acc = await getAccount(key);
-  if (acc) candidates.push({ passwordEnc: acc.passwordEnc, sessionEnc: acc.sessionEnc });
-  const bots = await db
-    .select({ passwordEnc: botUsers.emaktabPasswordEnc, sessionEnc: botUsers.sessionEnc })
-    .from(botUsers)
-    .where(sql`lower(${botUsers.emaktabLogin}) = ${key}`)
-    .limit(3);
-  for (const b of bots) {
-    if (b.passwordEnc) candidates.push({ passwordEnc: b.passwordEnc, sessionEnc: b.sessionEnc });
-  }
-  for (const c of candidates) {
-    if (!c.sessionEnc) continue;
-    try {
-      if (decryptSecret(c.passwordEnc) !== password) continue;
-      const cookies = JSON.parse(decryptSecret(c.sessionEnc)) as Record<string, string>;
-      return await sessionFromCookies(cookies, key);
-    } catch {
-      /* eskirgan yoki o'qilmagan — keyingisi / oddiy login */
-    }
-  }
-  return null;
-}
-
 async function saveSessionCookies(login: string, cookies: Record<string, string>): Promise<void> {
   try {
     await db
