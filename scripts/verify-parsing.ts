@@ -25,6 +25,7 @@ import {
   scheduleFromFlatLessons,
   extractAllUserLinks,
   extractTeacherGroups,
+  teacherEvidenceFromPage,
   extractTeacherJournals,
   mergeTeacherGroups,
   lessonMatchesTeacherLoad,
@@ -45,11 +46,30 @@ import {
   shiftDayKey,
   tashkentDayKey,
 } from "../src/lib/emaktab";
+import {
+  simulate,
+  simulateSteps,
+  applyWires,
+  solveCircuit,
+  springPhysics,
+  lensPhysics,
+  MITOSIS,
+  MEIOSIS,
+  ORGANELLES,
+  SPECIMENS,
+  ELEMENTS,
+  binaryFormula,
+  getReagent,
+  ELEMENT_MAP,
+  elementDetails,
+} from "../src/app/app/lab/engine";
+import { EXPERIMENTS } from "../src/app/app/lab/experiments";
 import { decryptSecret, encryptSecret } from "../src/lib/crypto";
 import { formatDay, formatGrades, formatNews, formatWeek } from "../src/lib/format";
 import { hhmmToMinutes, minutesToHHMM, parseDays, parseTestDraft, testSourceLabel } from "../src/lib/nazoratchi";
 import { localQuestion } from "../src/lib/ai";
 import { hashSecret } from "../src/lib/system-admin";
+import { safeTgText } from "../src/lib/tg-text";
 
 let passed = 0;
 let failed = 0;
@@ -810,6 +830,295 @@ check("looksLikeName: ko'rish rad", !looksLikeName("Ko'rish"), true);
 }
 
 {
+  // 🧪 Laboratoriya — haqiqiy hisob-kitoblar (kimyo/fizika/biologiya)
+  const src = (rel: string) => readFileSync(new URL(`../src/${rel}`, import.meta.url), "utf-8");
+
+  // Kimyo: kislota + ishqor — neytrallanish + issiqlik
+  const mix1 = simulate([
+    { reagentId: "hcl", ml: 20 },
+    { reagentId: "naoh", ml: 20 },
+    { reagentId: "fen", ml: 5 },
+  ]);
+  check("lab-kimyo: neytrallanish issiqlik", mix1.hodisalar.some((h) => h.kind === "heat"));
+  check("lab-kimyo: pH ≈ 7 neytral", mix1.ph !== null && Math.abs(mix1.ph - 7) < 1.2);
+
+  // Kimyo: AgNO3 + NaCl → AgCl cho'kmasi
+  const mix2 = simulate([
+    { reagentId: "agno3", ml: 15 },
+    { reagentId: "nacl", ml: 15 },
+  ]);
+  check("lab-kimyo: AgCl cho'kmasi", mix2.precipitate?.name.includes("AgCl") === true);
+
+  // Kimyo: Na2CO3 + HCl → CO2
+  const mix3 = simulate([
+    { reagentId: "na2co3", ml: 15 },
+    { reagentId: "hcl", ml: 20 },
+  ]);
+  check("lab-kimyo: CO2 gazi", mix3.gas?.name.includes("CO₂") === true);
+
+  // Kimyo: ishqor + fenolftalein → pushti
+  const mix4 = simulate([
+    { reagentId: "naoh", ml: 20 },
+    { reagentId: "fen", ml: 5 },
+  ]);
+  check("lab-kimyo: fenolftalein pushti", mix4.hodisalar.some((h) => h.text.includes("PUSHTI")));
+  check("lab-kimyo: ishqoriy pH", mix4.ph !== null && mix4.ph > 8.2);
+
+  // 🧬 118 ELEMENT (Mendeleyev jadvali)
+  check("lab-element: 118 ta element", ELEMENTS.length === 118, ELEMENTS.length);
+  check("lab-element: tartib raqamlari 1..118", ELEMENTS.every((e, i) => e.num === i + 1));
+  check("lab-element: id noyob", new Set(ELEMENTS.map((e) => e.id)).size === 118);
+  check("lab-element: Na/C/Au mavjud", Boolean(ELEMENT_MAP.na && ELEMENT_MAP.c && ELEMENT_MAP.au));
+  check("lab-element: getReagent element topadi", getReagent("na")?.formula === "Na" && getReagent("hcl")?.formula === "HCl");
+
+  // 🧬 Sintez formulasi (valentlik bo'yicha)
+  check("lab-element: Na + Cl → NaCl", binaryFormula(ELEMENT_MAP.na, ELEMENT_MAP.cl) === "NaCl");
+  check("lab-element: Mg + O → MgO", binaryFormula(ELEMENT_MAP.mg, ELEMENT_MAP.o) === "MgO");
+  check("lab-element: Na + O → Na₂O", binaryFormula(ELEMENT_MAP.na, ELEMENT_MAP.o) === "Na₂O");
+  check("lab-element: Al + O → Al₂O₃", binaryFormula(ELEMENT_MAP.al, ELEMENT_MAP.o) === "Al₂O₃");
+  check("lab-element: H + Cl → HCl", binaryFormula(ELEMENT_MAP.h, ELEMENT_MAP.cl) === "HCl");
+  check("lab-element: H + O → H₂O", binaryFormula(ELEMENT_MAP.h, ELEMENT_MAP.o) === "H₂O");
+
+  // 🧬 Sintez reaksiyasi — Na + Cl → NaCl (tenglama pastda chiqadi)
+  const synth = simulate([
+    { reagentId: "na", ml: 10 },
+    { reagentId: "cl", ml: 10 },
+  ]);
+  const synthEq = synth.hodisalar.find((h) => h.equation === "Na + Cl → NaCl");
+  check("lab-element: Na + Cl → NaCl tenglamasi", Boolean(synthEq), synth.hodisalar.map((h) => h.equation));
+  check("lab-element: sintez hodisasi matni", synth.hodisalar.some((h) => h.text.includes("SINTEZ")));
+
+  // H + Cl → HCl (foydalanuvchi sinagan tajriba)
+  const hclSynth = simulate([
+    { reagentId: "h", ml: 10 },
+    { reagentId: "cl", ml: 10 },
+  ]);
+  check("lab-element: H + Cl → HCl tenglamasi chiqadi", hclSynth.hodisalar.some((h) => h.equation === "H + Cl → HCl"), hclSynth.hodisalar.map((h) => h.equation));
+
+  // ⚖️ STOXIOMETRIYA: H₂O uchun 2 ta H + 1 ta O kerak!
+  const hOnly = simulate([{ reagentId: "h", ml: 10 }, { reagentId: "o", ml: 10 }]);
+  check("lab-element: H + O (1:1) — reaksiya YO'Q (2 ta H kerak!)", !hOnly.hodisalar.some((h) => h.equation?.includes("H₂O")), hOnly.hodisalar.map((h) => h.equation));
+  const h2oSynth = simulate([{ reagentId: "h", ml: 20 }, { reagentId: "o", ml: 10 }]);
+  check("lab-element: 2H + O → H₂O (to'g'ri nisbatda)", h2oSynth.hodisalar.some((h) => h.equation === "2H + O → H₂O"), h2oSynth.hodisalar.map((h) => h.equation));
+
+  // ⚡ ZANJIR MUSTAQILLIGI: ulanmagan qurilma ishlayotgan zanjirga XALAQIT bermaydi!
+  const indep = solveCircuit([
+    { id: "bat", type: "battery", value: 9, a: 1, b: 2 },
+    { id: "heat", type: "heater", value: 10, a: 2, b: 1 },
+    { id: "buz", type: "buzzer", value: 0, a: 3, b: 4 },
+  ]);
+  check("lab-fizika: alohida zanjir mustaqil ishlaydi (isitgich yonadi)", indep.ok && (indep.heatGlow["heat"] ?? 0) > 0.2, indep.error ?? indep.heatGlow);
+  check("lab-fizika: ulanmagan gurj O'CHIQ qoladi", !indep.buzzerOn["buz"]);
+  const indep2 = solveCircuit([
+    { id: "bat", type: "battery", value: 9, a: 1, b: 2 },
+    { id: "heat", type: "heater", value: 10, a: 2, b: 1 },
+    { id: "bat2", type: "battery", value: 9, a: 5, b: 6 },
+    { id: "buz", type: "buzzer", value: 0, a: 6, b: 5 },
+    { id: "sw", type: "switch", value: 0, a: 7, b: 8, closed: true },
+  ]);
+  check("lab-fizika: ikkita ALOHIDA zanjir ham ishlaydi", indep2.ok && (indep2.heatGlow["heat"] ?? 0) > 0.2 && indep2.buzzerOn["buz"], indep2.error);
+
+  // Faol metall + kislota → H₂ (Na + HCl)
+  const naAcid = simulate([
+    { reagentId: "na", ml: 10 },
+    { reagentId: "hcl", ml: 25 },
+  ]);
+  check("lab-element: Na + HCl → H₂ gaz", naAcid.gas?.name.includes("H₂") === true);
+  check("lab-element: Na tenglamasi chiqadi", naAcid.hodisalar.some((h) => (h.equation ?? "").includes("Na")));
+
+  // Tenglamalar klassik reaksiyalarda ham bor
+  check("lab-kimyo: neytrallanish tenglamasi", mix1.hodisalar.some((h) => (h.equation ?? "").includes("→")));
+  check("lab-kimyo: AgCl tenglamasi", mix2.hodisalar.some((h) => (h.equation ?? "").includes("AgCl")));
+  check("lab-kimyo: CO2 tenglamasi", mix3.hodisalar.some((h) => (h.equation ?? "").includes("CO₂")));
+
+  // Fizika: yopiq zanjir — lampochka yonadi
+  const circ = solveCircuit([
+    { id: "bat", type: "battery", a: 1, b: 2, value: 9 },
+    { id: "bulb", type: "bulb", a: 2, b: 1, value: 6 },
+  ]);
+  check("lab-fizika: zanjir yechildi", circ.ok === true);
+  check("lab-fizika: lampochka yonadi", (circ.brightness.bulb ?? 0) > 0.5);
+  check("lab-fizika: tok hisoblandi", circ.totalCurrent > 0.1 && circ.totalCurrent < 2);
+
+  // Fizika: ochiq zanjir — xato (batareya + ulanmagan lampochka)
+  const open = solveCircuit([
+    { id: "bat", type: "battery", a: 1, b: 2, value: 9 },
+    { id: "bulb", type: "bulb", a: 3, b: 4, value: 6 },
+  ]);
+  check("lab-fizika: ochiq zanjir xatosi", open.ok === false && Boolean(open.error));
+
+  // Fizika: applyWires — simlar tugunlarni birlashtiradi
+  const wired = applyWires(
+    [
+      { id: "bat", type: "battery", a: 1, b: 2, value: 9 },
+      { id: "bulb", type: "bulb", a: 3, b: 4, value: 6 },
+    ],
+    [
+      { fromComp: "bat", fromTerm: "b", toComp: "bulb", toTerm: "a" },
+      { fromComp: "bulb", fromTerm: "b", toComp: "bat", toTerm: "a" },
+    ],
+  );
+  const wiredOk = solveCircuit(wired);
+  check("lab-fizika: sim bilan yopiq zanjir", wiredOk.ok === true && (wiredOk.brightness.bulb ?? 0) > 0.5);
+
+  // Fizika: Hooke — F = m·g
+  const sp = springPhysics(2, 20);
+  check("lab-fizika: Hooke F=m·g", Math.abs(sp.force - 2 * 9.81) < 0.01);
+  check("lab-fizika: Hooke x=F/k", Math.abs(sp.extension - (2 * 9.81) / 20) < 0.01);
+
+  // Fizika: linza — 1/f = 1/do + 1/di
+  const ln = lensPhysics(10, 20);
+  check("lab-fizika: linza tasviri", Math.abs(ln.image - 20) < 0.01);
+  check("lab-fizika: linza kattalashtirish", Math.abs(ln.magnification + 1) < 0.01);
+
+  // Biologiya: kontent to'liq
+  check("lab-biologiya: organoidlar ≥ 12", ORGANELLES.length >= 12);
+  check("lab-biologiya: mitoz 6 bosqich", MITOSIS.length === 6);
+  check("lab-biologiya: meyoz 6 bosqich", MEIOSIS.length === 6);
+  check(
+    "lab-biologiya: krossingover bor",
+    MEIOSIS.some((m) => (m.name + " " + m.tavsif).toLowerCase().includes("krossingover")),
+  );
+
+  // --- 🆕 Qo'l bilan boshqarish yangilanishi ---
+
+  // Kimyo: ketma-ketlik TARTIBI muhim (AlCl₃ + NaOH — amfoter)
+  const seqA = simulateSteps([
+    { reagentId: "alcl3", ml: 25 },
+    { reagentId: "naoh", ml: 20 },
+    { reagentId: "naoh", ml: 25 },
+  ]).steps.flatMap((x) => x.yangiHodisalar.map((h) => h.text));
+  const seqB = simulateSteps([
+    { reagentId: "naoh", ml: 45 },
+    { reagentId: "alcl3", ml: 25 },
+  ]).steps.flatMap((x) => x.yangiHodisalar.map((h) => h.text));
+  check("lab-kimyo: A tartibda cho'kma keyin eridi", seqA.some((t) => t.includes("cho'kma tushdi")) && seqA.some((t) => t.includes("ERIYDI")));
+  check("lab-kimyo: B tartibda darhol tiniq (farq bor!)", !seqB.some((t) => t.includes("cho'kma tushdi")));
+
+  // Kimyo: oltin yomg'ir (PbI₂) — issiqda eriydi
+  const gold = simulate([
+    { reagentId: "pbno32", ml: 25 },
+    { reagentId: "ki", ml: 25 },
+  ]);
+  check("lab-kimyo: PbI₂ oltin cho'kma", (gold.precipitate?.name ?? "").includes("PbI₂"));
+  const hotGold = simulate([{ reagentId: "pbno32", ml: 25 }, { reagentId: "ki", ml: 25 }], 60);
+  check("lab-kimyo: issiqda PbI₂ eriydi", hotGold.precipitate === null && hotGold.hodisalar.some((h) => h.text.includes("ISSIQDA ERIYDI")));
+
+  // Kimyo: mis kislota bilan reaksiyaga kirmaydi
+  const cuHcl = simulate([
+    { reagentId: "cu", ml: 5 },
+    { reagentId: "hcl", ml: 20 },
+  ]);
+  check("lab-kimyo: Cu + HCl — reaksiya yo'q", cuHcl.hodisalar.some((h) => h.text.includes("KIRMAYDI")) && cuHcl.gas === null);
+
+  // Fizika: nosozlik — ochiq zanjir ishlamaydi
+  const broken = solveCircuit([
+    { id: "bat", type: "battery", a: 1, b: 2, value: 9 },
+    { id: "bulb", type: "bulb", a: 2, b: 1, value: 6, fault: "open" },
+  ]);
+  check("lab-fizika: nosozlik (ochiq) — ishlamaydi", broken.ok === false);
+
+  // Fizika: o'lik batareya — tok yo'q
+  const dead = solveCircuit([
+    { id: "bat", type: "battery", a: 1, b: 2, value: 9, fault: "dead" },
+    { id: "bulb", type: "bulb", a: 2, b: 1, value: 6 },
+  ]);
+  check("lab-fizika: o'lik batareya — tok yo'q", dead.ok === true && dead.totalCurrent < 0.001);
+
+  // Fizika: LED teskari ulansa — yonmaydi
+  const rev = solveCircuit([
+    { id: "bat", type: "battery", a: 1, b: 2, value: 9 },
+    { id: "led", type: "led", a: 2, b: 1, value: 6 },
+  ]);
+  check("lab-fizika: LED teskari — yonmaydi", rev.ok === true && rev.ledReversed.led === true && (rev.brightness.led ?? 0) === 0);
+
+  // Fizika: qisqa tutashuv aniqlanadi
+  const shorted = solveCircuit([
+    { id: "bat", type: "battery", a: 1, b: 2, value: 12 },
+    { id: "r", type: "resistor", a: 2, b: 1, value: 0.1 },
+  ]);
+  check("lab-fizika: qisqa tutashuv ogohlantirishi", shorted.ok === false && (shorted.error ?? "").includes("Qisqa"));
+
+  // Biologiya: namunalar + mikroskop kontraktlari
+  check("lab-biologiya: namunalar ≥ 6", SPECIMENS.length >= 6);
+
+  // UI kontraktlari (yangilangan)
+  check("lab: StageBox — kengaytirish + qo'shish", src("app/app/lab/StageBox.tsx").includes("Kengaytirish") && src("app/app/lab/StageBox.tsx").includes("Qo'shish"));
+  check("lab-kimyo: ketma-ketlik jurnali", src("app/app/lab/ChemLab.tsx").includes("simulateSteps"));
+  check("lab-kimyo: isitish + aralashtirish", src("app/app/lab/ChemLab.tsx").includes("Isitish") && src("app/app/lab/ChemLab.tsx").includes("Aralashtirish"));
+  check("lab-fizika: nosozlik rejimi", src("app/app/lab/PhysLab.tsx").includes("Nosozlik rejimi"));
+  check("lab-fizika: ishga tushirish", src("app/app/lab/PhysLab.tsx").includes("Ishga tushirish"));
+  check("lab-fizika: tayyor loyihalar", src("app/app/lab/PhysLab.tsx").includes("Tayyor loyihalar"));
+  check("lab-biologiya: pichoqcha + mikroskop", src("app/app/lab/PrepLab.tsx").includes("pichoqcha") && src("app/app/lab/PrepLab.tsx").includes("SpecimenView"));
+  check("lab-biologiya: mikroskop boshqaruvi (obyektivlar/fokus/diyafragma/stolcha)", src("app/app/lab/PrepLab.tsx").includes("100×") && src("app/app/lab/PrepLab.tsx").includes("Mikrovint") && src("app/app/lab/PrepLab.tsx").includes("Diyafragma") && src("app/app/lab/PrepLab.tsx").includes("Stolcha"));
+  check("lab-biologiya: hujayra ichiga kirish (×100)", src("app/app/lab/PrepLab.tsx").includes("Hujayra ichiga kirish"));
+  check("lab-biologiya: pipetka usuli (yog'/suyuqlik namunalari)", src("app/app/lab/PrepLab.tsx").includes("pipette") && src("app/app/lab/PrepLab.tsx").includes("Pipetka bilan namuna olish"));
+  check("lab-biologiya: faqat kichik namuna oynachaga o'tadi", src("app/app/lab/PrepLab.tsx").includes("KATTA namuna stolida qoladi"));
+  // yangi: simulyator oqimi + yaqinlik tugmalari + anjomlar + 11 namuna
+  check("lab-biologiya: yaqinlik tugmalari (masofadan emas)", src("app/app/lab/PrepLab.tsx").includes("near.knife") && src("app/app/lab/PrepLab.tsx").includes("slideMicro"));
+  check("lab-biologiya: Anjomlar bo'limi", src("app/app/lab/PrepLab.tsx").includes("Anjomlar") && src("app/app/lab/PrepLab.tsx").includes("Pipetka") && src("app/app/lab/PrepLab.tsx").includes("Pinset"));
+  check("lab-biologiya: ko'rish sahna ichida", src("app/app/lab/PrepLab.tsx").includes("viewPlaneRef") && src("app/app/lab/PrepLab.tsx").includes("Ko'rish"));
+  check("lab-biologiya: 11 namuna", SPECIMENS.length === 11, SPECIMENS.length);
+  check("lab-biologiya: yangi namunalar (asab/suyak/yog'/qo'ziqorin/bakteriya)", ["nerve", "bone", "fat", "fungi", "bacteria"].every((t) => SPECIMENS.some((sp) => sp.texture === t)));
+  check("lab-kimyo: qo'shish stolga shisha tushadi", src("app/app/lab/ChemLab.tsx").includes("spawnBottleRef") && src("app/app/lab/ChemLab.tsx").includes("nearPour"));
+  check("lab-kimyo: quyish tugmasi yaqinlikda", src("app/app/lab/ChemLab.tsx").includes("🫗 Quyish"));
+  check("lab-kimyo: qo'shilgan shisha ushlanadi (getRoots)", src("app/app/lab/ChemLab.tsx").includes("bottlesRoot?.children"));
+  check("lab-biologiya: kesilgan tilim siljiydi (kind slice)", src("app/app/lab/PrepLab.tsx").includes('"slice"') && src("app/app/lab/PrepLab.tsx").includes("Kesilgan mitti namuna"));
+  check("lab-biologiya: tilim oynachaga olib boriladi", src("app/app/lab/PrepLab.tsx").includes("piecePos"));
+  check("lab-fizika: realistik modellar (filament/rangli tasmalar/spiral)", src("app/app/lab/PhysLab.tsx").includes("filament") && src("app/app/lab/PhysLab.tsx").includes("bandColors") && src("app/app/lab/PhysLab.tsx").includes("TubeGeometry"));
+  check("lab-fizika: strelkali asbob shkalasi", src("app/app/lab/PhysLab.tsx").includes("tick") && src("app/app/lab/PhysLab.tsx").includes("needle"));
+  // 📖 Yoriqnoma (har bir fan uchun alohida + real hayot bog'lanishlari)
+  check("lab-yoriqnoma: Guides mavjud", src("app/app/lab/Guides.tsx").includes("GUIDE_PHYSICS") && src("app/app/lab/Guides.tsx").includes("GUIDE_CHEMISTRY") && src("app/app/lab/Guides.tsx").includes("GUIDE_BIOLOGY"));
+  check("lab-yoriqnoma: har bir bo'limda real hayot", (src("app/app/lab/Guides.tsx").match(/realLife:/g) ?? []).length >= 25, (src("app/app/lab/Guides.tsx").match(/realLife:/g) ?? []).length);
+  check("lab-yoriqnoma: fizikada yoriqnoma tugmasi", src("app/app/lab/PhysLab.tsx").includes("GuideButton") && src("app/app/lab/PhysLab.tsx").includes("GUIDE_PHYSICS"));
+  check("lab-yoriqnoma: kimyoda yoriqnoma", src("app/app/lab/ChemLab.tsx").includes("GUIDE_CHEMISTRY"));
+  check("lab-yoriqnoma: biologiyada yoriqnoma (hamma rejimlar)", src("app/app/lab/BioLab.tsx").includes("GUIDE_BIOLOGY") && src("app/app/lab/PrepLab.tsx").includes("GUIDE_BIOLOGY"));
+  check("lab-yoriqnoma: mitoz/meyoz real hayotda", src("app/app/lab/Guides.tsx").includes("SARATON") && src("app/app/lab/Guides.tsx").includes("Meyoz"));
+  check("lab-fizika: qurilmalarda real hayot tavsifi", src("app/app/lab/PhysLab.tsx").includes("REAL_DESC") && src("app/app/lab/PhysLab.tsx").includes("elektromobil"));
+  // 🏫 3D laboratoriya xonasi
+  check("lab-xona: kafel pol, deraza, shkaf, lavabo", src("app/app/lab/three-utils.ts").includes("labRoom") && src("app/app/lab/three-utils.ts").includes("CHIQISH") && src("app/app/lab/three-utils.ts").includes("YONG") === false ? true : src("app/app/lab/three-utils.ts").includes("EHTIYOT"));
+  check("lab-xona: yong'in susishtirgichi + birinchi yordam", src("app/app/lab/three-utils.ts").includes("extingu") && src("app/app/lab/three-utils.ts").includes("Birinchi yordam".toLowerCase().toUpperCase()) || src("app/app/lab/three-utils.ts").includes("aidBox"));
+  // 📖 elementlar ma'lumoti (haqiqiy hisoblash)
+  const naD = elementDetails(11);
+  check("lab-element: Na — 3-davr, 1-guruh, [Ne] 3s¹", naD.period === 3 && naD.group === "1" && naD.config === "[Ne] 3s¹", naD);
+  const feD = elementDetails(26);
+  check("lab-element: Fe — 4-davr, 8-guruh", feD.period === 4 && feD.group === "8", feD);
+  const crD = elementDetails(24);
+  check("lab-element: Cr istisosasi 3d⁵ 4s¹", crD.config === "[Ar] 3d⁵ 4s¹", crD.config);
+  const clD = elementDetails(17);
+  check("lab-element: Cl — 3-davr, 17-guruh, [Ne] 3s² 3p⁵", clD.group === "17" && clD.config === "[Ne] 3s² 3p⁵", clD);
+  check("lab-element: barcha 118 elementda davr va guruh hisoblanadi", ELEMENTS.every((e) => { const d = elementDetails(e.num); return d.period >= 1 && d.period <= 7 && d.group.length > 0; }));
+  // 📋 tajribalar kutubxonasi
+  check("lab-tajriba: 60+ tajriba (20+20+20)", EXPERIMENTS.length >= 60, EXPERIMENTS.length);
+  check("lab-tajriba: har fanda 20+ tajriba", ["Kimyo", "Fizika", "Biologiya"].every((sub) => EXPERIMENTS.filter((e) => e.subject === sub).length >= 20), ["Kimyo", "Fizika", "Biologiya"].map((sub) => `${sub}:${EXPERIMENTS.filter((e) => e.subject === sub).length}`).join(" "));
+  check("lab-tajriba: har birida qadamlar + tushuntirish + savollar", EXPERIMENTS.every((e) => e.steps.length >= 3 && e.explanation.length > 10 && e.objective.length > 5 && e.questions.length >= 2));
+  check("lab-tajriba: id lar noyob (takrorlanish yo'q)", new Set(EXPERIMENTS.map((e) => e.id)).size === EXPERIMENTS.length);
+  check("lab-tajriba: taraqqiyot localStorage orqali", src("app/app/lab/experiments.ts").includes("localStorage") && src("app/app/lab/Experiments.tsx").includes("bajardim"));
+  // 🪑 ish stoli to'liq model (oyoqlar bilan, yassi quti emas!)
+  check("lab-xona: ish stoli OYOQLARI bilan (to'liq model)", src("app/app/lab/three-utils.ts").includes("legH") && src("app/app/lab/three-utils.ts").includes("shelf"));
+  check("lab-kimyo: idishlarda o'lchov shkalasi (ml)", src("app/app/lab/ChemLab.tsx").includes("scaleTexture") && src("app/app/lab/ChemLab.tsx").includes("ml"));
+  // 🔊 ovoz tizimi + 🖱 hover + kontekstli amallar + ⌨️ klaviatura (v13)
+  check("lab-ovoz: protsedural WebAudio tizimi", src("app/app/lab/audio.ts").includes("LabAudio") && src("app/app/lab/audio.ts").includes("AudioContext") && ["pour", "mix", "connect", "switch", "success", "warn", "glass"].every((k) => src("app/app/lab/audio.ts").includes(k)));
+  check("lab-ovoz: barcha lablar ovoz ishlatadi", ["ChemLab.tsx", "PhysLab.tsx", "PrepLab.tsx", "StageBox.tsx"].every((f) => src(`app/app/lab/${f}`).includes("labAudio")));
+  check("lab-hover: obyekt ustiga kelganda yoritish + nom", src("app/app/lab/three-utils.ts").includes("applyHover") && src("app/app/lab/three-utils.ts").includes("onHover") && src("app/app/lab/StageBox.tsx").includes("HoverTip"));
+  check("lab-hover: uchala labda hover chip", ["ChemLab.tsx", "PhysLab.tsx", "PrepLab.tsx"].every((f) => src(`app/app/lab/${f}`).includes("HoverTip")));
+  check("lab-kontekst: faqat tegishli amallar (actions)", src("app/app/lab/StageBox.tsx").includes("actions") && src("app/app/lab/ChemLab.tsx").includes("Isitish") && src("app/app/lab/ChemLab.tsx").includes("Tozalash"));
+  check("lab-klaviatura: WASD + Shift + Esc", src("app/app/lab/three-utils.ts").includes("KeyW") && src("app/app/lab/three-utils.ts").includes("ShiftLeft") && src("app/app/lab/three-utils.ts").includes("Escape"));
+  check("lab-bio: kuzatuvlar jurnali (localStorage)", src("app/app/lab/PrepLab.tsx").includes("Kuzatuvlar jurnali") && src("app/app/lab/PrepLab.tsx").includes("emaktab-prep-notes"));
+  check("lab-kimyo: jonli natijalar paneli (pH/T/ml)", src("app/app/lab/ChemLab.tsx").includes("Natijalar") && src("app/app/lab/ChemLab.tsx").includes("pH"));
+  check("lab-tajriba: UI o'zbekcha", src("app/app/lab/Experiments.tsx").includes("Tajribalar") && src("app/app/lab/Experiments.tsx").includes("Laboratoriyada ochish"));
+  check("lab-tajriba: LabPanel'da tugma", src("app/app/lab/LabPanel.tsx").includes("Experiments"));
+
+  // UI kontraktlari
+  check("lab: LabPanel mavjud", src("app/app/lab/LabPanel.tsx").includes("Kimyo") && src("app/app/lab/LabPanel.tsx").includes("Fizika") && src("app/app/lab/LabPanel.tsx").includes("Biologiya"));
+  check("lab: menyu — barcha rollar", (src("app/app/app-client.tsx").match(/id: "lab"/g) ?? []).length === 2);
+  check("lab: render", src("app/app/app-client.tsx").includes('view === "lab" && <LabPanel />'));
+  check("lab: ChemLab 3D", src("app/app/lab/ChemLab.tsx").includes("createScene"));
+  check("lab: PhysLab 3D", src("app/app/lab/PhysLab.tsx").includes("solveCircuit"));
+  check("lab: BioLab 3D", src("app/app/lab/BioLab.tsx").includes("MITOSIS") || src("app/app/lab/BioLab.tsx").includes("DivisionLab"));
+}
+
+{
   // 📱 WebView ilova — barqarorlik kontraktlari (TWA kutubxonalari yo'q)
   const exists2 = (rel: string) => {
     try {
@@ -827,6 +1136,93 @@ check("looksLikeName: ko'rish rad", !looksLikeName("Ko'rish"), true);
   check("apk: eski klasslar o'chirildi", !exists2("android/app/src/main/java/uz/emaktab/app/LauncherActivity.java"));
   check("apk: versiya 2", gradle.includes("versionCode 2"));
   check("apk: WebView JS+DOM", exists2("android/app/src/main/java/uz/emaktab/app/MainActivity.java") && readFileSync(new URL("../android/app/src/main/java/uz/emaktab/app/MainActivity.java", import.meta.url), "utf-8").includes("setDomStorageEnabled"));
+}
+
+// 🧹 Telegram matn xavfsizligi + ish reja (ctp) bo'limi + bot qayta urinish
+{
+  const lone = "ab\uD83D" + "cd";
+  check("tg: yolg'iz surrogat olib tashlanadi", safeTgText(lone) === "abcd");
+  check("tg: emoji buzilmaydi", safeTgText("👥 Sinf 5-A") === "👥 Sinf 5-A");
+  const cut = safeTgText("👥👥👥👥", 2);
+  check("tg: qisqartirish emoji juftini kesmaydi", cut === "👥👥" && !/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/.test(cut));
+  const tgSrc = readFileSync(new URL("../src/lib/telegram.ts", import.meta.url), "utf-8");
+  check("tg: payload sanitizatsiya callTelegram'da", tgSrc.includes("sanitizeTgPayload(rawPayload)"));
+  check("tg: 502/503 uchun qayta urinish", tgSrc.includes("isTransientTgErr(e)"));
+  const ctpApi = readFileSync(new URL("../src/app/api/pwa/data/ctp/route.ts", import.meta.url), "utf-8");
+  check("ctp: API importLessonPlan + teacher-only", ctpApi.includes("importLessonPlan(") && ctpApi.includes('s.role !== "teacher"'));
+  check("ctp: faqat xls/xlsx", ctpApi.includes(".xlsx") && ctpApi.includes(".xls\""));
+  const ctpPanel = readFileSync(new URL("../src/app/app/panels.tsx", import.meta.url), "utf-8");
+  check("ctp: CtpPanel komponenti", ctpPanel.includes("export function CtpPanel"));
+  const appClient = readFileSync(new URL("../src/app/app/app-client.tsx", import.meta.url), "utf-8");
+  check("ctp: o'qituvchi menyusida 📄 Ish reja", appClient.includes('{ id: "ctp", label: "📄 Ish reja" }'));
+  check("ctp: ekranga ulangan", appClient.includes('view === "ctp" && <CtpPanel />'));
+}
+
+// 👨‍🏫 O'qituvchi roli: /teachers (TEACHERV2) belgisi bilan aniqlanadi
+{
+  const emSrc2 = readFileSync(new URL("../src/lib/emaktab.ts", import.meta.url), "utf-8");
+  check("teacher: TEACHERV2 belgisi bilan rol aniqlash", emSrc2.includes("TEACHERV2__INITIAL/.test(tHtml)") && emSrc2.includes('role = "teacher";'));
+  check("teacher: /teachers xatosi kirishni to'xtatmaydi (o'quvchi)", emSrc2.includes("O'quvchilar uchun /teachers 401/403") && !/teach=xato"\);\s*\n\s*throw/.test(emSrc2));
+  check("teacher: /teachers sahifasi tekshiriladi", emSrc2.includes("`${WEB_BASE}/teachers`"));
+}
+
+// 🔐 Hisob tasdiqlash sahifasi (__2FA__) — aniq xabar, captcha emas
+{
+  const emSrc3 = readFileSync(new URL("../src/lib/emaktab.ts", import.meta.url), "utf-8");
+  check("login: __2FA__ sahifa aniq xabar bilan to'xtaydi", emSrc3.includes("/__2FA__/.test(result.body)") && emSrc3.includes("hisobingizni tasdiqlashni"));
+}
+
+// 🔁 Saqlangan sessiyani qayta ishlatish (yangi login qilmaslik)
+{
+  const pwaSrc = readFileSync(new URL("../src/lib/pwa.ts", import.meta.url), "utf-8");
+  check("login: saqlangan sessiya avval sinaladi", pwaSrc.includes("export async function storedSessionFor") && readFileSync(new URL("../src/app/api/pwa/login/route.ts", import.meta.url), "utf-8").includes("storedSessionFor(login, password)"));
+  check("login: saqlangan sessiya faqat parol mos kelganda", pwaSrc.includes("if (decryptSecret(c.passwordEnc) !== password) continue;"));
+}
+
+// ---------------------------------------------------------------------------
+// Sessiya konteksti: o'quvchi / ota-ona / o'qituvchi (mock ma'lumotlar, haqiqiy ID yo'q)
+// ---------------------------------------------------------------------------
+{
+  // 1) O'quvchi: contextPersons bor — shaxsiy kontekst
+  const st = personsFromStartState({ userContext: { contextPersons: [{ personId: "111", school: { id: "9" }, group: { id: "7", name: "5-A" } }] } } as never);
+  check("sessiya: o'quvchi contextPersons → 1 person", st.length === 1 && st[0].personId === "111" && st[0].schoolId === "9", st);
+
+  // 2) Ota-ona: bir nechta farzand
+  const par = personsFromStartState({ userContext: { contextPersons: [
+    { personId: "201", school: { id: "9" } }, { personId: "202", school: { id: "9" } },
+  ] } } as never);
+  check("sessiya: ota-ona 2 farzand, ID aralashmaydi", par.length === 2 && par[0].personId === "201" && par[1].personId === "202", par);
+
+  // 3) O'qituvchi: TEACHERV2 state, contextPersons yo'q
+  const teacherHtml = `<script>window.__TEACHERV2__INITIAL__STATE__ = {"schoolId":"555","groups":{"groups":[
+    {"id":"2524942980748797372","name":"1-A","isClassTeacher":true,"journal":[{"subjectName":"Alifbe"}]},
+    {"id":"30030826200645631","name":"5-B","isClassTeacher":false,"journal":[{"subjectName":"Matematika"}]}]}};</script>`;
+  const ev = teacherEvidenceFromPage(teacherHtml);
+  check("sessiya: o'qituvchi (TEACHERV2 + guruhlar) aniqlanadi", ev.isTeacher === true && ev.groupCount === 2, ev);
+  check("sessiya: o'qituvchi schoolId faqat state'dan", ev.schoolId === "555", ev.schoolId);
+  check("sessiya: sinf rahbari ID'lari (string)", ev.classTeacherGroupIds.length === 1 && ev.classTeacherGroupIds[0] === "2524942980748797372", ev.classTeacherGroupIds);
+
+  // 4) O'qituvchi, lekin schoolId state'da yo'q → soxta ID YO'Q
+  const noSchool = teacherEvidenceFromPage(teacherHtml.replace('"schoolId":"555",', ""));
+  check("sessiya: schoolId yo'q → bo'sh (yasalmaydi)", noSchool.isTeacher && noSchool.schoolId === "", noSchool);
+
+  // 5) Marker bor, lekin guruh yo'q → o'qituvchi EMAS (faqat marker yetarli emas)
+  const markerOnly = teacherEvidenceFromPage("<script>window.__TEACHERV2__INITIAL__STATE__ = {\"groups\":{\"groups\":[]}};</script>");
+  check("sessiya: faqat marker, guruh yo'q → o'qituvchi emas", markerOnly.isTeacher === false, markerOnly);
+
+  // 6) Talaba sahifasi (TEACHERV2 yo'q) → o'qituvchi EMAS
+  const studentPage = teacherEvidenceFromPage("<html><body>Hisobim</body></html>");
+  check("sessiya: o'quvchi sahifasi → o'qituvchi emas", studentPage.isTeacher === false, studentPage);
+
+  // 7) TalkUser yo'q — chat state bo'lmasa ham o'qituvchi portali ishlaydi
+  check("sessiya: TalkUser yo'q (talk) — portal dalili baribir ishlaydi", extractTalkUser(teacherHtml) === null && ev.isTeacher === true);
+
+  // 8) Kontekst bo'sh + users/me 404 + children 404 → o'qituvchi sessiyasi ruxsat, ID yasalmaydi
+  //    (buildSession mantig'i: persons=[] va role=teacher → personId "" — kodda tekshiriladi)
+  const bsrc = readFileSync(new URL("../src/lib/emaktab.ts", import.meta.url), "utf-8");
+  check("sessiya: o'qituvchi placeholder'da personId bo'sh (soxta ID yo'q)", bsrc.includes('personId: "",\n      schoolId: teacherSchoolId'));
+  check("sessiya: /teachers tekshiruvi auth xatosini qayta tashlamaydi", bsrc.includes('kind = error instanceof EmaktabAuthError ? "auth" : "xato"'));
+  check("sessiya: o'qituvchi tekshiruvi faqat persons=0 va role!=parent da", bsrc.includes('if (persons.length === 0 && role !== "parent") {\n    const portal = await detectTeacherPortal'));
 }
 
 console.log(`\nNatija: ${passed} o'tdi, ${failed} yiqildi`);

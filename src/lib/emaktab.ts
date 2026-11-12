@@ -569,6 +569,16 @@ async function postLogin(
   const authCookie = Boolean(
     form.cookies["UZDnevnikAuth_a"] ?? form.cookies["UZDnevnikAuth_s"],
   );
+  // eMaktab hisobni tasdiqlashni so'raydi (__2FA__ sahifasi: telefon, Telegram bot yoki
+  // xavfsizlik savoli). Bu kod bilan chetlab o'tilmaydi — foydalanuvchiga aniq xabar beramiz.
+  if (/__2FA__/.test(result.body)) {
+    return {
+      status: "error",
+      message:
+        "eMaktab hisobingizni tasdiqlashni so'ramoqda (telefon, Telegram yoki xavfsizlik savoli). " +
+        "login.emaktab.uz saytida shu hisobga kirib tasdiqlang, so'ng qayta urinib ko'ring.",
+    };
+  }
   const errors = extractLoginErrors(result.body);
   if (!errors?.hasErrors && (authCookie || !hasLoginForm(result.body))) {
     return {
@@ -1038,10 +1048,40 @@ async function fetchStartPage(
   }
 }
 
+/** Diagnostika: sahifadagi API manzillari va holat belgilari (qiymatlarsiz, qisqa). */
+export function pageHints(html: string): string {
+  const apis = new Set<string>();
+  for (const m of html.matchAll(/["'`]((?:https?:\/\/[a-z0-9.-]*emaktab\.uz)?\/?api\/[A-Za-z0-9_\/.\-]{2,60})/gi)) {
+    apis.add(m[1].replace(/^https?:\/\/[^/]+/, ""));
+  }
+  const markers = [...new Set([...html.matchAll(/window\.(__[A-Z0-9_]+__)/g)].map((m) => m[1]))];
+  const forms = [...html.matchAll(/<form[^>]*action="([^"]*)"[^>]*>([\s\S]*?)<\/form>/gi)].slice(0, 2).map((f) => {
+    const names = [...f[2].matchAll(/<input[^>]*name="([^"]+)"[^>]*>/gi)].map((i) => i[1]).slice(0, 8);
+    return `act=${f[1].slice(0, 60)} in=[${names.join(",")}]`;
+  });
+  const text = html
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 160);
+  // 2FA/boshqa holat obyektining kalit tuzilishi (qiymatlarsiz)
+  const keyShape = (v: unknown, depth: number): string => {
+    if (depth > 2 || !v || typeof v !== "object") return typeof v;
+    if (Array.isArray(v)) return `[${v.length}:${v.length ? keyShape(v[0], depth + 1) : ""}]`;
+    const o = v as Record<string, unknown>;
+    return `{${Object.keys(o).slice(0, 14).map((k) => `${k}:${keyShape(o[k], depth + 1)}`).join(",")}}`;
+  };
+  const st = extractAnyState(html).map((x) => `${x.marker}=${keyShape(x.data, 0)}`).join(" ");
+  const inputs = [...html.matchAll(/<input[^>]*name="([^"]+)"/gi)].map((i) => i[1]).slice(0, 10).join(",");
+  return `api=[${[...apis].slice(0, 10).join(",")}] mk=[${markers.slice(0, 6).join(",")}] ${forms.join(" ")} inp=[${inputs}] st=${st} txt="${text}"`.slice(0, 900);
+}
+
 /** HTML bosh sahifa (userfeed) — __USER__START__PAGE__INITIAL__STATE__ shu yerda. */
 async function fetchUserfeedHtml(
   cookies: Record<string, string>,
-): Promise<{ state: StartState | null; talkUser: TalkUser | null; dbg: string }> {
+): Promise<{ state: StartState | null; talkUser: TalkUser | null; dbg: string; body: string }> {
   try {
     // fetchFollowing — 302 redirect'larni kuzatadi (apiGet 302 ni xato deb tashlaydi).
     const res = await fetchFollowing(
@@ -1054,10 +1094,11 @@ async function fetchUserfeedHtml(
       state,
       talkUser: extractTalkUser(res.body),
       dbg: `uf=${res.status} st=${state ? 1 : 0} uctx=${safeList(state?.userContext?.contextPersons).length}`,
+      body: res.body,
     };
   } catch (error) {
     // Fallback — hech qachon tashlamaydi.
-    return { state: null, talkUser: null, dbg: `uf=xato:${(error instanceof Error ? error.message : String(error)).slice(0, 20)}` };
+    return { state: null, talkUser: null, dbg: `uf=xato:${(error instanceof Error ? error.message : String(error)).slice(0, 20)}`, body: "" };
   }
 }
 
@@ -1227,6 +1268,47 @@ export function personsFromStartState(state: StartState | null): PersonContext[]
   return persons;
 }
 
+/**
+ * O'qituvchi portali dalili (/teachers sahifasi, TEACHERV2 state).
+ * Faqat haqiqiy dalil bo'lsa `isTeacher` — URL yoki taxminga qaraymaydi.
+ * Soxta ID yasamaydi: schoolId faqat state'da aniq bo'lsa olinadi.
+ */
+export interface TeacherPageEvidence {
+  isTeacher: boolean;
+  schoolId: string;
+  classTeacherGroupIds: string[];
+  groupCount: number;
+}
+
+export function teacherEvidenceFromPage(html: string): TeacherPageEvidence {
+  const empty: TeacherPageEvidence = { isTeacher: false, schoolId: "", classTeacherGroupIds: [], groupCount: 0 };
+  if (!/TEACHERV2__INITIAL/.test(html)) return empty;
+  const groups = extractTeacherGroups(html);
+  const state = extractAnyState(html).find((x) => x.marker.includes("TEACHERV2"));
+  const schoolId = state ? str(deepFind(state.data, /^school_?id$/i)) : "";
+  return {
+    // Marker + kamida bitta guruh — o'qituvchi dalili. Marker yolg'iz yetarli emas.
+    isTeacher: groups.length > 0,
+    schoolId,
+    classTeacherGroupIds: groups.filter((g) => g.isClassTeacher).map((g) => g.classId),
+    groupCount: groups.length,
+  };
+}
+
+/** Sessiya uchun: /teachers ni so'raydi. Auth/tarmoq xatosi = o'qituvchi emas (kirishni to'xtatmaydi). */
+async function detectTeacherPortal(
+  cookies: Record<string, string>,
+): Promise<TeacherPageEvidence & { dbg: string }> {
+  try {
+    const html = await pageGet(cookies, `${WEB_BASE}/teachers`);
+    const ev = teacherEvidenceFromPage(html);
+    return { ...ev, dbg: ev.isTeacher ? `1:g${ev.groupCount}` : "0" };
+  } catch (error) {
+    const kind = error instanceof EmaktabAuthError ? "auth" : "xato";
+    return { isTeacher: false, schoolId: "", classTeacherGroupIds: [], groupCount: 0, dbg: kind };
+  }
+}
+
 async function buildSession(
   cookies: Record<string, string>,
   login: string,
@@ -1241,6 +1323,8 @@ async function buildSession(
     `fu=${(meta?.finalUrl ?? "").slice(-40)} mk=${meta?.markers ?? ""} ck=${Object.keys(cookies).join(",").slice(0, 160)}`,
   ];
   let talkUser: TalkUser | null = null;
+  let ufBody = "";
+  let landBody = "";
   try {
   const startPage = await fetchStartPage(cookies);
   let { state } = startPage;
@@ -1253,6 +1337,7 @@ async function buildSession(
   if (persons.length === 0) {
     const uf = await fetchUserfeedHtml(cookies);
     dbg.push(uf.dbg);
+    ufBody = uf.body;
     if (uf.state && personsFromStartState(uf.state).length > 0) {
       state = uf.state;
       talkUser = uf.talkUser ?? talkUser;
@@ -1270,6 +1355,7 @@ async function buildSession(
         { headers: { Referer: `${WEB_BASE}/` } },
         cookies,
       );
+      landBody = land.body;
       const states = extractAnyState(land.body);
       dbg.push(`land=${land.status} st=${states.length}`);
       for (const s of states) {
@@ -1302,6 +1388,37 @@ async function buildSession(
 
   // Yakuniy URL /teachers bo'lsa — bu o'qituvchi portali.
   if ((meta?.finalUrl ?? "").toLowerCase().includes("teacher")) role = "teacher";
+
+  // O'qituvchi belgisi: /teachers sahifasida TEACHERV2 holati bo'lsa — o'qituvchi.
+  // (Userfeed/URL belgilari yetarli bo'lmasa ham o'qituvchi to'g'ri aniqlanadi.)
+  if (role === "student") {
+    try {
+      const tHtml = await pageGet(cookies, `${WEB_BASE}/teachers`);
+      if (/TEACHERV2__INITIAL/.test(tHtml)) {
+        role = "teacher";
+        dbg.push("teach=1");
+        if (persons.length === 0) {
+          const tState = extractAnyState(tHtml).find((x) => x.marker.includes("TEACHERV2"));
+          const schoolId =
+            deepFind(tState?.data ?? {}, /^school_?id$/i) || talkUser?.schoolIds?.[0] || "";
+          persons.push({
+            personId: talkUser?.userId || cookies["t0"] || "",
+            schoolId,
+            groupId: "",
+            fullName,
+            schoolName: "",
+            groupName: "",
+          });
+        }
+      } else {
+        dbg.push("teach=0");
+      }
+    } catch {
+      // O'quvchilar uchun /teachers 401/403 yoki login'ga yo'naltiradi — bu xato EMAS.
+      // Bu tekshiruv hech qachon kirishni to'xtatmasligi kerak (o'quvchi kirishi buzilmasin).
+      dbg.push("teach=xato");
+    }
+  }
 
   // Rolni chat state'idagi roles/teacherGroups/classTeacherGroups dan aniqlaymiz.
   if (talkUser) {
@@ -1440,11 +1557,24 @@ async function buildSession(
   // Bir nechta farzand konteksti (bir nechta person) — ota-ona.
   if (role === "student" && persons.length > 1) role = "parent";
 
-  // O'qituvchi uchun personId bo'lmasligi mumkin — kontekstni minimallashtiramiz.
+  // O'qituvchi: shaxsiy kontekst (o'quvchi/ota-ona) topilmagan bo'lsa — /teachers dalilini tekshiramiz.
+  let teacherSchoolId = talkUser?.schoolIds?.[0] ?? "";
+  if (persons.length === 0 && role !== "parent") {
+    const portal = await detectTeacherPortal(cookies);
+    dbg.push(`teach=${portal.dbg}`);
+    if (portal.isTeacher) {
+      role = "teacher";
+      if (portal.schoolId) teacherSchoolId = portal.schoolId;
+      classTeacherGroupIds = [...new Set([...classTeacherGroupIds, ...portal.classTeacherGroupIds])];
+    }
+  }
+
+  // O'qituvchi: shaxsiy person ID yo'q — soxta ID yasamaymiz (personId bo'sh).
+  // Faqat haqiqiy dalil bilan aniqlangan o'qituvchi uchun schoolId'ni qo'yamiz.
   if (persons.length === 0 && role === "teacher") {
     persons.push({
-      personId: talkUser?.userId || cookies["t0"] || "",
-      schoolId: talkUser?.schoolIds[0] || "",
+      personId: "",
+      schoolId: teacherSchoolId,
       groupId: "",
       fullName,
       schoolName: "",
@@ -1455,7 +1585,8 @@ async function buildSession(
   if (persons.length === 0) {
     throw new EmaktabApiError(
       "eMaktab profilingizda o'quvchi konteksti topilmadi. " +
-        `[diag: ${dbg.join(" ")} talk=${talkUser ? 1 : 0} ism=${fullName === login ? 0 : 1}]`,
+        `[diag: ${dbg.join(" ")} talk=${talkUser ? 1 : 0} ism=${fullName === login ? 0 : 1}` +
+        ` h1=${pageHints(landBody)} h2=${pageHints(ufBody)}]`,
     );
   }
 

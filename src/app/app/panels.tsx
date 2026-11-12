@@ -1165,3 +1165,183 @@ export function GuidePanel() {
     </div>
   );
 }
+
+// -------------------------------------------------------------- 📄 Ish reja joylashtirish
+type CtpOpt = { value: string; name: string };
+
+export function CtpPanel() {
+  const [classes, setClasses] = useState<TeacherClass[] | null>(null);
+  const [classId, setClassId] = useState("");
+  const [subject, setSubject] = useState("");
+  const [periods, setPeriods] = useState<CtpOpt[]>([]);
+  const [period, setPeriod] = useState("");
+  const [subgroups, setSubgroups] = useState<CtpOpt[]>([]);
+  const [subgroup, setSubgroup] = useState("");
+  const [file, setFile] = useState<File | null>(null);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    void (async () => {
+      const r = await api<{ ok: boolean; error?: string; classes: TeacherClass[] }>("/api/pwa/data/ctp");
+      if (!r.ok) setError(r.error ?? "Yuklab bo'lmadi");
+      else setClasses(r.classes);
+    })();
+  }, []);
+
+  const pickClass = async (cid: string) => {
+    setClassId(cid);
+    setSubject("");
+    setPeriods([]);
+    setPeriod("");
+    setSubgroups([]);
+    setSubgroup("");
+    setError("");
+    setNotice("");
+    if (!cid) return;
+    const r = await api<{ ok: boolean; error?: string; periods: CtpOpt[]; subgroups: CtpOpt[] }>(
+      `/api/pwa/data/ctp?classId=${encodeURIComponent(cid)}`,
+    );
+    if (!r.ok) {
+      setError(r.error ?? "Choraklarni yuklab bo'lmadi");
+      return;
+    }
+    setPeriods(r.periods);
+    setSubgroups(r.subgroups);
+    setPeriod(r.periods[0]?.value ?? "0");
+    setSubgroup("");
+  };
+
+  const selectedClass = classes?.find((c) => c.classId === classId);
+
+  const upload = async () => {
+    setError("");
+    setNotice("");
+    if (!classId || !subject) return setError("Sinf va fanni tanlang");
+    if (!file) return setError("Excel (.xls yoki .xlsx) faylni tanlang");
+    setBusy(true);
+    const fd = new FormData();
+    fd.append("classId", classId);
+    fd.append("subject", subject);
+    fd.append("period", period);
+    fd.append("subgroup", subgroup);
+    fd.append("file", file);
+    try {
+      const res = await fetch("/api/pwa/data/ctp", { method: "POST", body: fd, credentials: "same-origin" });
+      const r = (await res.json().catch(() => ({ ok: false, error: `Server javob bermadi (${res.status})` }))) as Ok & {
+        reason?: string;
+      };
+      if (!r.ok) setError(r.error ?? r.reason ?? "Ish reja joylashtirilmadi");
+      else {
+        setNotice(`✅ Ish reja joylandi — ${selectedClass?.className ?? ""} · ${subject}`);
+        setFile(null);
+      }
+    } catch {
+      setError("Tarmoq xatosi — qayta urinib ko'ring");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (error && !classes) return <Err msg={error} />;
+  if (!classes) return <Loading />;
+
+  const sel = "mt-1 w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm";
+
+  return (
+    <div className="space-y-4">
+      <div className={card}>
+        <p className="font-semibold text-slate-900">📄 Ish reja joylashtirish</p>
+        <p className="mt-1 text-sm text-slate-600">
+          Excel faylni tanlang — u eMaktab tizimiga o'sha sinf, fan, chorak va guruh uchun ko'chirib o'tkaziladi.
+        </p>
+
+        {classes.length === 0 ? (
+          <p className="mt-4 text-sm text-slate-500">Sizga biriktirilgan sinflar topilmadi.</p>
+        ) : (
+          <div className="mt-4 space-y-3">
+            <label className="block text-sm font-medium text-slate-700">
+              1️⃣ Sinf
+              <select className={sel} value={classId} onChange={(e) => void pickClass(e.target.value)} disabled={busy}>
+                <option value="">— Sinfni tanlang —</option>
+                {classes.map((c) => (
+                  <option key={c.classId} value={c.classId}>
+                    {c.className}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            {classId && (
+              <label className="block text-sm font-medium text-slate-700">
+                2️⃣ Fan
+                <select className={sel} value={subject} onChange={(e) => setSubject(e.target.value)} disabled={busy}>
+                  <option value="">— Fanni tanlang —</option>
+                  {(selectedClass?.subjects ?? []).map((s) => (
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+
+            {subject && periods.length > 0 && (
+              <label className="block text-sm font-medium text-slate-700">
+                3️⃣ O'quv davri (chorak)
+                <select className={sel} value={period} onChange={(e) => setPeriod(e.target.value)} disabled={busy}>
+                  {periods.map((p) => (
+                    <option key={p.value} value={p.value}>
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+
+            {subject && subgroups.length > 0 && (
+              <label className="block text-sm font-medium text-slate-700">
+                4️⃣ O'quv guruhi
+                <select className={sel} value={subgroup} onChange={(e) => setSubgroup(e.target.value)} disabled={busy}>
+                  {subgroups.map((g) => (
+                    <option key={`${g.value}-${g.name}`} value={g.value}>
+                      {g.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+
+            {subject && (
+              <div className="block text-sm font-medium text-slate-700">
+                5️⃣ Excel fayl (.xls yoki .xlsx, 10 MB gacha)
+                <input
+                  type="file"
+                  accept=".xls,.xlsx"
+                  className="mt-1 block w-full text-sm"
+                  disabled={busy}
+                  onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+                />
+                {file && <p className="mt-1 text-xs text-slate-500">📎 {file.name}</p>}
+              </div>
+            )}
+
+            {subject && (
+              <button
+                className={`${btn} w-full bg-teal-700 text-white`}
+                disabled={busy || !file}
+                onClick={() => void upload()}
+              >
+                {busy ? "⏳ Joylanmoqda…" : "📤 Ish rejani joylashtirish"}
+              </button>
+            )}
+          </div>
+        )}
+
+        {error && <p className="mt-3 rounded-2xl bg-rose-50 p-3 text-sm text-rose-700">⚠️ {error}</p>}
+        {notice && <p className="mt-3 rounded-2xl bg-emerald-50 p-3 text-sm text-emerald-700">{notice}</p>}
+      </div>
+    </div>
+  );
+}
