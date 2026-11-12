@@ -4,3 +4,70 @@
 .lab-fullscreen .lab-canvas {
   height: min(58vh, 560px) !important;
 }
+
+/* 🌙 Tungi rejim — /app ichida yorug' Tailwind klasslarini qorong'i rangga o'tkazadi.
+   Komponentlar o'zgarmaydi; html.theme-dark bo'lganda faqat ranglar almashadi. */
+html.theme-dark {
+  color-scheme: dark;
+}
+html.theme-dark .bg-gradient-to-b {
+  background-image: none !important;
+  background-color: #0b1220 !important;
+}
+html.theme-dark .bg-white,
+html.theme-dark .hover\:bg-white:hover {
+  background-color: #1e293b !important;
+}
+html.theme-dark .bg-slate-50,
+html.theme-dark .hover\:bg-slate-50:hover {
+  background-color: #172033 !important;
+}
+html.theme-dark .bg-slate-100 {
+  background-color: #1e293b !important;
+}
+html.theme-dark .bg-slate-200 {
+  background-color: #334155 !important;
+}
+html.theme-dark .bg-teal-50 {
+  background-color: #0f2a2a !important;
+}
+html.theme-dark .bg-rose-50 {
+  background-color: #3b1219 !important;
+}
+html.theme-dark .bg-emerald-50 {
+  background-color: #0f2e22 !important;
+}
+html.theme-dark .bg-amber-50 {
+  background-color: #3a2a0b !important;
+}
+html.theme-dark .border-slate-100,
+html.theme-dark .border-slate-200 {
+  border-color: #334155 !important;
+}
+html.theme-dark .text-slate-900,
+html.theme-dark .text-slate-800,
+html.theme-dark .text-slate-700 {
+  color: #e2e8f0 !important;
+}
+html.theme-dark .text-slate-600,
+html.theme-dark .text-slate-500 {
+  color: #94a3b8 !important;
+}
+html.theme-dark .text-teal-800,
+html.theme-dark .text-teal-900 {
+  color: #5eead4 !important;
+}
+html.theme-dark .text-rose-700,
+html.theme-dark .text-rose-600 {
+  color: #fda4af !important;
+}
+html.theme-dark .text-amber-800 {
+  color: #fcd34d !important;
+}
+html.theme-dark .text-emerald-700,
+html.theme-dark .text-emerald-600 {
+  color: #6ee7b7 !important;
+}
+html.theme-dark .shadow-\[0_18px_50px_rgba\(15\,23\,42\,0\.10\)\] {
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45) !important;
+}

@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
+import ThemeToggle from "./ThemeToggle";
 
 export const metadata: Metadata = {
   title: "eMaktab",
@@ -25,6 +26,12 @@ export const viewport: Viewport = {
 export default function AppLayout({ children }: { children: ReactNode }) {
   return (
     <div className="min-h-dvh bg-gradient-to-b from-teal-50 via-slate-50 to-slate-100">
+      <script
+        dangerouslySetInnerHTML={{
+          __html: `try{if(localStorage.getItem('emaktab-theme')==='dark')document.documentElement.classList.add('theme-dark')}catch(e){}`,
+        }}
+      />
+      <ThemeToggle />
       {children}
       <script
         dangerouslySetInnerHTML={{
