@@ -1268,6 +1268,47 @@ export function personsFromStartState(state: StartState | null): PersonContext[]
   return persons;
 }
 
+/**
+ * O'qituvchi portali dalili (/teachers sahifasi, TEACHERV2 state).
+ * Faqat haqiqiy dalil bo'lsa `isTeacher` — URL yoki taxminga qaraymaydi.
+ * Soxta ID yasamaydi: schoolId faqat state'da aniq bo'lsa olinadi.
+ */
+export interface TeacherPageEvidence {
+  isTeacher: boolean;
+  schoolId: string;
+  classTeacherGroupIds: string[];
+  groupCount: number;
+}
+
+export function teacherEvidenceFromPage(html: string): TeacherPageEvidence {
+  const empty: TeacherPageEvidence = { isTeacher: false, schoolId: "", classTeacherGroupIds: [], groupCount: 0 };
+  if (!/TEACHERV2__INITIAL/.test(html)) return empty;
+  const groups = extractTeacherGroups(html);
+  const state = extractAnyState(html).find((x) => x.marker.includes("TEACHERV2"));
+  const schoolId = state ? str(deepFind(state.data, /^school_?id$/i)) : "";
+  return {
+    // Marker + kamida bitta guruh — o'qituvchi dalili. Marker yolg'iz yetarli emas.
+    isTeacher: groups.length > 0,
+    schoolId,
+    classTeacherGroupIds: groups.filter((g) => g.isClassTeacher).map((g) => g.classId),
+    groupCount: groups.length,
+  };
+}
+
+/** Sessiya uchun: /teachers ni so'raydi. Auth/tarmoq xatosi = o'qituvchi emas (kirishni to'xtatmaydi). */
+async function detectTeacherPortal(
+  cookies: Record<string, string>,
+): Promise<TeacherPageEvidence & { dbg: string }> {
+  try {
+    const html = await pageGet(cookies, `${WEB_BASE}/teachers`);
+    const ev = teacherEvidenceFromPage(html);
+    return { ...ev, dbg: ev.isTeacher ? `1:g${ev.groupCount}` : "0" };
+  } catch (error) {
+    const kind = error instanceof EmaktabAuthError ? "auth" : "xato";
+    return { isTeacher: false, schoolId: "", classTeacherGroupIds: [], groupCount: 0, dbg: kind };
+  }
+}
+
 async function buildSession(
   cookies: Record<string, string>,
   login: string,
@@ -1516,11 +1557,24 @@ async function buildSession(
   // Bir nechta farzand konteksti (bir nechta person) — ota-ona.
   if (role === "student" && persons.length > 1) role = "parent";
 
-  // O'qituvchi uchun personId bo'lmasligi mumkin — kontekstni minimallashtiramiz.
+  // O'qituvchi: shaxsiy kontekst (o'quvchi/ota-ona) topilmagan bo'lsa — /teachers dalilini tekshiramiz.
+  let teacherSchoolId = talkUser?.schoolIds?.[0] ?? "";
+  if (persons.length === 0 && role !== "parent") {
+    const portal = await detectTeacherPortal(cookies);
+    dbg.push(`teach=${portal.dbg}`);
+    if (portal.isTeacher) {
+      role = "teacher";
+      if (portal.schoolId) teacherSchoolId = portal.schoolId;
+      classTeacherGroupIds = [...new Set([...classTeacherGroupIds, ...portal.classTeacherGroupIds])];
+    }
+  }
+
+  // O'qituvchi: shaxsiy person ID yo'q — soxta ID yasamaymiz (personId bo'sh).
+  // Faqat haqiqiy dalil bilan aniqlangan o'qituvchi uchun schoolId'ni qo'yamiz.
   if (persons.length === 0 && role === "teacher") {
     persons.push({
-      personId: talkUser?.userId || cookies["t0"] || "",
-      schoolId: talkUser?.schoolIds[0] || "",
+      personId: "",
+      schoolId: teacherSchoolId,
       groupId: "",
       fullName,
       schoolName: "",
