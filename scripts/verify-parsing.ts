@@ -1171,5 +1171,12 @@ check("looksLikeName: ko'rish rad", !looksLikeName("Ko'rish"), true);
   check("login: __2FA__ sahifa aniq xabar bilan to'xtaydi", emSrc3.includes("/__2FA__/.test(result.body)") && emSrc3.includes("hisobingizni tasdiqlashni"));
 }
 
+// 🔁 Saqlangan sessiyani qayta ishlatish (yangi login qilmaslik)
+{
+  const pwaSrc = readFileSync(new URL("../src/lib/pwa.ts", import.meta.url), "utf-8");
+  check("login: saqlangan sessiya avval sinaladi", pwaSrc.includes("export async function storedSessionFor") && readFileSync(new URL("../src/app/api/pwa/login/route.ts", import.meta.url), "utf-8").includes("storedSessionFor(login, password)"));
+  check("login: saqlangan sessiya faqat parol mos kelganda", pwaSrc.includes("if (decryptSecret(c.passwordEnc) !== password) continue;"));
+}
+
 console.log(`\nNatija: ${passed} o'tdi, ${failed} yiqildi`);
 process.exit(failed > 0 ? 1 : 0);
