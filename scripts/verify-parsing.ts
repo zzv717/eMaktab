@@ -25,6 +25,7 @@ import {
   scheduleFromFlatLessons,
   extractAllUserLinks,
   extractTeacherGroups,
+  teacherEvidenceFromPage,
   extractTeacherJournals,
   mergeTeacherGroups,
   lessonMatchesTeacherLoad,
@@ -827,6 +828,52 @@ check("looksLikeName: ko'rish rad", !looksLikeName("Ko'rish"), true);
   check("apk: eski klasslar o'chirildi", !exists2("android/app/src/main/java/uz/emaktab/app/LauncherActivity.java"));
   check("apk: versiya 2", gradle.includes("versionCode 2"));
   check("apk: WebView JS+DOM", exists2("android/app/src/main/java/uz/emaktab/app/MainActivity.java") && readFileSync(new URL("../android/app/src/main/java/uz/emaktab/app/MainActivity.java", import.meta.url), "utf-8").includes("setDomStorageEnabled"));
+}
+
+// ---------------------------------------------------------------------------
+// Sessiya konteksti: o'quvchi / ota-ona / o'qituvchi (mock ma'lumotlar, haqiqiy ID yo'q)
+// ---------------------------------------------------------------------------
+{
+  // 1) O'quvchi: contextPersons bor — shaxsiy kontekst
+  const st = personsFromStartState({ userContext: { contextPersons: [{ personId: "111", school: { id: "9" }, group: { id: "7", name: "5-A" } }] } } as never);
+  check("sessiya: o'quvchi contextPersons → 1 person", st.length === 1 && st[0].personId === "111" && st[0].schoolId === "9", st);
+
+  // 2) Ota-ona: bir nechta farzand
+  const par = personsFromStartState({ userContext: { contextPersons: [
+    { personId: "201", school: { id: "9" } }, { personId: "202", school: { id: "9" } },
+  ] } } as never);
+  check("sessiya: ota-ona 2 farzand, ID aralashmaydi", par.length === 2 && par[0].personId === "201" && par[1].personId === "202", par);
+
+  // 3) O'qituvchi: TEACHERV2 state, contextPersons yo'q
+  const teacherHtml = `<script>window.__TEACHERV2__INITIAL__STATE__ = {"schoolId":"555","groups":{"groups":[
+    {"id":"2524942980748797372","name":"1-A","isClassTeacher":true,"journal":[{"subjectName":"Alifbe"}]},
+    {"id":"30030826200645631","name":"5-B","isClassTeacher":false,"journal":[{"subjectName":"Matematika"}]}]}};</script>`;
+  const ev = teacherEvidenceFromPage(teacherHtml);
+  check("sessiya: o'qituvchi (TEACHERV2 + guruhlar) aniqlanadi", ev.isTeacher === true && ev.groupCount === 2, ev);
+  check("sessiya: o'qituvchi schoolId faqat state'dan", ev.schoolId === "555", ev.schoolId);
+  check("sessiya: sinf rahbari ID'lari (string)", ev.classTeacherGroupIds.length === 1 && ev.classTeacherGroupIds[0] === "2524942980748797372", ev.classTeacherGroupIds);
+
+  // 4) O'qituvchi, lekin schoolId state'da yo'q → soxta ID YO'Q
+  const noSchool = teacherEvidenceFromPage(teacherHtml.replace('"schoolId":"555",', ""));
+  check("sessiya: schoolId yo'q → bo'sh (yasalmaydi)", noSchool.isTeacher && noSchool.schoolId === "", noSchool);
+
+  // 5) Marker bor, lekin guruh yo'q → o'qituvchi EMAS (faqat marker yetarli emas)
+  const markerOnly = teacherEvidenceFromPage("<script>window.__TEACHERV2__INITIAL__STATE__ = {\"groups\":{\"groups\":[]}};</script>");
+  check("sessiya: faqat marker, guruh yo'q → o'qituvchi emas", markerOnly.isTeacher === false, markerOnly);
+
+  // 6) Talaba sahifasi (TEACHERV2 yo'q) → o'qituvchi EMAS
+  const studentPage = teacherEvidenceFromPage("<html><body>Hisobim</body></html>");
+  check("sessiya: o'quvchi sahifasi → o'qituvchi emas", studentPage.isTeacher === false, studentPage);
+
+  // 7) TalkUser yo'q — chat state bo'lmasa ham o'qituvchi portali ishlaydi
+  check("sessiya: TalkUser yo'q (talk) — portal dalili baribir ishlaydi", extractTalkUser(teacherHtml) === null && ev.isTeacher === true);
+
+  // 8) Kontekst bo'sh + users/me 404 + children 404 → o'qituvchi sessiyasi ruxsat, ID yasalmaydi
+  //    (buildSession mantig'i: persons=[] va role=teacher → personId "" — kodda tekshiriladi)
+  const bsrc = readFileSync(new URL("../src/lib/emaktab.ts", import.meta.url), "utf-8");
+  check("sessiya: o'qituvchi placeholder'da personId bo'sh (soxta ID yo'q)", bsrc.includes('personId: "",\n      schoolId: teacherSchoolId'));
+  check("sessiya: /teachers tekshiruvi auth xatosini qayta tashlamaydi", bsrc.includes('kind = error instanceof EmaktabAuthError ? "auth" : "xato"'));
+  check("sessiya: o'qituvchi tekshiruvi faqat persons=0 va role!=parent da", bsrc.includes('if (persons.length === 0 && role !== "parent") {\n    const portal = await detectTeacherPortal'));
 }
 
 console.log(`\nNatija: ${passed} o'tdi, ${failed} yiqildi`);
