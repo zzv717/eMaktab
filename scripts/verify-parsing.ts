@@ -1225,5 +1225,15 @@ check("looksLikeName: ko'rish rad", !looksLikeName("Ko'rish"), true);
   check("sessiya: o'qituvchi tekshiruvi faqat persons=0 va role!=parent da", bsrc.includes('if (persons.length === 0 && role !== "parent") {\n    const portal = await detectTeacherPortal'));
 }
 
+// 🌙 Tungi rejim: toggle va CSS mavjud
+{
+  const css = readFileSync(new URL("../src/app/globals.css", import.meta.url), "utf-8");
+  const tog = readFileSync(new URL("../src/app/app/ThemeToggle.tsx", import.meta.url), "utf-8");
+  const lay = readFileSync(new URL("../src/app/app/layout.tsx", import.meta.url), "utf-8");
+  check("tema: html.theme-dark CSS qoidalari bor", css.includes("html.theme-dark .bg-white") && css.includes("html.theme-dark .text-slate-700"));
+  check("tema: toggle saqlaydi (localStorage)", tog.includes('localStorage.setItem(KEY') && tog.includes('"emaktab-theme"') || tog.includes("const KEY = \"emaktab-theme\""));
+  check("tema: layout'da toggle va oldindan qo'llash", lay.includes("<ThemeToggle />") && lay.includes("classList.add('theme-dark')"));
+}
+
 console.log(`\nNatija: ${passed} o'tdi, ${failed} yiqildi`);
 process.exit(failed > 0 ? 1 : 0);
