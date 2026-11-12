@@ -7,6 +7,7 @@ import { botMessages } from "@/db/schema";
 
 // ⚠️ Vercel IPv6 chiqishi ishlamagani uchun Telegram API ga IPv4 orqali boramiz
 import { setDefaultResultOrder } from "dns";
+import { safeTgText } from "@/lib/tg-text";
 setDefaultResultOrder("ipv4first");
 
 const API_BASE = "https://api.telegram.org";
@@ -314,7 +315,37 @@ async function flushReply(prev: CapturedReply) {
   if (r === null && QUEUEABLE.has(prev.method)) await enqueueOutbox(prev.method, prev.payload);
 }
 
-async function callTelegram<T = unknown>(method: string, payload: Record<string, unknown>): Promise<T> {
+/** Yuboriladigan payload'dagi matn va tugma matnlarini tozalaydi (faqat tugmalar 64 belgi). */
+function sanitizeTgPayload(payload: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...payload };
+  if (typeof out.text === "string") out.text = safeTgText(out.text);
+  const markup = out.reply_markup as { inline_keyboard?: Array<Array<Record<string, unknown>>> } | undefined;
+  if (markup && Array.isArray(markup.inline_keyboard)) {
+    out.reply_markup = {
+      ...markup,
+      inline_keyboard: markup.inline_keyboard
+        .map((row) =>
+          row
+            .filter((b) => typeof b?.text === "string")
+            .map((b) => {
+              const text = safeTgText(String(b.text), 60).trim();
+              return { ...b, text: text || "•" };
+            }),
+        )
+        .filter((row) => row.length > 0),
+    };
+  }
+  return out;
+}
+
+/** Vaqtinchalik xatolar (502/503/429) — bir marta qayta urinamiz. */
+function isTransientTgErr(e: unknown): boolean {
+  const m = e instanceof Error ? e.message : String(e);
+  return /Bad Gateway|Service Unavailable|Too Many Requests|HTTP 50[23]/i.test(m);
+}
+
+async function callTelegram<T = unknown>(method: string, rawPayload: Record<string, unknown>): Promise<T> {
+  const payload = sanitizeTgPayload(rawPayload);
   // 1-qatlam: javobni webhook orqali yuborish (tarmoqqa chiqmaymiz — eng ishonchli)
   if (capture && method === "sendMessage" && String(payload.chat_id) === String(capture.chatId)) {
     const prev = capture.reply;
@@ -324,7 +355,13 @@ async function callTelegram<T = unknown>(method: string, payload: Record<string,
   }
   // 2-qatlam: tarmoq orqali (yiqilsa — navbatga yozamiz)
   try {
-    return await callTelegramNet<T>(method, payload);
+    try {
+      return await callTelegramNet<T>(method, payload);
+    } catch (e) {
+      if (!isTransientTgErr(e)) throw e;
+      await new Promise((r) => setTimeout(r, 700));
+      return await callTelegramNet<T>(method, payload);
+    }
   } catch (e) {
     if (isNetworkErr(e) && QUEUEABLE.has(method)) {
       await enqueueOutbox(method, payload);
