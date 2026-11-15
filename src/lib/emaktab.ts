@@ -505,7 +505,7 @@ function idFromCaptchaUrl(url: string | null): string {
   return m ? m[1] : "";
 }
 
-type PostMode = "plain" | "hidden" | "captcha";
+type PostMode = "browser" | "plain" | "hidden" | "captcha";
 
 /**
  * Login formasi POST'i — uch xil strategiya:
@@ -521,7 +521,17 @@ async function postLogin(
 ): Promise<LoginAttempt> {
   let fields: Record<string, string>;
 
-  if (opts.mode === "plain") {
+  if (opts.mode === "browser") {
+    // Brauzer formasini aynen takrorlaydi: barcha yashirin maydonlar (captcha maydonlari
+    // bo'sh bo'lsa ham) + bo'sh Captcha.Input. Brauzer so'rovi shunday edi (captcha rasmi
+    // ko'rinmagan, lekin Captcha.Id/Captcha.Input maydonlari formada bor).
+    fields = { ...form.hidden, login, password };
+    if (!("Captcha.Input" in fields)) fields["Captcha.Input"] = "";
+    if (!("Captcha.Id" in fields)) fields["Captcha.Id"] = "";
+    if (!("exceededAttempts" in fields)) fields["exceededAttempts"] = "False";
+    if (!("ReturnUrl" in fields)) fields["ReturnUrl"] = "";
+    if (!("FingerprintId" in fields)) fields["FingerprintId"] = "";
+  } else if (opts.mode === "plain") {
     fields = {
       exceededAttempts: "False",
       ReturnUrl: "",
@@ -646,6 +656,11 @@ async function attemptLogin(login: string, password: string): Promise<LoginAttem
     if (captchaVisible(page.body)) {
       return { status: "captcha", form };
     }
+
+    // 0) Brauzer formasi aynan (haqiqiy so'rov bilan bir xil)
+    const browser = await postLogin(form, login, password, { mode: "browser" });
+    if (browser.status !== "error") return browser;
+    diag = browser.message;
 
     // 1) Minimal maydonlar (isbotlangan usul)
     const plain = await postLogin(form, login, password, { mode: "plain" });
