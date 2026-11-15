@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="uz"><head><meta charset="utf-8"><title>eMaktab kirish sinovi</title>
+<style>body{font-family:system-ui;max-width:420px;margin:40px auto;padding:0 16px}input{width:100%;padding:8px;margin:6px 0 14px;box-sizing:border-box}button{padding:10px 18px}pre{background:#f4f4f4;padding:12px;white-space:pre-wrap}</style>
+</head><body>
+<h2>eMaktab kirish sinovi</h2>
+<p>Parol saqlanmaydi va loglanmaydi. Faqat shu kompyuterda ishlating.</p>
+<label>Login<input id="login" autocomplete="off"></label>
+<label>Parol<input id="password" type="password" autocomplete="off"></label>
+<button id="go">Kirish sinovi</button>
+<pre id="out"></pre>
+<script>
+document.getElementById("go").onclick = async () => {
+  const out = document.getElementById("out");
+  out.textContent = "Sinov ketmoqda...";
+  const password = document.getElementById("password").value;
+  document.getElementById("password").value = "";
+  try {
+    const r = await fetch("/api/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ login: document.getElementById("login").value, password }),
+    });
+    out.textContent = JSON.stringify(await r.json(), null, 2);
+  } catch (e) {
+    out.textContent = "Xato: " + e;
+  }
+};
+</script>
+</body></html>
