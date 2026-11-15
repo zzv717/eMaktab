@@ -571,7 +571,11 @@ async function postLogin(
   );
   // eMaktab hisobni tasdiqlashni so'raydi (__2FA__ sahifasi: telefon, Telegram bot yoki
   // xavfsizlik savoli). Bu kod bilan chetlab o'tilmaydi — foydalanuvchiga aniq xabar beramiz.
-  if (/__2FA__/.test(result.body)) {
+  // MUHIM: faqat muvaffaqiyat belgisi (auth cookie) YO'Q bo'lsa va xato ham yo'q bo'lsa.
+  // __2FA__ state muvaffaqiyatli kirgan sahifada ham bo'lishi mumkin — shuning uchun uni
+  // cookie tekshiruvidan oldin ishlatish haqiqiy kirishni xato qilib ko'rsatardi.
+  const hasErrorsNow = Boolean(extractLoginErrors(result.body)?.hasErrors);
+  if (!authCookie && !hasErrorsNow && /__2FA__/.test(result.body)) {
     return {
       status: "error",
       message:
