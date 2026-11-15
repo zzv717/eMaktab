@@ -592,7 +592,9 @@ function classifyPostResponse(
 ): LoginAttempt {
   // Muvaffaqiyat belgilari: auth cookie yoki (forma yo'q + xato yo'q).
   const authCookie = Boolean(
-    form.cookies["UZDnevnikAuth_a"] ?? form.cookies["UZDnevnikAuth_s"],
+    form.cookies["UZDnevnikAuth_a"] ??
+      form.cookies["UZDnevnikAuth_s"] ??
+      form.cookies["UZDnevnikAuth_l"],
   );
   // eMaktab hisobni tasdiqlashni so'raydi (__2FA__ sahifasi: telefon, Telegram bot yoki
   // xavfsizlik savoli). Bu kod bilan chetlab o'tilmaydi — foydalanuvchiga aniq xabar beramiz.
