@@ -601,6 +601,10 @@ function classifyPostResponse(
   // cookie tekshiruvidan oldin ishlatish haqiqiy kirishni xato qilib ko'rsatardi.
   const hasErrorsNow = Boolean(extractLoginErrors(result.body)?.hasErrors);
   if (!authCookie && !hasErrorsNow && /__2FA__/.test(result.body)) {
+    console.error("2FA-FALSE-POSITIVE diag:", {
+      cookieNames: Object.keys(form.cookies),
+      finalUrl: result.finalUrl,
+    });
     return {
       status: "error",
       message:
