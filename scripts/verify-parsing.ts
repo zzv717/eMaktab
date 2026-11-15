@@ -1244,6 +1244,8 @@ check("looksLikeName: ko'rish rad", !looksLikeName("Ko'rish"), true);
   check("login: muvaffaqiyat tekshiruvi 2FA'dan oldin emas, keyin (cookie ustun)", i2fa > 0 && iOk > i2fa, { i2fa, iOk });
   check("login: POST avval forma action (/) ga, keyin /login ga", src.includes("candidates.push(alt)") && src.indexOf("const first = new URL(form.postUrl)") > 0);
   check("login: POST /login ga majburan yo'naltirilmaydi (eski qoida olib tashlangan)", !src.includes('actionUrl.pathname = "/login"'));
+  check("auth: /me sessiya xatosi hali ham tashlanadi (apiGet default)", src.includes("if (opts?.allowAuthStatus) return") && src.includes('const meRes = await apiGet(cookies, "/api/v2/users/me");'));
+  check("auth: /context va /children ixtiyoriy (allowAuthStatus), sessiyani tekshirmaydi", src.includes('"/api/v2/users/me/context", undefined, WEB_BASE, {') && src.includes('"/api/v2/users/me/children", undefined, WEB_BASE, {'));
   check("login: brauzer rejimi birinchi sinaladi (captcha maydonlari bo'sh bilan)", src.includes('mode: "browser"') && src.includes('fields["Captcha.Input"] = ""') && src.indexOf('mode: "browser"') < src.indexOf('mode: "plain" }'));
 }
 

@@ -879,6 +879,7 @@ async function apiGet(
   path: string,
   params?: Record<string, string | number>,
   base: string = WEB_BASE,
+  opts?: { allowAuthStatus?: boolean },
 ): Promise<{ status: number; text: string; contentType: string }> {
   const url = new URL(base + path);
   if (params) {
@@ -900,6 +901,9 @@ async function apiGet(
   });
 
   if (res.status === 401 || res.status === 403 || (res.status >= 300 && res.status < 400)) {
+    // Ixtiyoriy (shaxsiy kontekst) so'rovlar: status kodini qaytaramiz, sessiya xatosi deb tashlamaymiz.
+    // Asosiy sessiya tekshiruvi (fetchStartPage) o'zgarmagan.
+    if (opts?.allowAuthStatus) return { status: res.status, text: "", contentType: "" };
     throw new EmaktabAuthError();
   }
   const text = await res.text();
@@ -1487,7 +1491,9 @@ async function buildSession(
 
   if (persons.length === 0) {
     try {
-      const ctxRes = await apiGet(cookies, "/api/v2/users/me/context");
+      const ctxRes = await apiGet(cookies, "/api/v2/users/me/context", undefined, WEB_BASE, {
+        allowAuthStatus: true,
+      });
       dbg.push(`ctx=${ctxRes.status}`);
       if (ctxRes.status === 200) {
         const ctx = parseJson(ctxRes.text) as unknown;
@@ -1525,7 +1531,9 @@ async function buildSession(
   }
 
   try {
-    const childrenRes = await apiGet(cookies, "/api/v2/users/me/children");
+    const childrenRes = await apiGet(cookies, "/api/v2/users/me/children", undefined, WEB_BASE, {
+      allowAuthStatus: true,
+    });
     dbg.push(`kids=${childrenRes.status}`);
     if (childrenRes.status === 200) {
       const childrenRaw = parseJson(childrenRes.text) as unknown;
