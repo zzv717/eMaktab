@@ -1235,5 +1235,14 @@ check("looksLikeName: ko'rish rad", !looksLikeName("Ko'rish"), true);
   check("tema: layout'da toggle va oldindan qo'llash", lay.includes("<ThemeToggle />") && lay.includes("classList.add('theme-dark')"));
 }
 
+// 🔑 Login: muvaffaqiyatli cookie 2FA belgisidan ustun turadi
+{
+  const src = readFileSync(new URL("../src/lib/emaktab.ts", import.meta.url), "utf-8");
+  check("login: 2FA tekshiruvi authCookie'siz ishlaydi", src.includes("if (!authCookie && !hasErrorsNow && /__2FA__/.test(result.body))"));
+  const i2fa = src.indexOf("if (!authCookie && !hasErrorsNow && /__2FA__/");
+  const iOk = src.indexOf("if (!errors?.hasErrors && (authCookie || !hasLoginForm(result.body)))");
+  check("login: muvaffaqiyat tekshiruvi 2FA'dan oldin emas, keyin (cookie ustun)", i2fa > 0 && iOk > i2fa, { i2fa, iOk });
+}
+
 console.log(`\nNatija: ${passed} o'tdi, ${failed} yiqildi`);
 process.exit(failed > 0 ? 1 : 0);
