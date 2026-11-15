@@ -1242,6 +1242,8 @@ check("looksLikeName: ko'rish rad", !looksLikeName("Ko'rish"), true);
   const i2fa = src.indexOf("if (!authCookie && !hasErrorsNow && /__2FA__/");
   const iOk = src.indexOf("if (!errors?.hasErrors && (authCookie || !hasLoginForm(result.body)))");
   check("login: muvaffaqiyat tekshiruvi 2FA'dan oldin emas, keyin (cookie ustun)", i2fa > 0 && iOk > i2fa, { i2fa, iOk });
+  check("login: POST avval forma action (/) ga, keyin /login ga", src.includes("candidates.push(alt)") && src.indexOf("const first = new URL(form.postUrl)") > 0);
+  check("login: POST /login ga majburan yo'naltirilmaydi (eski qoida olib tashlangan)", !src.includes('actionUrl.pathname = "/login"'));
 }
 
 console.log(`\nNatija: ${passed} o'tdi, ${failed} yiqildi`);

@@ -541,30 +541,45 @@ async function postLogin(
     if (!("ReturnUrl" in fields)) fields["ReturnUrl"] = "";
   }
 
-  // POST aniq /login manziliga (kbot2 isbotlangan usuli). Forma action'i bo'sh yoki
-  // "/" bo'lsa — server POST'ni qayta ishlamay, shunchaki sahifani qaytaradi
-  // (hasErrors:false bilan — biz uni 'formani qaytardi' deb noto'g'ri talqin qilardik).
-  const actionUrl = new URL(form.postUrl);
-  if (actionUrl.pathname === "/" || actionUrl.pathname === "") {
-    actionUrl.pathname = "/login";
+  // Brauzer POST'ni forma action'iga yuboradi. Bu saytda action "/" bo'lib,
+  // brauzerda POST / 302 qaytaradi (haqiqiy so'rov shunday). Avval shu manzilga yuboramiz,
+  // "/login" faqat zaxira sifatida.
+  const first = new URL(form.postUrl);
+  const candidates: URL[] = [first];
+  if (first.pathname === "/" || first.pathname === "") {
+    const alt = new URL(first.toString());
+    alt.pathname = "/login";
+    candidates.push(alt);
   }
-  const postUrl = actionUrl.toString();
 
-  const result = await fetchFollowing(
-    postUrl,
-    {
-      method: "POST",
-      body: new URLSearchParams(fields).toString(),
-      headers: {
-        "User-Agent": LOGIN_USER_AGENT,
-        "Content-Type": "application/x-www-form-urlencoded",
-        Referer: LOGIN_URL,
-        Origin: "https://login.emaktab.uz",
+  let last: LoginAttempt = { status: "error", message: "eMaktab javob bermadi." };
+  for (const target of candidates) {
+    const result = await fetchFollowing(
+      target.toString(),
+      {
+        method: "POST",
+        body: new URLSearchParams(fields).toString(),
+        headers: {
+          "User-Agent": LOGIN_USER_AGENT,
+          "Content-Type": "application/x-www-form-urlencoded",
+          Referer: LOGIN_URL,
+          Origin: "https://login.emaktab.uz",
+        },
       },
-    },
-    form.cookies,
-  );
+      form.cookies,
+    );
+    const attempt = classifyPostResponse(result, form);
+    if (attempt.status === "ok" || attempt.status === "captcha") return attempt;
+    if (attempt.status === "error" && attempt.message.includes("tasdiqlash")) return attempt;
+    last = attempt;
+  }
+  return last;
+}
 
+function classifyPostResponse(
+  result: FollowedResponse,
+  form: LoginFormState,
+): LoginAttempt {
   // Muvaffaqiyat belgilari: auth cookie yoki (forma yo'q + xato yo'q).
   const authCookie = Boolean(
     form.cookies["UZDnevnikAuth_a"] ?? form.cookies["UZDnevnikAuth_s"],
